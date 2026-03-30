@@ -35,9 +35,14 @@ _current_recording: dict = {
     "language": None,
 }
 
-# Background pipeline jobs (many concurrent)
+# Background pipeline jobs (many can be tracked, but run sequentially via queue)
 # { meeting_id: { "step": "transcribing", "progress": 0.5, "error": None, "started_at": time.time() } }
 _pipeline_jobs: dict[str, dict] = {}
+
+# Pipeline queue — ensures only one heavy pipeline runs at a time
+# (Whisper large-v3 uses ~10GB RAM, two concurrent would thrash)
+_pipeline_queue: asyncio.Queue = asyncio.Queue()
+_pipeline_worker_started = False
 
 
 @router.post("/api/recording/start", response_model=RecordingStartResponse)
@@ -131,16 +136,17 @@ async def stop_recording(
     state_file = Path("/tmp/mm_recording_state.json")
     state_file.unlink(missing_ok=True)
 
-    # Create pipeline job entry
+    # Create pipeline job entry — starts as "queued" until the worker picks it up
     _pipeline_jobs[meeting_id] = {
-        "step": "saving",
+        "step": "queued",
         "progress": 0.0,
         "error": None,
         "started_at": time.time(),
     }
 
-    # Fire background pipeline task
-    asyncio.create_task(_run_pipeline(meeting_id, config))
+    # Enqueue pipeline job (runs sequentially to avoid memory thrashing)
+    _pipeline_queue.put_nowait((meeting_id, config))
+    _ensure_pipeline_worker()
 
     return {
         "status": "processing",
@@ -148,6 +154,29 @@ async def stop_recording(
         "audio_file": result.audio_file,
         "duration_seconds": result.duration_seconds,
     }
+
+
+def _ensure_pipeline_worker():
+    """Start the pipeline worker if not already running."""
+    global _pipeline_worker_started
+    if not _pipeline_worker_started:
+        _pipeline_worker_started = True
+        asyncio.create_task(_pipeline_worker())
+
+
+async def _pipeline_worker():
+    """Process pipeline jobs one at a time from the queue."""
+    global _pipeline_worker_started
+    try:
+        while True:
+            meeting_id, config = await asyncio.wait_for(_pipeline_queue.get(), timeout=300)
+            await _run_pipeline(meeting_id, config)
+            _pipeline_queue.task_done()
+    except asyncio.TimeoutError:
+        # No jobs for 5 minutes — stop the worker
+        pass
+    finally:
+        _pipeline_worker_started = False
 
 
 async def _run_pipeline(meeting_id: str, config: AppConfig):
