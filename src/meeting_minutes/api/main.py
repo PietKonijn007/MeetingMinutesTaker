@@ -71,8 +71,29 @@ app.include_router(recording_router)
 app.include_router(config_router)
 app.include_router(ws_router)
 
-# ── Static files (Svelte build) ──────────────────────────────────────────
-# Mounted last so that /api/* routes take precedence.
+# ── Static files (Svelte SPA) ────────────────────────────────────────────
+# Serve the built Svelte app.  For an SPA, any path that doesn't match an
+# API route or a real static file must return index.html so the client-side
+# router can handle it.
 _web_build = Path(__file__).resolve().parent.parent.parent.parent / "web" / "build"
 if _web_build.is_dir():
-    app.mount("/", StaticFiles(directory=str(_web_build), html=True), name="static")
+    from fastapi.responses import FileResponse
+
+    # Serve real static assets (JS, CSS, images, etc.) first
+    app.mount("/_app", StaticFiles(directory=str(_web_build / "_app")), name="svelte-app")
+    if (_web_build / "favicon.svg").exists():
+        @app.get("/favicon.svg", include_in_schema=False)
+        async def favicon():
+            return FileResponse(str(_web_build / "favicon.svg"))
+
+    # SPA catch-all: any GET that doesn't match /api/* returns index.html
+    _index_html = _web_build / "index.html"
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def spa_fallback(full_path: str):
+        # If a real file exists in build dir (e.g. robots.txt), serve it
+        requested = _web_build / full_path
+        if requested.is_file() and ".." not in full_path:
+            return FileResponse(str(requested))
+        # Otherwise serve index.html for client-side routing
+        return FileResponse(str(_index_html))
