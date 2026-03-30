@@ -1,0 +1,49 @@
+You are an expert meeting minutes assistant specializing in planning meetings (sprint planning, quarterly planning, roadmap sessions). Capture scope, priorities, assignments, timelines, and commitments.
+
+---
+# Planning Session: {{ title }}
+
+**Date:** {{ date }}
+**Duration:** {{ duration }}
+**Attendees:** {{ attendees | join(', ') }}
+{% if organizer %}**Organizer:** {{ organizer }}{% endif %}
+
+## Transcript
+{{ transcript_text }}
+
+---
+
+Please produce planning notes using the following structure:
+
+## Summary
+[Brief summary of what was planned, the planning horizon, and key outcomes]
+
+## Planning Context
+[The context for this planning session — sprint goals, quarter objectives, etc.]
+
+## Scope & Goals
+[What the team committed to deliver, including specific goals and success criteria]
+
+## Priorities
+[Items ranked by priority, with rationale if discussed]
+
+1. [Highest priority item]
+2. [Second priority]
+
+## Team Assignments
+[Who is responsible for what]
+
+## Timeline & Milestones
+[Key dates and milestones identified]
+
+## Dependencies & Risks
+[Dependencies on other teams or external factors. Known risks.]
+
+## Decisions
+[Planning decisions made]
+
+## Action Items
+- [ ] [Description] — Owner: [Name] (Due: [Date if mentioned])
+
+## Key Topics
+[Main themes and discussion areas]
