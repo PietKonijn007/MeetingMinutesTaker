@@ -13,53 +13,78 @@
   let refreshingDevices = $state(false);
   let devicePollTimer = $state(null);
 
-  // Recording state — updated by polling /api/recording/status
+  // Recording state — pushed via WebSocket
   let recState = $state('idle');
   let recElapsed = $state(0);
   let recLevel = $state(0);
   let recMeetingId = $state(null);
 
-  // Active pipeline jobs — updated by polling /api/pipelines
+  // Active pipeline jobs — pushed via WebSocket
   let activePipelines = $state([]);
 
-  let statusPollTimer = null;
+  // WebSocket connection for real-time push updates
+  let ws = null;
+  let wsReconnectTimer = null;
 
-  function startStatusPolling() {
-    if (statusPollTimer) return;
-    statusPollTimer = setInterval(async () => {
+  function connectWebSocket() {
+    if (typeof window === 'undefined') return;
+    if (ws && ws.readyState <= 1) return; // already open or connecting
+
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const host = window.location.host;
+    const url = `${protocol}//${host}/ws/recording`;
+
+    try {
+      ws = new WebSocket(url);
+    } catch (e) {
+      wsReconnectTimer = setTimeout(connectWebSocket, 3000);
+      return;
+    }
+
+    ws.onmessage = (event) => {
       try {
-        const status = await api.getRecordingStatus();
+        const data = JSON.parse(event.data);
 
-        // Don't let stale API responses override local state during transitions
-        if (!startingRecording && !stoppingRecording) {
-          recState = status.state || 'idle';
+        // Update recording state (don't override during transitions)
+        if (data.recording && !startingRecording && !stoppingRecording) {
+          recState = data.recording.state || 'idle';
+          recElapsed = data.recording.elapsed_seconds || 0;
+          recLevel = data.recording.audio_level || 0;
+          recMeetingId = data.recording.meeting_id || null;
+
+          if (recState === 'recording' && recLevel != null) {
+            levelHistory = [...levelHistory.slice(1), recLevel];
+          }
         }
-        recElapsed = status.elapsed_seconds || 0;
-        recLevel = status.audio_level || 0;
-        recMeetingId = status.meeting_id || null;
 
-        if (recState === 'recording' && recLevel != null) {
-          levelHistory = [...levelHistory.slice(1), recLevel];
+        // Update pipeline jobs
+        if (data.pipelines) {
+          activePipelines = data.pipelines;
         }
-
-        // Also fetch pipeline jobs
-        const pipelines = await api.getPipelines();
-        activePipelines = pipelines || [];
-
-        // Stop polling once idle and no active pipelines
-        if (recState === 'idle' && !startingRecording && activePipelines.length === 0) {
-          stopStatusPolling();
-        }
-      } catch (e) {
-        // ignore polling errors
+      } catch {
+        // ignore parse errors
       }
-    }, 200); // 5 times/sec for responsive UI
+    };
+
+    ws.onclose = () => {
+      ws = null;
+      // Reconnect after 2 seconds
+      wsReconnectTimer = setTimeout(connectWebSocket, 2000);
+    };
+
+    ws.onerror = () => {
+      if (ws) ws.close();
+    };
   }
 
-  function stopStatusPolling() {
-    if (statusPollTimer) {
-      clearInterval(statusPollTimer);
-      statusPollTimer = null;
+  function disconnectWebSocket() {
+    if (wsReconnectTimer) {
+      clearTimeout(wsReconnectTimer);
+      wsReconnectTimer = null;
+    }
+    if (ws) {
+      ws.close();
+      ws = null;
     }
   }
 
@@ -82,7 +107,6 @@
       recElapsed = 0;
       levelHistory = new Array(24).fill(0);
       addToast('Recording started', 'success');
-      startStatusPolling();
     } catch (e) {
       addToast(`Failed to start recording: ${e.message}`, 'error');
     } finally {
@@ -100,7 +124,6 @@
       recElapsed = 0;
       levelHistory = new Array(24).fill(0);
       addToast('Recording stopped. Processing in background...', 'info');
-      // Keep polling to track pipeline progress
     } catch (e) {
       addToast(`Failed to stop recording: ${e.message}`, 'error');
     } finally {
@@ -150,19 +173,8 @@
     loadDevices();
     loadLanguages();
 
-    // Check initial recording state — resume polling if already recording or pipelines active
-    Promise.all([
-      api.getRecordingStatus(),
-      api.getPipelines(),
-    ]).then(([status, pipelines]) => {
-      recState = status.state || 'idle';
-      recElapsed = status.elapsed_seconds || 0;
-      recMeetingId = status.meeting_id || null;
-      activePipelines = pipelines || [];
-      if (status.state === 'recording' || (pipelines && pipelines.length > 0)) {
-        startStatusPolling();
-      }
-    }).catch(() => {});
+    // Connect WebSocket for real-time push updates
+    connectWebSocket();
 
     // Poll for new devices every 3 seconds only when idle
     devicePollTimer = setInterval(() => {
@@ -171,7 +183,7 @@
 
     return () => {
       if (devicePollTimer) clearInterval(devicePollTimer);
-      stopStatusPolling();
+      disconnectWebSocket();
     };
   });
 
