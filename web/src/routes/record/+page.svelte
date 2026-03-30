@@ -1,7 +1,6 @@
 <script>
-  import { onMount } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
   import { api } from '$lib/api.js';
-  import { recording } from '$lib/stores/recording.js';
   import StatusStepper from '$lib/components/StatusStepper.svelte';
   import { addToast } from '$lib/stores/toasts.js';
 
@@ -15,9 +14,7 @@
   let refreshingDevices = $state(false);
   let devicePollTimer = $state(null);
 
-  // Local reactive copies of WebSocket store data.
-  // Svelte 5 reliably re-renders $state variables but may not deeply
-  // track nested properties on store subscriptions in templates.
+  // Recording state — updated by polling /api/recording/status
   let recState = $state('idle');
   let recElapsed = $state(0);
   let recLevel = $state(0);
@@ -25,21 +22,35 @@
   let recStep = $state(null);
   let recProgress = $state(0);
 
-  // Mirror the WebSocket store into local $state on every update
-  $effect(() => {
-    const r = $recording;
-    recState = r.state;
-    recElapsed = r.elapsedSeconds;
-    recLevel = r.audioLevel;
-    recMeetingId = r.meetingId;
-    recStep = r.step;
-    recProgress = r.progress;
+  let statusPollTimer = null;
 
-    // Update level history during recording
-    if (r.state === 'recording' && r.audioLevel != null) {
-      levelHistory = [...levelHistory.slice(1), r.audioLevel];
+  function startStatusPolling() {
+    if (statusPollTimer) return;
+    statusPollTimer = setInterval(async () => {
+      try {
+        const status = await api.getRecordingStatus();
+        recState = status.state || 'idle';
+        recElapsed = status.elapsed_seconds || 0;
+        recLevel = status.audio_level || 0;
+        recMeetingId = status.meeting_id || null;
+        recStep = status.step || null;
+        recProgress = status.progress || 0;
+
+        if (recState === 'recording' && recLevel != null) {
+          levelHistory = [...levelHistory.slice(1), recLevel];
+        }
+      } catch (e) {
+        // ignore polling errors
+      }
+    }, 200); // 5 times/sec for responsive UI
+  }
+
+  function stopStatusPolling() {
+    if (statusPollTimer) {
+      clearInterval(statusPollTimer);
+      statusPollTimer = null;
     }
-  });
+  }
 
   function formatElapsed(sec) {
     if (sec == null || sec === 0) return '00:00';
@@ -84,7 +95,11 @@
       if (selectedDevice) body.audio_device = selectedDevice;
       if (selectedLanguage && selectedLanguage !== 'auto') body.language = selectedLanguage;
       await api.startRecording(body);
+      recState = 'recording';
+      recElapsed = 0;
+      levelHistory = new Array(24).fill(0);
       addToast('Recording started', 'success');
+      startStatusPolling();
     } catch (e) {
       addToast(`Failed to start recording: ${e.message}`, 'error');
     } finally {
@@ -146,15 +161,26 @@
     loadDevices();
     loadLanguages();
 
-    // Poll for new devices every 3 seconds only when idle (picks up AirPods, USB mics, etc.)
+    // Check initial recording state — resume polling if already recording
+    api.getRecordingStatus().then((status) => {
+      recState = status.state || 'idle';
+      recElapsed = status.elapsed_seconds || 0;
+      recMeetingId = status.meeting_id || null;
+      recStep = status.step || null;
+      if (status.state === 'recording' || status.state === 'processing') {
+        startStatusPolling();
+      }
+    }).catch(() => {});
+
+    // Poll for new devices every 3 seconds only when idle
     devicePollTimer = setInterval(() => {
       if (recState === 'idle' || recState === 'done') loadDevices();
     }, 3000);
 
     return () => {
       if (devicePollTimer) clearInterval(devicePollTimer);
+      stopStatusPolling();
     };
-    api.getRecordingStatus().then(() => {}).catch(() => {});
   });
 </script>
 
