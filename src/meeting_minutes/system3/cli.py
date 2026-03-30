@@ -402,5 +402,27 @@ def reprocess_cmd(
     asyncio.run(_run())
 
 
+# ---------------------------------------------------------------------------
+# mm serve
+# ---------------------------------------------------------------------------
+
+
+@app.command("serve")
+def serve_cmd(
+    host: str = typer.Option("127.0.0.1", "--host", help="Bind address"),
+    port: int = typer.Option(8080, "--port", "-p", help="Port number"),
+):
+    """Start the API server."""
+    import uvicorn
+
+    console.print(f"[green]Starting API server on {host}:{port}[/green]")
+    uvicorn.run(
+        "meeting_minutes.api.main:app",
+        host=host,
+        port=port,
+        reload=False,
+    )
+
+
 if __name__ == "__main__":
     app()

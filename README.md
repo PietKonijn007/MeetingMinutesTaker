@@ -98,6 +98,29 @@ mm actions complete <action_id>                   # Mark done
 | `mm generate <id>` | Generate minutes from transcript |
 | `mm reprocess <id>` | Re-run full pipeline for a meeting |
 | `mm delete <id>` | Delete meeting and all associated data |
+| `mm serve` | Start the web UI + API server (supports `--host`, `--port`) |
+
+## Web UI
+
+A browser-based interface at `localhost:8080` with meetings list, action items, decisions, people, stats, recording controls, and settings.
+
+```bash
+# Start the server
+mm serve
+
+# Open in your browser
+open http://localhost:8080
+```
+
+**Pages**: Meetings (list/grid), Meeting Detail (minutes/transcript/actions tabs with audio player), Action Items, Decisions, People, Stats (charts), Record (live waveform), Settings.
+
+**Features**: Dark mode, full-text search with `Cmd+K`, keyboard navigation, responsive layout, meeting type color coding.
+
+**Development** (with hot reload):
+```bash
+mm serve                          # API on :8080
+cd web && npm install && npm run dev   # Svelte on :3000, proxies /api → :8080
+```
 
 ## Configuration
 
@@ -154,12 +177,23 @@ MeetingMinutesTaker/
 │   │   ├── parser.py          #   MinutesParser (extract sections, actions, decisions)
 │   │   ├── quality.py         #   QualityChecker (coverage, hallucination, length)
 │   │   └── output.py          #   MinutesJSONWriter
-│   └── system3/               # Storage & search
-│       ├── db.py              #   SQLAlchemy ORM + FTS5 virtual table
-│       ├── storage.py         #   StorageEngine (upsert, person dedup)
-│       ├── search.py          #   SearchEngine (FTS5, BM25, filter parsing)
-│       ├── ingest.py          #   MinutesIngester
-│       └── cli.py             #   Typer CLI (mm command)
+│   ├── system3/               # Storage & search
+│   │   ├── db.py              #   SQLAlchemy ORM + FTS5 virtual table
+│   │   ├── storage.py         #   StorageEngine (upsert, person dedup)
+│   │   ├── search.py          #   SearchEngine (FTS5, BM25, filter parsing)
+│   │   ├── ingest.py          #   MinutesIngester
+│   │   └── cli.py             #   Typer CLI (mm command)
+│   └── api/                   # FastAPI REST API + WebSocket
+│       ├── main.py            #   App factory, CORS, static file serving
+│       ├── deps.py            #   Dependency injection
+│       ├── schemas.py         #   Pydantic response models
+│       ├── ws.py              #   WebSocket (recording status, pipeline progress)
+│       └── routes/            #   Route modules (meetings, search, actions, etc.)
+├── web/                       # Svelte frontend (SvelteKit + Tailwind CSS)
+│   └── src/
+│       ├── lib/components/    #   14 reusable components
+│       ├── lib/stores/        #   Theme + recording state stores
+│       └── routes/            #   8 pages (meetings, detail, actions, stats, etc.)
 ├── templates/                 # Jinja2 meeting-type prompt templates
 ├── tests/                     # 115 tests (property-based + unit)
 ├── config/config.yaml         # Default configuration

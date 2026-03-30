@@ -1,0 +1,66 @@
+const BASE = '/api';
+
+async function request(path, options = {}) {
+  const res = await fetch(`${BASE}${path}`, {
+    headers: { 'Content-Type': 'application/json', ...options.headers },
+    ...options,
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(err.error || err.detail || res.statusText);
+  }
+  return res.json();
+}
+
+export const api = {
+  // Meetings
+  getMeetings: (params = {}) => {
+    const qs = new URLSearchParams(params).toString();
+    return request(`/meetings?${qs}`);
+  },
+  getMeeting: (id) => request(`/meetings/${id}`),
+  getTranscript: (id) => request(`/meetings/${id}/transcript`),
+  deleteMeeting: (id) => request(`/meetings/${id}`, { method: 'DELETE' }),
+  updateMeeting: (id, data) => request(`/meetings/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  regenerateMeeting: (id) => request(`/meetings/${id}/regenerate`, { method: 'POST' }),
+
+  // Search
+  search: (params) => {
+    const qs = new URLSearchParams(params).toString();
+    return request(`/search?${qs}`);
+  },
+
+  // Actions
+  getActionItems: (params = {}) => {
+    const qs = new URLSearchParams(params).toString();
+    return request(`/action-items?${qs}`);
+  },
+  updateActionItem: (id, data) => request(`/action-items/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+
+  // Decisions
+  getDecisions: (params = {}) => {
+    const qs = new URLSearchParams(params).toString();
+    return request(`/decisions?${qs}`);
+  },
+
+  // People
+  getPeople: () => request('/people'),
+  getPerson: (id) => request(`/people/${id}`),
+  getPersonMeetings: (id) => request(`/people/${id}/meetings`),
+
+  // Stats
+  getStats: () => request('/stats'),
+  getMeetingsOverTime: () => request('/stats/meetings-over-time'),
+  getByType: () => request('/stats/by-type'),
+  getActionVelocity: () => request('/stats/action-velocity'),
+
+  // Recording
+  startRecording: () => request('/recording/start', { method: 'POST' }),
+  stopRecording: () => request('/recording/stop', { method: 'POST' }),
+  getRecordingStatus: () => request('/recording/status'),
+  getAudioDevices: () => request('/audio-devices'),
+
+  // Config
+  getConfig: () => request('/config'),
+  updateConfig: (data) => request('/config', { method: 'PATCH', body: JSON.stringify(data) }),
+};
