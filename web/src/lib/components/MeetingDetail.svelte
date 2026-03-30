@@ -34,7 +34,10 @@
 
   function formatDate(dateStr) {
     if (!dateStr) return '';
-    const d = new Date(dateStr + 'T12:00:00');
+    // Handle both "2026-03-30" and "2026-03-30T00:00:00" formats
+    const raw = dateStr.length === 10 ? dateStr + 'T12:00:00' : dateStr;
+    const d = new Date(raw);
+    if (isNaN(d.getTime())) return dateStr;
     return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
   }
 
