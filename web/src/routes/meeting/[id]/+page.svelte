@@ -64,7 +64,18 @@
   async function loadMeeting() {
     loading = true;
     try {
-      meeting = await api.getMeeting(id);
+      const raw = await api.getMeeting(id);
+      // Normalize API field names to what the template expects
+      meeting = {
+        ...raw,
+        type: raw.meeting_type,
+        attendees: (raw.attendees || []).map(a => typeof a === 'string' ? a : (a.name || a.email || '')),
+        actions: raw.action_items || [],
+        decisions: raw.decisions || [],
+        minutes_markdown: raw.minutes?.markdown_content || null,
+        summary: raw.minutes?.summary || raw.summary || null,
+        duration: raw.duration,
+      };
     } catch (e) {
       console.error('Failed to load meeting:', e);
       addToast('Failed to load meeting', 'error');
@@ -77,7 +88,10 @@
     try {
       transcript = await api.getTranscript(id);
     } catch (e) {
-      console.error('Failed to load transcript:', e);
+      // Transcript may not be stored yet — use meeting.transcript_text as fallback
+      if (meeting?.transcript_text) {
+        transcript = { full_text: meeting.transcript_text, segments: [] };
+      }
     }
   }
 
