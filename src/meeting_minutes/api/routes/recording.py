@@ -172,8 +172,7 @@ async def _pipeline_worker():
             meeting_id, config = await asyncio.wait_for(_pipeline_queue.get(), timeout=300)
             await _run_pipeline(meeting_id, config)
             _pipeline_queue.task_done()
-    except asyncio.TimeoutError:
-        # No jobs for 5 minutes — stop the worker
+    except (asyncio.TimeoutError, asyncio.CancelledError, KeyboardInterrupt):
         pass
     finally:
         _pipeline_worker_started = False
@@ -207,6 +206,10 @@ async def _run_pipeline(meeting_id: str, config: AppConfig):
 
         # Done
         job["step"] = "done"
+    except (asyncio.CancelledError, KeyboardInterrupt):
+        job["step"] = "error"
+        job["error"] = "Cancelled (server shutting down)"
+        return
     except Exception as exc:
         job["step"] = "error"
         job["error"] = str(exc)
@@ -218,7 +221,10 @@ async def _run_pipeline(meeting_id: str, config: AppConfig):
         traceback.print_exc()
 
     # Clean up after 60 seconds so UI can see completion
-    await asyncio.sleep(60)
+    try:
+        await asyncio.sleep(60)
+    except (asyncio.CancelledError, KeyboardInterrupt):
+        pass
     _pipeline_jobs.pop(meeting_id, None)
 
 
