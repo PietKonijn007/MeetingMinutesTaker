@@ -9,22 +9,23 @@
   let loading = $state(true);
   let searchQuery = $state('');
 
-  // Group decisions by date
-  const groupedDecisions = $derived(() => {
+  // Group decisions by meeting date
+  function getGroupedDecisions() {
     const filtered = searchQuery
-      ? decisions.filter((d) => d.description.toLowerCase().includes(searchQuery.toLowerCase()))
+      ? decisions.filter((d) => d.description?.toLowerCase().includes(searchQuery.toLowerCase()))
       : decisions;
 
     const groups = {};
     for (const d of filtered) {
-      const dateKey = d.date
-        ? new Date(d.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+      const raw = d.meeting_date || d.date;
+      const dateKey = raw
+        ? new Date(raw).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
         : 'Unknown Date';
       if (!groups[dateKey]) groups[dateKey] = [];
       groups[dateKey].push(d);
     }
     return groups;
-  });
+  }
 
   async function loadDecisions() {
     loading = true;
@@ -77,12 +78,12 @@
       description="Decisions from your meetings will appear here."
     />
   {:else}
-    {@const groups = groupedDecisions()}
+    {@const groups = getGroupedDecisions()}
     {#each Object.entries(groups) as [date, items]}
       <div class="mb-8">
         <h2 class="text-sm font-medium text-[var(--text-muted)] mb-3">{date}</h2>
         <div class="space-y-3">
-          {#each items as decision (decision.id)}
+          {#each items as decision (decision.decision_id)}
             <DecisionCard {decision} />
           {/each}
         </div>
