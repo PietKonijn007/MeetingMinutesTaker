@@ -9,7 +9,7 @@ recording:
   auto_stop_silence_minutes: 5
 transcription:
   primary_engine: whisper
-  whisper_model: medium
+  whisper_model: large-v3
   language: auto
   custom_vocabulary: null
 diarization:
@@ -21,7 +21,7 @@ generation:
     model: claude-sonnet-4-6
     fallback_provider: null
     fallback_model: null
-    temperature: 0.2
+    temperature: 0.5
     max_output_tokens: 4096
     retry_attempts: 3
     timeout_seconds: 120
