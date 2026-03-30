@@ -12,7 +12,7 @@
   import PersonAvatar from '$lib/components/PersonAvatar.svelte';
   import Skeleton from '$lib/components/Skeleton.svelte';
   import ConfirmModal from '$lib/components/ConfirmModal.svelte';
-  import { addToast } from '$lib/components/Toast.svelte';
+  import { addToast } from '$lib/stores/toasts.js';
 
   let meeting = $state(null);
   let transcript = $state(null);

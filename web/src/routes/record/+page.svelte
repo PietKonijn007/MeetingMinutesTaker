@@ -3,7 +3,7 @@
   import { api } from '$lib/api.js';
   import { recording } from '$lib/stores/recording.js';
   import StatusStepper from '$lib/components/StatusStepper.svelte';
-  import { addToast } from '$lib/components/Toast.svelte';
+  import { addToast } from '$lib/stores/toasts.js';
 
   let audioDevices = $state([]);
   let startingRecording = $state(false);

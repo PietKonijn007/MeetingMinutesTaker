@@ -5,7 +5,8 @@
   import { recording } from '$lib/stores/recording.js';
   import { onMount } from 'svelte';
   import SearchBar from '$lib/components/SearchBar.svelte';
-  import Toast, { toasts } from '$lib/components/Toast.svelte';
+  import Toast from '$lib/components/Toast.svelte';
+  import { toasts } from '$lib/stores/toasts.js';
   import { goto } from '$app/navigation';
 
   let { children } = $props();

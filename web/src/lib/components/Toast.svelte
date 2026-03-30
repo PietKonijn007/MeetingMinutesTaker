@@ -1,28 +1,5 @@
 <script>
-  import { writable } from 'svelte/store';
-
-  /**
-   * Global toast store
-   * Usage: import { toasts, addToast } from './Toast.svelte';
-   */
-  export const toasts = writable([]);
-
-  let toastId = 0;
-
-  export function addToast(message, type = 'info', duration = 3000) {
-    const id = ++toastId;
-    toasts.update((all) => [...all, { id, message, type }]);
-    if (duration > 0) {
-      setTimeout(() => {
-        toasts.update((all) => all.filter((t) => t.id !== id));
-      }, duration);
-    }
-    return id;
-  }
-
-  export function removeToast(id) {
-    toasts.update((all) => all.filter((t) => t.id !== id));
-  }
+  import { removeToast } from '$lib/stores/toasts.js';
 
   /** @type {{ items: Array<{id: number, message: string, type: string}> }} */
   let { items = [] } = $props();

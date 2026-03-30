@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { api } from '$lib/api.js';
   import { theme } from '$lib/stores/theme.js';
-  import { addToast } from '$lib/components/Toast.svelte';
+  import { addToast } from '$lib/stores/toasts.js';
   import Skeleton from '$lib/components/Skeleton.svelte';
 
   let config = $state(null);
