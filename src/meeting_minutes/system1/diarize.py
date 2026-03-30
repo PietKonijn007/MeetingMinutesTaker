@@ -26,8 +26,11 @@ class DiarizationEngine:
         import warnings
 
         try:
-            # Suppress torchcodec/ffmpeg warnings from pyannote
+            # Suppress torchcodec/ffmpeg warnings from pyannote before import
+            warnings.filterwarnings("ignore", category=UserWarning, module="pyannote")
             warnings.filterwarnings("ignore", message=".*torchcodec.*")
+            warnings.filterwarnings("ignore", message=".*libtorchcodec.*")
+            os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")  # suppress tokenizers warning
             from pyannote.audio import Pipeline  # lazy import
 
             hf_token = os.environ.get("HF_TOKEN") or True
