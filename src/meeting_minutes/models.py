@@ -227,6 +227,7 @@ class ParsedMinutes(BaseModel):
     """Output of MinutesParser."""
 
     meeting_id: str
+    title: str = ""
     summary: str
     sections: list[MinutesSection]
     action_items: list[ActionItem]

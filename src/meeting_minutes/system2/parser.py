@@ -35,7 +35,8 @@ class MinutesParser:
     )
 
     def parse(self, llm_response: str, meeting_context: MeetingContext) -> ParsedMinutes:
-        """Extract summary, sections, action_items, decisions, key_topics."""
+        """Extract title, summary, sections, action_items, decisions, key_topics."""
+        title = self._extract_title(llm_response)
         summary = self._extract_summary(llm_response)
         sections = self._extract_sections(llm_response)
         action_items = self._extract_action_items(llm_response)
@@ -44,6 +45,7 @@ class MinutesParser:
 
         return ParsedMinutes(
             meeting_id=meeting_context.meeting_id,
+            title=title,
             summary=summary,
             sections=sections,
             action_items=action_items,
@@ -56,6 +58,33 @@ class MinutesParser:
                 "attendees": meeting_context.attendees,
             },
         )
+
+    def _extract_title(self, text: str) -> str:
+        """Extract title from ## Title section."""
+        match = re.search(
+            r"^#{1,3}\s+Title\s*\n(.*?)(?=^#{1,3}\s|\Z)",
+            text,
+            re.MULTILINE | re.DOTALL | re.IGNORECASE,
+        )
+        if match:
+            title = match.group(1).strip()
+            # Clean up: remove markdown formatting, quotes, brackets
+            title = re.sub(r"^[\[\"\']|[\]\"\']$", "", title.strip())
+            title = re.sub(r"\*+", "", title)
+            # Take only the first line if multi-line
+            title = title.split("\n")[0].strip()
+            if title:
+                return title
+
+        # Fallback: look for a # top-level heading
+        match = re.search(r"^#\s+(.+)$", text, re.MULTILINE)
+        if match:
+            title = match.group(1).strip()
+            # Skip generic "Meeting Minutes" headings
+            if not re.match(r"^meeting\s*(minutes|notes)?[\s:]*$", title, re.IGNORECASE):
+                return title
+
+        return ""
 
     def _extract_summary(self, text: str) -> str:
         """Extract paragraph after ## Summary heading."""

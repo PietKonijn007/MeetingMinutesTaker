@@ -240,6 +240,11 @@ class PipelineOrchestrator:
         _console(f"  Parsing LLM response...")
         parser = MinutesParser()
         parsed_minutes = parser.parse(llm_response.text, context)
+
+        # Use LLM-generated title if available, fall back to context title
+        if parsed_minutes.title:
+            context.title = parsed_minutes.title
+            _console(f"    Title: {parsed_minutes.title}")
         _console(f"    Summary: {len(parsed_minutes.summary)} chars")
         _console(f"    Sections: {len(parsed_minutes.sections)}")
         _console(f"    Action items: {len(parsed_minutes.action_items)}")
