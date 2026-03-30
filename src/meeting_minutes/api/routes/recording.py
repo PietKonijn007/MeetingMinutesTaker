@@ -34,44 +34,58 @@ _recording_state: dict = {
 @router.post("/api/recording/start", response_model=RecordingStartResponse)
 def start_recording(
     config: Annotated[AppConfig, Depends(get_config)],
-    body: RecordingStartRequest | None = None,
+    body: RecordingStartRequest = RecordingStartRequest(),
 ):
     """Start recording audio. Optionally override audio device and language."""
-    if _recording_state["state"] == "recording" and _recording_state.get("engine") and _recording_state["engine"].is_recording():
-        raise HTTPException(status_code=409, detail="Already recording")
+    import traceback as tb
 
-    from meeting_minutes.config import RecordingConfig
-    from meeting_minutes.system1.capture import AudioCaptureEngine
-
-    # Override config with request values if provided
-    rec_config = config.recording.model_copy()
-    if body and body.audio_device:
-        rec_config.audio_device = body.audio_device
-
-    # Store the language override for the pipeline (transcription step)
-    language = None
-    if body and body.language:
-        language = body.language
-
-    data_dir = Path(config.data_dir).expanduser()
-    recordings_dir = data_dir / "recordings"
-    recordings_dir.mkdir(parents=True, exist_ok=True)
-
-    engine = AudioCaptureEngine(rec_config, output_dir=recordings_dir)
     try:
+        # Check if actually still recording
+        if _recording_state["state"] == "recording":
+            eng = _recording_state.get("engine")
+            if eng and eng.is_recording():
+                raise HTTPException(status_code=409, detail="Already recording")
+
+        from meeting_minutes.system1.capture import AudioCaptureEngine
+
+        # Override config with request values if provided
+        rec_config = config.recording.model_copy()
+        if body.audio_device:
+            rec_config.audio_device = body.audio_device
+
+        language = body.language if body.language else None
+
+        data_dir = Path(config.data_dir).expanduser()
+        recordings_dir = data_dir / "recordings"
+        recordings_dir.mkdir(parents=True, exist_ok=True)
+
+        print(f"\n  Starting recording — device: {rec_config.audio_device}")
+
+        engine = AudioCaptureEngine(rec_config, output_dir=recordings_dir)
         meeting_id = engine.start()
+
+        _recording_state["state"] = "recording"
+        _recording_state["meeting_id"] = meeting_id
+        _recording_state["start_time"] = time.time()
+        _recording_state["engine"] = engine
+        _recording_state["language"] = language
+
+        # Also write state file for CLI interop
+        state_file = Path("/tmp/mm_recording_state.json")
+        state_file.write_text(json.dumps({"meeting_id": meeting_id}))
+
+        print(f"  Recording started — meeting: {meeting_id}")
+        return RecordingStartResponse(meeting_id=meeting_id, status="recording")
+
+    except HTTPException:
+        raise
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Failed to start recording: {exc}")
-
-    _recording_state["state"] = "recording"
-    _recording_state["meeting_id"] = meeting_id
-    _recording_state["start_time"] = time.time()
-    _recording_state["engine"] = engine
-    _recording_state["language"] = language
-
-    # Also write state file for CLI interop
-    state_file = Path("/tmp/mm_recording_state.json")
-    state_file.write_text(json.dumps({"meeting_id": meeting_id}))
+        print(f"\n{'='*60}")
+        print(f"  RECORDING START ERROR")
+        print(f"  {type(exc).__name__}: {exc}")
+        print(f"{'='*60}")
+        tb.print_exc()
+        raise HTTPException(status_code=500, detail=str(exc))
 
     return RecordingStartResponse(meeting_id=meeting_id, status="recording")
 
