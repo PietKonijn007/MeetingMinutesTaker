@@ -1,5 +1,4 @@
 import { writable } from 'svelte/store';
-import { browser } from '$app/environment';
 
 function createRecordingStore() {
   const initial = {
@@ -18,14 +17,24 @@ function createRecordingStore() {
   let reconnectTimer = null;
 
   function connect() {
-    if (!browser) return;
+    if (typeof window === 'undefined') return;
     if (ws && ws.readyState <= 1) return; // already open or connecting
 
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const host = window.location.host;
-    ws = new WebSocket(`${protocol}//${host}/ws/recording`);
+    const url = `${protocol}//${host}/ws/recording`;
+    console.log('[recording-store] Connecting to WebSocket:', url);
+
+    try {
+      ws = new WebSocket(url);
+    } catch (e) {
+      console.error('[recording-store] WebSocket creation failed:', e);
+      reconnectTimer = setTimeout(connect, 3000);
+      return;
+    }
 
     ws.onopen = () => {
+      console.log('[recording-store] WebSocket connected');
       update((s) => ({ ...s, connected: true }));
       if (reconnectTimer) {
         clearTimeout(reconnectTimer);
@@ -45,19 +54,22 @@ function createRecordingStore() {
           progress: data.progress ?? s.progress,
           meetingId: data.meeting_id ?? s.meetingId
         }));
-      } catch {
-        // ignore malformed messages
+      } catch (e) {
+        console.error('[recording-store] Failed to parse WS message:', e);
       }
     };
 
-    ws.onclose = () => {
+    ws.onclose = (event) => {
+      console.log('[recording-store] WebSocket closed, code:', event.code, 'reason:', event.reason);
       update((s) => ({ ...s, connected: false }));
+      ws = null;
       // Attempt reconnect after 3 seconds
       reconnectTimer = setTimeout(connect, 3000);
     };
 
-    ws.onerror = () => {
-      ws.close();
+    ws.onerror = (event) => {
+      console.error('[recording-store] WebSocket error:', event);
+      if (ws) ws.close();
     };
   }
 
