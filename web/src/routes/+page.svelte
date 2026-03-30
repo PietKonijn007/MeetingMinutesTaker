@@ -39,10 +39,22 @@
       if (searchQuery) params.q = searchQuery;
 
       const data = await api.getMeetings(params);
+      // Normalize API fields to what MeetingCard expects
+      const normalized = (data.items || []).map(m => ({
+        id: m.meeting_id,
+        title: m.title,
+        date: m.date,
+        type: m.meeting_type,
+        duration: m.duration,
+        attendees: m.attendee_names || [],
+        summary: m.summary,
+        action_count: m.action_item_count || 0,
+        decision_count: m.decision_count || 0,
+      }));
       if (reset) {
-        meetings = data.items || [];
+        meetings = normalized;
       } else {
-        meetings = [...meetings, ...(data.items || [])];
+        meetings = [...meetings, ...normalized];
       }
       total = data.total || 0;
     } catch (e) {
@@ -123,7 +135,7 @@
   <!-- Loading state -->
   {#if loading}
     <div class="space-y-4">
-      {#each Array(5) as _}
+      {#each Array(5) as _, i (i)}
         <Skeleton type="card" />
       {/each}
     </div>
