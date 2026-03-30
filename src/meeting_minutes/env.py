@@ -31,7 +31,11 @@ def _parse_dotenv(path: Path) -> dict[str, str]:
 
 
 def load_dotenv() -> None:
-    """Load .env from the project root into os.environ (does NOT overwrite existing vars)."""
+    """Load .env from the project root into os.environ.
+
+    .env values take priority — they OVERWRITE existing environment variables.
+    This means the .env file is the source of truth; the environment is the fallback.
+    """
     # Search upward from this file's location to find .env
     candidates = [
         Path(__file__).resolve().parent.parent.parent / ".env",  # project root
@@ -42,6 +46,5 @@ def load_dotenv() -> None:
         env_vars = _parse_dotenv(candidate)
         if env_vars:
             for key, value in env_vars.items():
-                if key not in os.environ:
-                    os.environ[key] = value
+                os.environ[key] = value
             return  # stop after the first .env file found
