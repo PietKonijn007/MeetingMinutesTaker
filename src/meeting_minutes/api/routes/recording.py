@@ -247,9 +247,18 @@ def list_languages():
 
 @router.get("/api/audio-devices", response_model=list[AudioDeviceResponse])
 def list_audio_devices():
-    """List all available audio devices (input, output, and bidirectional)."""
+    """List all available audio devices (input, output, and bidirectional).
+
+    Forces PortAudio to re-scan devices on each call so newly connected
+    Bluetooth/USB devices (AirPods, headsets, etc.) are detected.
+    """
     try:
         import sounddevice as sd
+
+        # Force PortAudio to re-scan — required to detect devices
+        # connected after the server started (AirPods, USB mics, etc.)
+        sd._terminate()
+        sd._initialize()
 
         devices = sd.query_devices()
         result = []
