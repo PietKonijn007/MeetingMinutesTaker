@@ -120,18 +120,34 @@
   let inputDevices = $derived(audioDevices.filter(d => d.max_input_channels > 0));
   let outputDevices = $derived(audioDevices.filter(d => d.max_output_channels > 0));
 
+  let refreshingDevices = $state(false);
+  let devicePollTimer = $state(null);
+
   async function loadDevices() {
     try {
       const data = await api.getAudioDevices();
-      audioDevices = data.devices || data || [];
-      // Default to first input device
-      const inputs = audioDevices.filter(d => d.max_input_channels > 0);
-      if (inputs.length > 0 && !selectedDevice) {
-        selectedDevice = inputs[0].name;
+      const newDevices = data.devices || data || [];
+
+      // Check if device list actually changed
+      const oldNames = audioDevices.map(d => d.name).sort().join(',');
+      const newNames = newDevices.map(d => d.name).sort().join(',');
+      if (oldNames !== newNames) {
+        audioDevices = newDevices;
+        // Default to first input device if nothing selected yet
+        const inputs = newDevices.filter(d => d.max_input_channels > 0);
+        if (inputs.length > 0 && !selectedDevice) {
+          selectedDevice = inputs[0].name;
+        }
       }
     } catch (e) {
       // Devices might not be available
     }
+  }
+
+  async function refreshDevices() {
+    refreshingDevices = true;
+    await loadDevices();
+    refreshingDevices = false;
   }
 
   async function loadLanguages() {
@@ -145,6 +161,13 @@
   onMount(() => {
     loadDevices();
     loadLanguages();
+
+    // Poll for new devices every 3 seconds (picks up AirPods, USB mics, etc.)
+    devicePollTimer = setInterval(loadDevices, 3000);
+
+    return () => {
+      if (devicePollTimer) clearInterval(devicePollTimer);
+    };
     api.getRecordingStatus().then(() => {}).catch(() => {});
   });
 </script>
@@ -182,9 +205,22 @@
       <div class="w-full bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-xl p-5 space-y-5">
         <!-- Audio input device -->
         <div>
-          <label for="audio-device" class="block text-sm font-medium text-[var(--text-secondary)] mb-2">
-            Audio Input Device
-          </label>
+          <div class="flex items-center justify-between mb-2">
+            <label for="audio-device" class="text-sm font-medium text-[var(--text-secondary)]">
+              Audio Input Device
+            </label>
+            <button
+              onclick={refreshDevices}
+              disabled={refreshingDevices}
+              class="text-xs text-[var(--accent)] hover:text-[var(--accent-hover)] transition-colors flex items-center gap-1 disabled:opacity-50"
+              title="Refresh device list"
+            >
+              <svg class="w-3.5 h-3.5 {refreshingDevices ? 'animate-spin' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+              </svg>
+              Refresh
+            </button>
+          </div>
           <select
             id="audio-device"
             bind:value={selectedDevice}
