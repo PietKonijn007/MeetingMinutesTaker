@@ -22,12 +22,15 @@ class DiarizationEngine:
         if self._pipeline is not None:
             return self._pipeline
 
+        import os
+
         try:
             from pyannote.audio import Pipeline  # lazy import
 
+            hf_token = os.environ.get("HF_TOKEN") or True
             self._pipeline = Pipeline.from_pretrained(
                 "pyannote/speaker-diarization-3.1",
-                use_auth_token=True,
+                token=hf_token,
             )
         except ImportError as exc:
             raise RuntimeError(

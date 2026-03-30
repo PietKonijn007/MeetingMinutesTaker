@@ -39,6 +39,11 @@
         if (recState === 'recording' && recLevel != null) {
           levelHistory = [...levelHistory.slice(1), recLevel];
         }
+
+        // Stop polling once pipeline is done and state returns to idle
+        if (recState === 'idle' && !startingRecording) {
+          stopStatusPolling();
+        }
       } catch (e) {
         // ignore polling errors
       }
