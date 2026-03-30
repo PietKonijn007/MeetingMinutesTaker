@@ -128,7 +128,7 @@ def list_meetings(
     after: Optional[str] = Query(None, description="After date (ISO)"),
     before: Optional[str] = Query(None, description="Before date (ISO)"),
     person: Optional[str] = Query(None, description="Attendee email filter"),
-    limit: int = Query(20, ge=1, le=100),
+    limit: int = Query(20, ge=1, le=500),
     offset: int = Query(0, ge=0),
 ):
     """List meetings with optional filtering and search."""

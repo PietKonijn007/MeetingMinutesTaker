@@ -49,7 +49,7 @@
     const before = `${currentYear}-${String(currentMonth + 1).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
 
     try {
-      const data = await api.getMeetings({ after, before, limit: '500' });
+      const data = await api.getMeetings({ after, before, limit: '100' });
       meetingsForMonth = (data.items || []).map(m => ({
         id: m.meeting_id,
         title: m.title,
