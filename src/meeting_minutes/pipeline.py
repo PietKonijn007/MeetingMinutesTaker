@@ -250,17 +250,26 @@ class PipelineOrchestrator:
         _console(f"  Running quality checks...")
         quality_checker = QualityChecker()
         quality_report = quality_checker.check(parsed_minutes, transcript_data)
-        for check_name, passed in [
-            ("Speaker coverage", quality_report.speaker_coverage_ok),
-            ("Length ratio", quality_report.length_ratio_ok),
-            ("Hallucination check", quality_report.hallucination_ok),
+
+        coverage_ok = quality_report.speaker_coverage >= 0.8
+        ratio_ok = 0.05 <= quality_report.length_ratio <= 0.5
+        hallucination_ok = len(quality_report.hallucination_flags) == 0
+
+        for check_name, passed, detail in [
+            ("Speaker coverage", coverage_ok, f"{quality_report.speaker_coverage:.0%}"),
+            ("Length ratio", ratio_ok, f"{quality_report.length_ratio:.0%}"),
+            ("Hallucination check", hallucination_ok, f"{len(quality_report.hallucination_flags)} flags"),
         ]:
             icon = "✓" if passed else "⚠"
             color = "green" if passed else "yellow"
-            _console(f"    {icon} {check_name}", color)
-        if quality_report.warnings:
-            for w in quality_report.warnings[:5]:
-                _console(f"      → {w}", "dim")
+            _console(f"    {icon} {check_name} ({detail})", color)
+        if quality_report.hallucination_flags:
+            for flag in quality_report.hallucination_flags[:5]:
+                _console(f"      → {flag}", "dim")
+        if quality_report.issues:
+            for issue in quality_report.issues[:5]:
+                _console(f"      → {issue.message}", "dim")
+        _console(f"    Overall: {'PASS' if quality_report.passed else 'NEEDS REVIEW'} (score: {quality_report.score:.2f})")
 
         # Write output
         writer = MinutesJSONWriter()

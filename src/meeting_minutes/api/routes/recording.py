@@ -114,8 +114,13 @@ async def stop_recording(
     async def _run_pipeline():
         try:
             await orchestrator.run_full_pipeline(meeting_id)
-        except Exception:
-            pass
+        except Exception as exc:
+            import traceback
+            print(f"\n{'='*60}")
+            print(f"  PIPELINE ERROR for meeting {meeting_id}")
+            print(f"  {type(exc).__name__}: {exc}")
+            print(f"{'='*60}")
+            traceback.print_exc()
         finally:
             _recording_state["state"] = "idle"
             _recording_state["meeting_id"] = None
