@@ -205,7 +205,9 @@ class AudioDeviceResponse(BaseModel):
     index: int
     name: str
     max_input_channels: int
+    max_output_channels: int
     default_sample_rate: float
+    type: str  # "input" | "output" | "input/output"
 
 
 # ---------------------------------------------------------------------------

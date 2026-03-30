@@ -92,13 +92,17 @@
     }
   }
 
+  let inputDevices = $derived(audioDevices.filter(d => d.max_input_channels > 0));
+  let outputDevices = $derived(audioDevices.filter(d => d.max_output_channels > 0));
+
   async function loadDevices() {
     try {
       const data = await api.getAudioDevices();
       audioDevices = data.devices || data || [];
-      // Default to first device
-      if (audioDevices.length > 0 && !selectedDevice) {
-        selectedDevice = audioDevices[0].name;
+      // Default to first input device
+      const inputs = audioDevices.filter(d => d.max_input_channels > 0);
+      if (inputs.length > 0 && !selectedDevice) {
+        selectedDevice = inputs[0].name;
       }
     } catch (e) {
       // Devices might not be available
@@ -151,7 +155,7 @@
 
       <!-- Device and language selection -->
       <div class="w-full bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-xl p-5 space-y-5">
-        <!-- Audio device -->
+        <!-- Audio input device -->
         <div>
           <label for="audio-device" class="block text-sm font-medium text-[var(--text-secondary)] mb-2">
             Audio Input Device
@@ -163,15 +167,18 @@
                    text-[var(--text-primary)] text-sm focus:outline-none focus:ring-2 focus:ring-[var(--accent)]
                    focus:border-transparent transition-shadow"
           >
-            {#each audioDevices as device}
+            {#each inputDevices as device}
               <option value={device.name}>
-                {device.name} ({device.max_input_channels}ch)
+                {device.name} ({device.max_input_channels}ch input{device.max_output_channels > 0 ? ` + ${device.max_output_channels}ch output` : ''})
               </option>
             {/each}
-            {#if audioDevices.length === 0}
-              <option value="">No devices detected</option>
+            {#if inputDevices.length === 0}
+              <option value="">No input devices detected</option>
             {/if}
           </select>
+          <p class="mt-1.5 text-xs text-[var(--text-muted)]">
+            {audioDevices.length} device{audioDevices.length !== 1 ? 's' : ''} detected ({inputDevices.length} with input)
+          </p>
         </div>
 
         <!-- Language -->

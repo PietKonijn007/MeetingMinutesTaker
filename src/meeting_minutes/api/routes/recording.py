@@ -181,22 +181,33 @@ def list_languages():
 
 @router.get("/api/audio-devices", response_model=list[AudioDeviceResponse])
 def list_audio_devices():
-    """List available audio input devices."""
+    """List all available audio devices (input, output, and bidirectional)."""
     try:
         import sounddevice as sd
 
         devices = sd.query_devices()
         result = []
         for i, d in enumerate(devices):
-            if d["max_input_channels"] > 0:
-                result.append(
-                    AudioDeviceResponse(
-                        index=i,
-                        name=d["name"],
-                        max_input_channels=d["max_input_channels"],
-                        default_sample_rate=d["default_samplerate"],
-                    )
+            inp = d["max_input_channels"]
+            out = d["max_output_channels"]
+            if inp == 0 and out == 0:
+                continue
+            if inp > 0 and out > 0:
+                dev_type = "input/output"
+            elif inp > 0:
+                dev_type = "input"
+            else:
+                dev_type = "output"
+            result.append(
+                AudioDeviceResponse(
+                    index=i,
+                    name=d["name"],
+                    max_input_channels=inp,
+                    max_output_channels=out,
+                    default_sample_rate=d["default_samplerate"],
+                    type=dev_type,
                 )
+            )
         return result
     except Exception:
         # sounddevice may not be available in all environments
