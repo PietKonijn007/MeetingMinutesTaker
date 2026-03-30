@@ -107,14 +107,21 @@ async def stop_recording(
 
     meeting_id = _recording_state["meeting_id"]
 
+    # Set state to processing immediately so the UI updates
+    _recording_state["state"] = "processing"
+    _recording_state["pipeline_step"] = "saving"
+    _recording_state["pipeline_progress"] = 0.0
+
     try:
-        result = engine.stop()
+        # Run stop (which writes the FLAC file) in a thread to avoid blocking
+        import asyncio
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(None, engine.stop)
     except Exception as exc:
         _recording_state["state"] = "idle"
         _recording_state["engine"] = None
         raise HTTPException(status_code=500, detail=f"Failed to stop recording: {exc}")
 
-    _recording_state["state"] = "processing"
     _recording_state["engine"] = None
 
     # Clean up state file

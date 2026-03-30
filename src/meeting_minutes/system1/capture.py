@@ -80,6 +80,7 @@ class AudioCaptureEngine:
         self._stream = None
         self._lock = threading.Lock()
         self._frames_list: list = []
+        self._actual_sample_rate: int = config.sample_rate
 
     def start(self) -> str:
         """Begin recording. Returns meeting_id."""
@@ -104,6 +105,9 @@ class AudioCaptureEngine:
         import numpy as np  # lazy import
 
         def _callback(indata, frames, time, status):
+            if status:
+                import sys
+                print(f"  [audio] {status}", file=sys.stderr)
             if self._recording:
                 self._buffer.write(indata.copy())
                 self._frames_list.append(indata.copy())
@@ -124,8 +128,21 @@ class AudioCaptureEngine:
                     if self._config.audio_device == "auto"
                     else self._config.audio_device
                 )
+
+                # Query native sample rate — some macOS devices reject non-native rates
+                try:
+                    device_info = sd.query_devices(device, kind="input")
+                    native_rate = int(device_info["default_samplerate"])
+                    use_rate = native_rate  # always use native rate for compatibility
+                    self._actual_sample_rate = use_rate
+                    import sys
+                    print(f"  [audio] Device: {device_info['name']}, native rate: {native_rate}Hz, using: {use_rate}Hz", file=sys.stderr)
+                except Exception:
+                    use_rate = self._config.sample_rate
+                    self._actual_sample_rate = use_rate
+
                 self._stream = sd.InputStream(
-                    samplerate=self._config.sample_rate,
+                    samplerate=use_rate,
                     channels=1,
                     dtype="float32",
                     device=device,
@@ -138,17 +155,22 @@ class AudioCaptureEngine:
 
     def stop(self) -> AudioRecordingResult:
         """Stop recording. Write FLAC file. Return metadata."""
+        import sys
+
         with self._lock:
             if not self._recording:
                 raise RuntimeError("Not recording")
             self._recording = False
 
         end_time = datetime.now(timezone.utc)
+        print(f"  [audio] Stopping stream...", file=sys.stderr)
 
-        # Close stream
+        # Close stream immediately — don't wait
         if self._stream is not None:
             try:
-                if hasattr(self._stream, "stop"):
+                if hasattr(self._stream, "abort"):
+                    self._stream.abort()  # faster than stop() — drops remaining buffers
+                elif hasattr(self._stream, "stop"):
                     self._stream.stop()
                 if hasattr(self._stream, "close"):
                     self._stream.close()
@@ -156,21 +178,33 @@ class AudioCaptureEngine:
                 pass
             self._stream = None
 
+        print(f"  [audio] Stream closed. Writing audio file...", file=sys.stderr)
+
         # Write FLAC
         import numpy as np  # lazy import
+
+        sample_rate = getattr(self, "_actual_sample_rate", self._config.sample_rate)
 
         if self._frames_list:
             audio_data = np.concatenate(self._frames_list, axis=0)
         else:
-            audio_data = np.zeros((self._config.sample_rate, 1), dtype=np.float32)
+            audio_data = np.zeros((sample_rate, 1), dtype=np.float32)
+
+        # Free memory immediately
+        self._frames_list = []
+        self._buffer = None
+
+        print(f"  [audio] Audio: {len(audio_data)} samples, {len(audio_data)/sample_rate:.1f}s at {sample_rate}Hz", file=sys.stderr)
 
         audio_file = self._output_dir / f"{self._meeting_id}.flac"
         try:
             import soundfile as sf  # lazy import
 
-            sf.write(str(audio_file), audio_data, self._config.sample_rate)
+            sf.write(str(audio_file), audio_data, sample_rate)
         except Exception as exc:
             raise RuntimeError(f"Failed to write audio file: {exc}") from exc
+
+        print(f"  [audio] Saved: {audio_file.name} ({audio_file.stat().st_size / 1024:.0f} KB)", file=sys.stderr)
 
         duration = (end_time - self._start_time).total_seconds()
 
