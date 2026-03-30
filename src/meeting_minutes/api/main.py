@@ -10,7 +10,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from meeting_minutes.config import ConfigLoader
+from meeting_minutes.env import load_dotenv
 from meeting_minutes.system3.db import get_session_factory
+
+# Load .env on import so API keys are available to all routes
+load_dotenv()
 
 
 @asynccontextmanager

@@ -15,6 +15,10 @@ from rich.panel import Panel
 from rich.table import Table
 
 from meeting_minutes.config import ConfigLoader
+from meeting_minutes.env import load_dotenv
+
+# Load .env before anything else
+load_dotenv()
 
 app = typer.Typer(
     name="mm",
