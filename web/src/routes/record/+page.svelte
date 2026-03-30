@@ -6,6 +6,9 @@
   import { addToast } from '$lib/stores/toasts.js';
 
   let audioDevices = $state([]);
+  let languages = $state([]);
+  let selectedDevice = $state('');
+  let selectedLanguage = $state('auto');
   let startingRecording = $state(false);
   let stoppingRecording = $state(false);
 
@@ -65,7 +68,10 @@
   async function startRecording() {
     startingRecording = true;
     try {
-      await api.startRecording();
+      const body = {};
+      if (selectedDevice) body.audio_device = selectedDevice;
+      if (selectedLanguage && selectedLanguage !== 'auto') body.language = selectedLanguage;
+      await api.startRecording(body);
       addToast('Recording started', 'success');
     } catch (e) {
       addToast(`Failed to start recording: ${e.message}`, 'error');
@@ -90,17 +96,27 @@
     try {
       const data = await api.getAudioDevices();
       audioDevices = data.devices || data || [];
+      // Default to first device
+      if (audioDevices.length > 0 && !selectedDevice) {
+        selectedDevice = audioDevices[0].name;
+      }
     } catch (e) {
       // Devices might not be available
     }
   }
 
+  async function loadLanguages() {
+    try {
+      languages = await api.getLanguages();
+    } catch (e) {
+      languages = [{ code: 'auto', name: 'Auto-detect' }, { code: 'en', name: 'English' }];
+    }
+  }
+
   onMount(() => {
     loadDevices();
-    // Check initial recording status
-    api.getRecordingStatus().then((data) => {
-      // The WebSocket will handle ongoing updates
-    }).catch(() => {});
+    loadLanguages();
+    api.getRecordingStatus().then(() => {}).catch(() => {});
   });
 </script>
 
@@ -131,17 +147,54 @@
         {/if}
       </button>
 
-      <p class="text-sm text-[var(--text-secondary)] mb-6">Click to start recording</p>
+      <p class="text-sm text-[var(--text-secondary)] mb-8">Click to start recording</p>
 
-      <!-- Device info -->
-      {#if audioDevices.length > 0}
-        <div class="w-full bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg p-4 space-y-2">
-          <div class="flex justify-between text-sm">
-            <span class="text-[var(--text-secondary)]">Audio Device</span>
-            <span class="text-[var(--text-primary)]">{audioDevices[0]?.name || 'Default'}</span>
-          </div>
+      <!-- Device and language selection -->
+      <div class="w-full bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-xl p-5 space-y-5">
+        <!-- Audio device -->
+        <div>
+          <label for="audio-device" class="block text-sm font-medium text-[var(--text-secondary)] mb-2">
+            Audio Input Device
+          </label>
+          <select
+            id="audio-device"
+            bind:value={selectedDevice}
+            class="w-full px-3 py-2.5 bg-[var(--bg-primary)] border border-[var(--border-subtle)] rounded-lg
+                   text-[var(--text-primary)] text-sm focus:outline-none focus:ring-2 focus:ring-[var(--accent)]
+                   focus:border-transparent transition-shadow"
+          >
+            {#each audioDevices as device}
+              <option value={device.name}>
+                {device.name} ({device.max_input_channels}ch)
+              </option>
+            {/each}
+            {#if audioDevices.length === 0}
+              <option value="">No devices detected</option>
+            {/if}
+          </select>
         </div>
-      {/if}
+
+        <!-- Language -->
+        <div>
+          <label for="language" class="block text-sm font-medium text-[var(--text-secondary)] mb-2">
+            Transcription Language
+          </label>
+          <select
+            id="language"
+            bind:value={selectedLanguage}
+            class="w-full px-3 py-2.5 bg-[var(--bg-primary)] border border-[var(--border-subtle)] rounded-lg
+                   text-[var(--text-primary)] text-sm focus:outline-none focus:ring-2 focus:ring-[var(--accent)]
+                   focus:border-transparent transition-shadow"
+          >
+            {#each languages as lang}
+              <option value={lang.code}>{lang.name}</option>
+            {/each}
+          </select>
+          <p class="mt-1.5 text-xs text-[var(--text-muted)]">
+            Auto-detect works well for single-language meetings. Select a specific language for better accuracy.
+          </p>
+        </div>
+      </div>
 
       <!-- Show link to last meeting if done -->
       {#if state === 'done' && meetingId}

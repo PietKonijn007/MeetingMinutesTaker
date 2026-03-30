@@ -185,6 +185,11 @@ class ActionVelocityWeek(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+class RecordingStartRequest(BaseModel):
+    audio_device: str | None = None  # device name, or null for config default
+    language: str | None = None  # ISO code ("en", "nl", "fr") or null for auto-detect
+
+
 class RecordingStartResponse(BaseModel):
     meeting_id: str
     status: str = "recording"

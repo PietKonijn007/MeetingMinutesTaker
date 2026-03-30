@@ -12,6 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from meeting_minutes.api.deps import get_config
 from meeting_minutes.api.schemas import (
     AudioDeviceResponse,
+    RecordingStartRequest,
     RecordingStartResponse,
     RecordingStatusResponse,
 )
@@ -33,18 +34,30 @@ _recording_state: dict = {
 @router.post("/api/recording/start", response_model=RecordingStartResponse)
 def start_recording(
     config: Annotated[AppConfig, Depends(get_config)],
+    body: RecordingStartRequest | None = None,
 ):
-    """Start recording audio."""
+    """Start recording audio. Optionally override audio device and language."""
     if _recording_state["state"] == "recording":
         raise HTTPException(status_code=409, detail="Already recording")
 
+    from meeting_minutes.config import RecordingConfig
     from meeting_minutes.system1.capture import AudioCaptureEngine
+
+    # Override config with request values if provided
+    rec_config = config.recording.model_copy()
+    if body and body.audio_device:
+        rec_config.audio_device = body.audio_device
+
+    # Store the language override for the pipeline (transcription step)
+    language = None
+    if body and body.language:
+        language = body.language
 
     data_dir = Path(config.data_dir).expanduser()
     recordings_dir = data_dir / "recordings"
     recordings_dir.mkdir(parents=True, exist_ok=True)
 
-    engine = AudioCaptureEngine(config.recording, output_dir=recordings_dir)
+    engine = AudioCaptureEngine(rec_config, output_dir=recordings_dir)
     try:
         meeting_id = engine.start()
     except Exception as exc:
@@ -54,6 +67,7 @@ def start_recording(
     _recording_state["meeting_id"] = meeting_id
     _recording_state["start_time"] = time.time()
     _recording_state["engine"] = engine
+    _recording_state["language"] = language
 
     # Also write state file for CLI interop
     state_file = Path("/tmp/mm_recording_state.json")
@@ -129,6 +143,40 @@ def recording_status():
         meeting_id=_recording_state["meeting_id"],
         elapsed_seconds=round(elapsed, 1) if elapsed else None,
     )
+
+
+@router.get("/api/languages")
+def list_languages():
+    """List supported transcription languages."""
+    return [
+        {"code": "auto", "name": "Auto-detect"},
+        {"code": "en", "name": "English"},
+        {"code": "nl", "name": "Dutch"},
+        {"code": "fr", "name": "French"},
+        {"code": "de", "name": "German"},
+        {"code": "es", "name": "Spanish"},
+        {"code": "it", "name": "Italian"},
+        {"code": "pt", "name": "Portuguese"},
+        {"code": "ja", "name": "Japanese"},
+        {"code": "zh", "name": "Chinese"},
+        {"code": "ko", "name": "Korean"},
+        {"code": "ru", "name": "Russian"},
+        {"code": "ar", "name": "Arabic"},
+        {"code": "hi", "name": "Hindi"},
+        {"code": "sv", "name": "Swedish"},
+        {"code": "da", "name": "Danish"},
+        {"code": "no", "name": "Norwegian"},
+        {"code": "fi", "name": "Finnish"},
+        {"code": "pl", "name": "Polish"},
+        {"code": "tr", "name": "Turkish"},
+        {"code": "uk", "name": "Ukrainian"},
+        {"code": "cs", "name": "Czech"},
+        {"code": "el", "name": "Greek"},
+        {"code": "he", "name": "Hebrew"},
+        {"code": "th", "name": "Thai"},
+        {"code": "vi", "name": "Vietnamese"},
+        {"code": "id", "name": "Indonesian"},
+    ]
 
 
 @router.get("/api/audio-devices", response_model=list[AudioDeviceResponse])

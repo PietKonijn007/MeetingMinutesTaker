@@ -55,10 +55,11 @@ export const api = {
   getActionVelocity: () => request('/stats/action-velocity'),
 
   // Recording
-  startRecording: () => request('/recording/start', { method: 'POST' }),
+  startRecording: (data = {}) => request('/recording/start', { method: 'POST', body: JSON.stringify(data) }),
   stopRecording: () => request('/recording/stop', { method: 'POST' }),
   getRecordingStatus: () => request('/recording/status'),
   getAudioDevices: () => request('/audio-devices'),
+  getLanguages: () => request('/languages'),
 
   // Config
   getConfig: () => request('/config'),
