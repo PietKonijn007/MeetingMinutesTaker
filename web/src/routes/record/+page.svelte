@@ -21,8 +21,10 @@
   const meetingId = $derived($recording.meetingId);
 
   function formatElapsed(sec) {
-    const m = Math.floor(sec / 60);
-    const s = sec % 60;
+    if (sec == null) return '00:00';
+    const totalSec = Math.floor(sec);
+    const m = Math.floor(totalSec / 60);
+    const s = totalSec % 60;
     return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
   }
 
@@ -140,8 +142,10 @@
     loadDevices();
     loadLanguages();
 
-    // Poll for new devices every 3 seconds (picks up AirPods, USB mics, etc.)
-    devicePollTimer = setInterval(loadDevices, 3000);
+    // Poll for new devices every 3 seconds only when idle (picks up AirPods, USB mics, etc.)
+    devicePollTimer = setInterval(() => {
+      if (state === 'idle' || state === 'done') loadDevices();
+    }, 3000);
 
     return () => {
       if (devicePollTimer) clearInterval(devicePollTimer);

@@ -220,7 +220,7 @@ class AudioCaptureEngine:
             start_time=self._start_time,
             end_time=end_time,
             duration_seconds=duration,
-            sample_rate=self._config.sample_rate,
+            sample_rate=sample_rate,
             recording_device=device_name,
             format=self._config.format,
         )
@@ -229,16 +229,33 @@ class AudioCaptureEngine:
         return self._recording
 
     def get_audio_level(self) -> float:
-        """Return the current RMS audio level (0.0–1.0) from recent frames."""
+        """Return the current audio level (0.0–1.0) from recent frames.
+
+        Uses peak amplitude (not RMS) for more responsive visualization,
+        and applies logarithmic scaling for better perceptual mapping.
+        """
         import numpy as np
 
         if not self._recording or not self._frames_list:
             return 0.0
         try:
-            # Use the last chunk of audio data for a responsive level
-            recent = self._frames_list[-1] if self._frames_list else np.zeros(1)
-            rms = float(np.sqrt(np.mean(recent ** 2)))
-            # Clamp to 0–1, amplify for visibility (raw RMS is often very low)
-            return min(1.0, rms * 10.0)
+            # Use the last few chunks for responsive but stable level
+            recent_chunks = self._frames_list[-3:] if len(self._frames_list) >= 3 else self._frames_list[-1:]
+            recent = np.concatenate(recent_chunks, axis=0)
+
+            # Peak amplitude is more responsive than RMS for visualization
+            peak = float(np.max(np.abs(recent)))
+
+            # Logarithmic scaling: maps typical mic range to 0–1
+            # Typical speech: peak 0.001–0.1, quiet room: 0.0001
+            if peak < 1e-6:
+                return 0.0
+
+            import math
+            # Map -60dB to 0dB range onto 0.0–1.0
+            db = 20 * math.log10(max(peak, 1e-6))
+            # -60dB = 0.0, 0dB = 1.0
+            level = max(0.0, min(1.0, (db + 60) / 60))
+            return level
         except Exception:
             return 0.0
