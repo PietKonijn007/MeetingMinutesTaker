@@ -13,7 +13,7 @@
   import { addToast } from '$lib/stores/toasts.js';
 
   /** @type {{ meetingId: string }} */
-  let { meetingId } = $props();
+  let { meetingId, onDelete = null } = $props();
 
   let meeting = $state(null);
   let transcript = $state(null);
@@ -115,7 +115,11 @@
     try {
       await api.deleteMeeting(meetingId);
       addToast('Meeting deleted', 'success');
-      goto('/');
+      if (onDelete) {
+        onDelete(meetingId);
+      } else {
+        goto('/');
+      }
     } catch (e) {
       addToast('Failed to delete meeting', 'error');
     }

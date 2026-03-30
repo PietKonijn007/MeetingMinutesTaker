@@ -86,6 +86,12 @@
     selectedMeetingId = id;
   }
 
+  function handleMeetingDeleted(deletedId) {
+    // Remove from local data and clear selection
+    meetingsForMonth = meetingsForMonth.filter(m => m.id !== deletedId);
+    selectedMeetingId = null;
+  }
+
   function handlePrevMonth() {
     if (currentMonth === 0) {
       currentYear--;
@@ -144,7 +150,7 @@
   <!-- Right panel: Meeting detail -->
   <div class="flex-1 overflow-y-auto">
     {#if selectedMeetingId}
-      <MeetingDetail meetingId={selectedMeetingId} />
+      <MeetingDetail meetingId={selectedMeetingId} onDelete={handleMeetingDeleted} />
     {:else}
       <div class="flex flex-col items-center justify-center h-full text-[var(--text-muted)]">
         <svg class="w-12 h-12 mb-3 opacity-30" fill="none" stroke="currentColor" viewBox="0 0 24 24">
