@@ -57,36 +57,16 @@
     return steps;
   });
 
-  // Start polling if page loads while already recording
+  // Use WebSocket audio level — update history whenever audioLevel changes
   $effect(() => {
-    if (state === 'recording' && !levelPollTimer) {
-      startLevelPolling();
-    } else if (state !== 'recording' && levelPollTimer) {
-      stopLevelPolling();
+    if (state === 'recording') {
+      liveAudioLevel = audioLevel;
+      levelHistory = [...levelHistory.slice(1), audioLevel];
+    } else if (state !== 'recording') {
+      liveAudioLevel = 0;
+      levelHistory = new Array(24).fill(0);
     }
   });
-
-  function startLevelPolling() {
-    if (levelPollTimer) clearInterval(levelPollTimer);
-    levelPollTimer = setInterval(async () => {
-      try {
-        const status = await api.getRecordingStatus();
-        liveAudioLevel = status.audio_level || 0;
-        levelHistory = [...levelHistory.slice(1), liveAudioLevel];
-      } catch (e) {
-        // ignore polling errors
-      }
-    }, 150); // poll ~7 times/sec for smooth visualization
-  }
-
-  function stopLevelPolling() {
-    if (levelPollTimer) {
-      clearInterval(levelPollTimer);
-      levelPollTimer = null;
-    }
-    liveAudioLevel = 0;
-    levelHistory = new Array(24).fill(0);
-  }
 
   async function startRecording() {
     startingRecording = true;
@@ -96,7 +76,6 @@
       if (selectedLanguage && selectedLanguage !== 'auto') body.language = selectedLanguage;
       await api.startRecording(body);
       addToast('Recording started', 'success');
-      startLevelPolling();
     } catch (e) {
       addToast(`Failed to start recording: ${e.message}`, 'error');
     } finally {
@@ -106,7 +85,6 @@
 
   async function stopRecording() {
     stoppingRecording = true;
-    stopLevelPolling();
     try {
       await api.stopRecording();
       addToast('Recording stopped. Processing...', 'info');

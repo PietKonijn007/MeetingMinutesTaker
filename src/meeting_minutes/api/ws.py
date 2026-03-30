@@ -21,24 +21,32 @@ async def ws_recording(websocket: WebSocket):
     await websocket.accept()
     try:
         while True:
-            # Import the shared recording state from the recording route module
             from meeting_minutes.api.routes.recording import _recording_state
 
             state = _recording_state["state"]
             meeting_id = _recording_state["meeting_id"]
             start_time = _recording_state["start_time"]
+            engine = _recording_state.get("engine")
 
             elapsed = None
+            audio_level = 0.0
             if state == "recording" and start_time:
                 elapsed = round(time.time() - start_time, 1)
+                if engine and hasattr(engine, "get_audio_level"):
+                    audio_level = round(engine.get_audio_level(), 3)
 
             payload = {
                 "state": state,
                 "meeting_id": meeting_id,
                 "elapsed_seconds": elapsed,
+                "audio_level": audio_level,
+                "step": _recording_state.get("pipeline_step"),
+                "progress": _recording_state.get("pipeline_progress", 0.0),
             }
             await websocket.send_text(json.dumps(payload))
-            await asyncio.sleep(1.0)
+
+            # Faster updates during recording (for audio level), slower otherwise
+            await asyncio.sleep(0.2 if state == "recording" else 1.0)
     except WebSocketDisconnect:
         pass
     except Exception:

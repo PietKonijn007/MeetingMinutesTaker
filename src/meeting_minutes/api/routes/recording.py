@@ -28,6 +28,9 @@ _recording_state: dict = {
     "meeting_id": None,
     "start_time": None,
     "engine": None,
+    # Pipeline progress tracking (used by WebSocket)
+    "pipeline_step": None,      # "transcribing" | "generating" | "indexing" | "done"
+    "pipeline_progress": 0.0,   # 0.0–1.0 within current step
 }
 
 
@@ -127,7 +130,27 @@ async def stop_recording(
 
     async def _run_pipeline():
         try:
-            await orchestrator.run_full_pipeline(meeting_id)
+            # Step 1: Transcription
+            _recording_state["pipeline_step"] = "transcribing"
+            _recording_state["pipeline_progress"] = 0.0
+            await orchestrator.run_transcription(meeting_id)
+            _recording_state["pipeline_progress"] = 1.0
+
+            # Step 2: Generation
+            _recording_state["pipeline_step"] = "generating"
+            _recording_state["pipeline_progress"] = 0.0
+            await orchestrator.run_generation(meeting_id)
+            _recording_state["pipeline_progress"] = 1.0
+
+            # Step 3: Ingestion
+            _recording_state["pipeline_step"] = "indexing"
+            _recording_state["pipeline_progress"] = 0.0
+            await orchestrator.run_ingestion(meeting_id)
+            _recording_state["pipeline_progress"] = 1.0
+
+            # Done
+            _recording_state["pipeline_step"] = "done"
+            _recording_state["state"] = "done"
         except Exception as exc:
             import traceback
             print(f"\n{'='*60}")
@@ -135,10 +158,15 @@ async def stop_recording(
             print(f"  {type(exc).__name__}: {exc}")
             print(f"{'='*60}")
             traceback.print_exc()
+            _recording_state["pipeline_step"] = "error"
         finally:
+            # After a short delay so the frontend can see "done", reset to idle
+            await asyncio.sleep(2)
             _recording_state["state"] = "idle"
             _recording_state["meeting_id"] = None
             _recording_state["start_time"] = None
+            _recording_state["pipeline_step"] = None
+            _recording_state["pipeline_progress"] = 0.0
 
     asyncio.create_task(_run_pipeline())
 
