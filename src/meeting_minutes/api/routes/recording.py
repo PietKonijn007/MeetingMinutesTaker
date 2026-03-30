@@ -37,7 +37,7 @@ def start_recording(
     body: RecordingStartRequest | None = None,
 ):
     """Start recording audio. Optionally override audio device and language."""
-    if _recording_state["state"] == "recording":
+    if _recording_state["state"] == "recording" and _recording_state.get("engine") and _recording_state["engine"].is_recording():
         raise HTTPException(status_code=409, detail="Already recording")
 
     from meeting_minutes.config import RecordingConfig
@@ -134,16 +134,23 @@ async def stop_recording(
 @router.get("/api/recording/status", response_model=RecordingStatusResponse)
 def recording_status():
     """Get current recording state including live audio level."""
+    # Determine the real state by checking the engine
+    engine = _recording_state.get("engine")
+    actual_state = _recording_state["state"]
+
+    # If we think we're recording, verify the engine agrees
+    if actual_state == "recording" and engine and not engine.is_recording():
+        actual_state = "idle"
+
     elapsed = None
     audio_level = 0.0
-    if _recording_state["state"] == "recording" and _recording_state["start_time"]:
+    if actual_state == "recording" and _recording_state["start_time"]:
         elapsed = time.time() - _recording_state["start_time"]
-        engine = _recording_state.get("engine")
         if engine and hasattr(engine, "get_audio_level"):
             audio_level = engine.get_audio_level()
 
     return RecordingStatusResponse(
-        state=_recording_state["state"],
+        state=actual_state,
         meeting_id=_recording_state["meeting_id"],
         elapsed_seconds=round(elapsed, 1) if elapsed else None,
         audio_level=round(audio_level, 3),
