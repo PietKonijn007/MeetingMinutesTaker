@@ -29,7 +29,11 @@
     statusPollTimer = setInterval(async () => {
       try {
         const status = await api.getRecordingStatus();
-        recState = status.state || 'idle';
+
+        // Don't let stale API responses override local state during transitions
+        if (!startingRecording && !stoppingRecording) {
+          recState = status.state || 'idle';
+        }
         recElapsed = status.elapsed_seconds || 0;
         recLevel = status.audio_level || 0;
         recMeetingId = status.meeting_id || null;
