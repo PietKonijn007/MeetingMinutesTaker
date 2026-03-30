@@ -199,6 +199,7 @@ class RecordingStatusResponse(BaseModel):
     state: str  # "idle" | "recording" | "processing"
     meeting_id: str | None = None
     elapsed_seconds: float | None = None
+    audio_level: float = 0.0  # 0.0–1.0 RMS audio level
 
 
 class AudioDeviceResponse(BaseModel):

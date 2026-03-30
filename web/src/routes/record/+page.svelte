@@ -11,6 +11,9 @@
   let selectedLanguage = $state('auto');
   let startingRecording = $state(false);
   let stoppingRecording = $state(false);
+  let liveAudioLevel = $state(0);
+  let levelHistory = $state(new Array(24).fill(0));
+  let levelPollTimer = $state(null);
 
   const state = $derived($recording.state);
   const elapsedSeconds = $derived($recording.elapsedSeconds);
@@ -54,16 +57,36 @@
     return steps;
   });
 
-  // Audio level bars
-  const levelBars = $derived(() => {
-    const bars = [];
-    for (let i = 0; i < 20; i++) {
-      const threshold = i / 20;
-      const active = audioLevel > threshold;
-      bars.push(active);
+  // Start polling if page loads while already recording
+  $effect(() => {
+    if (state === 'recording' && !levelPollTimer) {
+      startLevelPolling();
+    } else if (state !== 'recording' && levelPollTimer) {
+      stopLevelPolling();
     }
-    return bars;
   });
+
+  function startLevelPolling() {
+    if (levelPollTimer) clearInterval(levelPollTimer);
+    levelPollTimer = setInterval(async () => {
+      try {
+        const status = await api.getRecordingStatus();
+        liveAudioLevel = status.audio_level || 0;
+        levelHistory = [...levelHistory.slice(1), liveAudioLevel];
+      } catch (e) {
+        // ignore polling errors
+      }
+    }, 150); // poll ~7 times/sec for smooth visualization
+  }
+
+  function stopLevelPolling() {
+    if (levelPollTimer) {
+      clearInterval(levelPollTimer);
+      levelPollTimer = null;
+    }
+    liveAudioLevel = 0;
+    levelHistory = new Array(24).fill(0);
+  }
 
   async function startRecording() {
     startingRecording = true;
@@ -73,6 +96,7 @@
       if (selectedLanguage && selectedLanguage !== 'auto') body.language = selectedLanguage;
       await api.startRecording(body);
       addToast('Recording started', 'success');
+      startLevelPolling();
     } catch (e) {
       addToast(`Failed to start recording: ${e.message}`, 'error');
     } finally {
@@ -82,6 +106,7 @@
 
   async function stopRecording() {
     stoppingRecording = true;
+    stopLevelPolling();
     try {
       await api.stopRecording();
       addToast('Recording stopped. Processing...', 'info');
@@ -231,13 +256,14 @@
         {formatElapsed(elapsedSeconds)}
       </div>
 
-      <!-- Audio level visualization -->
-      <div class="flex items-end gap-0.5 h-12 mb-8">
-        {#each levelBars() as active, i}
+      <!-- Audio level visualization — real levels from mic -->
+      <div class="flex items-end justify-center gap-1 h-16 mb-8">
+        {#each levelHistory as level, i}
+          {@const barHeight = Math.max(3, level * 60)}
+          {@const isActive = level > 0.02}
           <div
-            class="w-2 rounded-sm transition-all duration-75
-                   {active ? 'bg-[var(--accent)]' : 'bg-[var(--border-subtle)]'}"
-            style="height: {Math.max(4, (Math.sin(i * 0.5 + Date.now() * 0.003) + 1) * (active ? 24 : 4))}px"
+            class="w-2 rounded-full transition-all duration-100"
+            style="height: {barHeight}px; background-color: {isActive ? 'var(--accent)' : 'var(--border-subtle)'}; opacity: {isActive ? 0.5 + level * 0.5 : 0.3}"
           ></div>
         {/each}
       </div>

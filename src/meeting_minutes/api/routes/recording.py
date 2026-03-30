@@ -133,15 +133,20 @@ async def stop_recording(
 
 @router.get("/api/recording/status", response_model=RecordingStatusResponse)
 def recording_status():
-    """Get current recording state."""
+    """Get current recording state including live audio level."""
     elapsed = None
+    audio_level = 0.0
     if _recording_state["state"] == "recording" and _recording_state["start_time"]:
         elapsed = time.time() - _recording_state["start_time"]
+        engine = _recording_state.get("engine")
+        if engine and hasattr(engine, "get_audio_level"):
+            audio_level = engine.get_audio_level()
 
     return RecordingStatusResponse(
         state=_recording_state["state"],
         meeting_id=_recording_state["meeting_id"],
         elapsed_seconds=round(elapsed, 1) if elapsed else None,
+        audio_level=round(audio_level, 3),
     )
 
 

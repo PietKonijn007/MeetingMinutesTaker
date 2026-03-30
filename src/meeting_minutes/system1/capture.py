@@ -193,3 +193,18 @@ class AudioCaptureEngine:
 
     def is_recording(self) -> bool:
         return self._recording
+
+    def get_audio_level(self) -> float:
+        """Return the current RMS audio level (0.0–1.0) from recent frames."""
+        import numpy as np
+
+        if not self._recording or not self._frames_list:
+            return 0.0
+        try:
+            # Use the last chunk of audio data for a responsive level
+            recent = self._frames_list[-1] if self._frames_list else np.zeros(1)
+            rms = float(np.sqrt(np.mean(recent ** 2)))
+            # Clamp to 0–1, amplify for visibility (raw RMS is often very low)
+            return min(1.0, rms * 10.0)
+        except Exception:
+            return 0.0
