@@ -42,7 +42,7 @@ Record Audio ──► Transcribe ──► Generate Minutes ──► Store & S
 git clone https://github.com/PietKonijn007/MeetingMinutesTaker.git
 cd MeetingMinutesTaker
 pip install -e ".[dev]"
-alembic upgrade head
+mm init
 ```
 
 ### Set API keys
@@ -88,6 +88,7 @@ mm actions complete <action_id>                   # Mark done
 
 | Command | Description |
 |---------|-------------|
+| `mm init` | Create database and data directories |
 | `mm record start` | Start recording |
 | `mm record stop` | Stop recording and process |
 | `mm search <query>` | Full-text search (supports `--type`, `--after`, `--before`) |

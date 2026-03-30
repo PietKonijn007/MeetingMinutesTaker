@@ -403,6 +403,37 @@ def reprocess_cmd(
 
 
 # ---------------------------------------------------------------------------
+# mm init
+# ---------------------------------------------------------------------------
+
+
+@app.command("init")
+def init_cmd():
+    """Initialize the database and data directories."""
+    config = _load_config()
+
+    # Create data directories
+    data_dir = Path(config.data_dir).expanduser()
+    for subdir in ["recordings", "transcripts", "minutes", "exports"]:
+        (data_dir / subdir).mkdir(parents=True, exist_ok=True)
+
+    # Create db directory and initialize tables
+    db_path = Path(config.storage.sqlite_path).expanduser()
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+
+    from meeting_minutes.system3.db import get_session_factory
+
+    get_session_factory(f"sqlite:///{db_path}")
+
+    # Create logs directory
+    Path("logs").mkdir(exist_ok=True)
+
+    console.print(f"[green]Initialized data directories at {data_dir}[/green]")
+    console.print(f"[green]Database created at {db_path}[/green]")
+    console.print("[dim]Run 'mm serve' to start the web UI, or 'mm record start' to record a meeting.[/dim]")
+
+
+# ---------------------------------------------------------------------------
 # mm serve
 # ---------------------------------------------------------------------------
 

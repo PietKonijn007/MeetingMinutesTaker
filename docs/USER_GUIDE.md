@@ -50,14 +50,13 @@ This installs the `mm` command and all dependencies. Verify it works:
 mm --help
 ```
 
-### 2.2 Initialize the database
+### 2.2 Initialize the project
 
 ```bash
-cd ~/MeetingMinutesTaker
-alembic upgrade head
+mm init
 ```
 
-This creates `db/meetings.db` with all tables and the full-text search index.
+This creates the database (`db/meetings.db`), data directories (`data/recordings/`, `data/transcripts/`, `data/minutes/`), and the logs directory in one step.
 
 ### 2.3 Install the web UI (optional)
 
@@ -69,9 +68,9 @@ npm install
 cd ..
 ```
 
-### 2.4 First-run directory setup
+### 2.4 Directory layout
 
-On first use, the system creates these directories automatically:
+After initialization, the project has this structure:
 
 ```
 ~/MeetingMinutesTaker/

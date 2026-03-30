@@ -33,6 +33,13 @@ voice-profiles/
 .DS_Store
 Thumbs.db
 
+# Node / frontend
+node_modules/
+web/node_modules/
+web/.svelte-kit/
+web/build/
+web/package-lock.json
+
 # Test / coverage
 .pytest_cache/
 .coverage
