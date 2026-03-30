@@ -1,46 +1,56 @@
 <script>
   import { onMount } from 'svelte';
   import { api } from '$lib/api.js';
-  import { page } from '$app/stores';
-  import MeetingCard from '$lib/components/MeetingCard.svelte';
-  import MeetingTypeBadge from '$lib/components/MeetingTypeBadge.svelte';
+  import CalendarMonth from '$lib/components/CalendarMonth.svelte';
+  import DayMeetingList from '$lib/components/DayMeetingList.svelte';
+  import MeetingDetail from '$lib/components/MeetingDetail.svelte';
   import Skeleton from '$lib/components/Skeleton.svelte';
-  import EmptyState from '$lib/components/EmptyState.svelte';
 
-  let meetings = $state([]);
-  let total = $state(0);
+  // Calendar state
+  let currentYear = $state(new Date().getFullYear());
+  let currentMonth = $state(new Date().getMonth()); // 0-based
+  let selectedDate = $state(formatDate(new Date()));
+  let selectedMeetingId = $state(null);
+
+  // Data
+  let meetingsForMonth = $state([]);
   let loading = $state(true);
-  let loadingMore = $state(false);
-  let offset = $state(0);
-  const limit = 20;
 
-  let viewMode = $state('list'); // 'list' | 'grid'
-  let typeFilter = $state('');
-  let searchQuery = $state('');
+  // Derived: group meetings by date string
+  const meetingsByDate = $derived(groupByDate(meetingsForMonth));
 
-  const meetingTypes = [
-    'standup', 'one_on_one', 'customer_meeting', 'decision_meeting',
-    'brainstorm', 'retrospective', 'planning', 'other'
-  ];
+  // Derived: meetings for the selected day
+  const meetingsForDay = $derived(meetingsByDate[selectedDate] || []);
 
-  const hasMore = $derived(meetings.length < total);
+  function formatDate(d) {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  }
 
-  async function loadMeetings(reset = false) {
-    if (reset) {
-      offset = 0;
-      loading = true;
-    } else {
-      loadingMore = true;
+  function groupByDate(meetings) {
+    const map = {};
+    for (const m of meetings) {
+      const d = m.date;
+      if (!d) continue;
+      // Normalize date: take first 10 chars (YYYY-MM-DD)
+      const key = d.substring(0, 10);
+      if (!map[key]) map[key] = [];
+      map[key].push(m);
     }
+    return map;
+  }
+
+  async function loadMonth() {
+    loading = true;
+    const after = `${currentYear}-${String(currentMonth + 1).padStart(2, '0')}-01`;
+    const lastDay = new Date(currentYear, currentMonth + 1, 0).getDate();
+    const before = `${currentYear}-${String(currentMonth + 1).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
 
     try {
-      const params = { limit: limit.toString(), offset: offset.toString() };
-      if (typeFilter) params.type = typeFilter;
-      if (searchQuery) params.q = searchQuery;
-
-      const data = await api.getMeetings(params);
-      // Normalize API fields to what MeetingCard expects
-      const normalized = (data.items || []).map(m => ({
+      const data = await api.getMeetings({ after, before, limit: '500' });
+      meetingsForMonth = (data.items || []).map(m => ({
         id: m.meeting_id,
         title: m.title,
         date: m.date,
@@ -51,135 +61,97 @@
         action_count: m.action_item_count || 0,
         decision_count: m.decision_count || 0,
       }));
-      if (reset) {
-        meetings = normalized;
-      } else {
-        meetings = [...meetings, ...normalized];
-      }
-      total = data.total || 0;
     } catch (e) {
       console.error('Failed to load meetings:', e);
-      meetings = [];
-    } finally {
-      loading = false;
-      loadingMore = false;
+      meetingsForMonth = [];
     }
+    loading = false;
+
+    // Auto-select first meeting of selected day
+    autoSelectMeeting();
   }
 
-  function loadMore() {
-    offset += limit;
-    loadMeetings(false);
+  function autoSelectMeeting() {
+    const dayMeetings = meetingsByDate[selectedDate] || [];
+    selectedMeetingId = dayMeetings.length > 0 ? dayMeetings[0].id : null;
   }
 
-  function handleTypeFilter(type) {
-    typeFilter = typeFilter === type ? '' : type;
-    loadMeetings(true);
+  function handleSelectDate(date) {
+    selectedDate = date;
+    const dayMeetings = meetingsByDate[date] || [];
+    selectedMeetingId = dayMeetings.length > 0 ? dayMeetings[0].id : null;
   }
 
-  // Read initial query from URL
+  function handleSelectMeeting(id) {
+    selectedMeetingId = id;
+  }
+
+  function handlePrevMonth() {
+    if (currentMonth === 0) {
+      currentYear--;
+      currentMonth = 11;
+    } else {
+      currentMonth--;
+    }
+    loadMonth();
+  }
+
+  function handleNextMonth() {
+    if (currentMonth === 11) {
+      currentYear++;
+      currentMonth = 0;
+    } else {
+      currentMonth++;
+    }
+    loadMonth();
+  }
+
   onMount(() => {
-    const q = $page.url.searchParams.get('q');
-    if (q) searchQuery = q;
-    loadMeetings(true);
+    loadMonth();
   });
 </script>
 
-<div class="max-w-5xl mx-auto">
-  <!-- Header -->
-  <div class="flex items-center justify-between mb-6">
-    <h1 class="text-2xl font-bold text-[var(--text-primary)]">Meetings</h1>
-
-    <!-- View mode toggle -->
-    <div class="flex items-center bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg p-0.5">
-      <button
-        onclick={() => viewMode = 'list'}
-        class="px-3 py-1.5 rounded-md text-sm transition-colors duration-150
-               {viewMode === 'list' ? 'bg-[var(--accent)] text-white' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'}"
-        aria-label="List view"
-      >
-        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/></svg>
-      </button>
-      <button
-        onclick={() => viewMode = 'grid'}
-        class="px-3 py-1.5 rounded-md text-sm transition-colors duration-150
-               {viewMode === 'grid' ? 'bg-[var(--accent)] text-white' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'}"
-        aria-label="Grid view"
-      >
-        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"/></svg>
-      </button>
-    </div>
-  </div>
-
-  <!-- Filters -->
-  <div class="flex items-center gap-2 mb-6 flex-wrap">
-    <span class="text-xs text-[var(--text-muted)]">Type:</span>
-    {#each meetingTypes as type}
-      <button
-        onclick={() => handleTypeFilter(type)}
-        class="transition-all duration-150
-               {typeFilter === type ? 'ring-2 ring-[var(--accent)] rounded-full' : ''}"
-      >
-        <MeetingTypeBadge {type} />
-      </button>
-    {/each}
-    {#if typeFilter}
-      <button
-        onclick={() => { typeFilter = ''; loadMeetings(true); }}
-        class="text-xs text-[var(--text-muted)] hover:text-[var(--text-primary)] ml-1"
-      >
-        Clear
-      </button>
-    {/if}
-  </div>
-
-  <!-- Loading state -->
-  {#if loading}
-    <div class="space-y-4">
-      {#each Array(5) as _, i (i)}
+<div class="flex h-[calc(100vh-3.5rem)] -m-6">
+  <!-- Left panel: Calendar + Day meeting list -->
+  <div class="w-80 shrink-0 border-r border-[var(--border-subtle)] overflow-y-auto bg-[var(--bg-surface)]">
+    {#if loading}
+      <div class="p-4 space-y-3">
+        <Skeleton type="text" lines={3} />
         <Skeleton type="card" />
-      {/each}
-    </div>
-
-  <!-- Empty state -->
-  {:else if meetings.length === 0}
-    <EmptyState
-      icon="&#128203;"
-      title="No meetings yet"
-      description="Record your first meeting to get started."
-      ctaLabel="Start Recording"
-      ctaHref="/record"
-    />
-
-  <!-- Meeting list -->
-  {:else}
-    {#if viewMode === 'grid'}
-      <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-        {#each meetings as meeting (meeting.id)}
-          <MeetingCard {meeting} view="grid" />
-        {/each}
       </div>
     {:else}
-      <div class="space-y-3">
-        {#each meetings as meeting (meeting.id)}
-          <MeetingCard {meeting} view="list" />
-        {/each}
-      </div>
-    {/if}
+      <CalendarMonth
+        year={currentYear}
+        month={currentMonth}
+        {meetingsByDate}
+        {selectedDate}
+        onSelectDate={handleSelectDate}
+        onPrevMonth={handlePrevMonth}
+        onNextMonth={handleNextMonth}
+      />
 
-    <!-- Load more -->
-    {#if hasMore}
-      <div class="flex justify-center mt-8">
-        <button
-          onclick={loadMore}
-          disabled={loadingMore}
-          class="px-6 py-2.5 text-sm font-medium text-[var(--text-secondary)]
-                 bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg
-                 hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)]
-                 disabled:opacity-50 transition-colors duration-150"
-        >
-          {loadingMore ? 'Loading...' : 'Load More'}
-        </button>
+      <div class="border-t border-[var(--border-subtle)]">
+        <DayMeetingList
+          date={selectedDate}
+          meetings={meetingsForDay}
+          {selectedMeetingId}
+          onSelectMeeting={handleSelectMeeting}
+        />
       </div>
     {/if}
-  {/if}
+  </div>
+
+  <!-- Right panel: Meeting detail -->
+  <div class="flex-1 overflow-y-auto">
+    {#if selectedMeetingId}
+      <MeetingDetail meetingId={selectedMeetingId} />
+    {:else}
+      <div class="flex flex-col items-center justify-center h-full text-[var(--text-muted)]">
+        <svg class="w-12 h-12 mb-3 opacity-30" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/>
+        </svg>
+        <p class="text-sm">Select a meeting to view details</p>
+      </div>
+    {/if}
+  </div>
 </div>
