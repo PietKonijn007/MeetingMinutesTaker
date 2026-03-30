@@ -11,7 +11,7 @@ Record Audio ──► Transcribe ──► Generate Minutes ──► Store & S
 
 **System 1 — Recording & Transcription**: Captures audio from virtual and physical meetings via system audio loopback (BlackHole on macOS), transcribes with Whisper, identifies speakers with pyannote.audio, and enriches with calendar metadata.
 
-**System 2 — Minutes Generation**: Routes transcripts to meeting-type-specific prompt templates, generates structured minutes via LLM (Anthropic Claude by default), extracts action items and decisions, and runs quality checks.
+**System 2 — Minutes Generation**: Routes transcripts to meeting-type-specific prompt templates, generates structured minutes via LLM (Anthropic Claude `claude-sonnet-4-6` by default) using tool_use for guaranteed JSON output (with text+regex fallback), extracts action items and decisions, and runs quality checks.
 
 **System 3 — Storage & Search**: Stores everything in SQLite with full-text search (FTS5), provides a CLI for searching, browsing, and managing meetings and action items.
 
@@ -51,6 +51,14 @@ mm init
 export ANTHROPIC_API_KEY="sk-ant-..."    # Required for minutes generation
 export HF_TOKEN="hf_..."                 # Required for speaker diarization
 export OPENAI_API_KEY="sk-..."           # Optional fallback
+```
+
+Or create a `.env` file at the project root (takes priority over environment variables):
+
+```
+ANTHROPIC_API_KEY=sk-ant-...
+HF_TOKEN=hf_...
+OPENAI_API_KEY=sk-...
 ```
 
 ### Configure audio
@@ -103,7 +111,7 @@ mm actions complete <action_id>                   # Mark done
 
 ## Web UI
 
-A browser-based interface at `localhost:8080` with meetings list, action items, decisions, people, stats, recording controls, and settings.
+A browser-based interface built with Svelte + Tailwind CSS at `localhost:8080` with meetings list, action items, decisions, people, stats, recording controls, and settings.
 
 ```bash
 # Start the server
@@ -122,6 +130,10 @@ open http://localhost:8080
 mm serve                          # API on :8080
 cd web && npm install && npm run dev   # Svelte on :3000, proxies /api → :8080
 ```
+
+## REST API
+
+The backend is a FastAPI application serving at `:8080` with 32 routes covering meetings, search, action items, decisions, people, stats, recording, and configuration. Auto-generated interactive API documentation is available at [http://localhost:8080/docs](http://localhost:8080/docs).
 
 ## Configuration
 
@@ -163,6 +175,7 @@ MeetingMinutesTaker/
 ├── src/meeting_minutes/
 │   ├── models.py              # Shared Pydantic data models
 │   ├── config.py              # Configuration loading (YAML)
+│   ├── env.py                 # .env file loading (dotenv)
 │   ├── logging.py             # Structured JSON logging
 │   ├── pipeline.py            # Pipeline orchestrator
 │   ├── system1/               # Audio capture & transcription
@@ -175,6 +188,7 @@ MeetingMinutesTaker/
 │   │   ├── router.py          #   PromptRouter (type-based template selection)
 │   │   ├── prompts.py         #   PromptTemplateEngine (Jinja2)
 │   │   ├── llm_client.py      #   LLMClient (Anthropic/OpenAI, retry, fallback)
+│   │   ├── schema.py          #   StructuredMinutesResponse (tool_use JSON schema)
 │   │   ├── parser.py          #   MinutesParser (extract sections, actions, decisions)
 │   │   ├── quality.py         #   QualityChecker (coverage, hallucination, length)
 │   │   └── output.py          #   MinutesJSONWriter
@@ -196,7 +210,7 @@ MeetingMinutesTaker/
 │       ├── lib/stores/        #   Theme + recording state stores
 │       └── routes/            #   8 pages (meetings, detail, actions, stats, etc.)
 ├── templates/                 # Jinja2 meeting-type prompt templates
-├── tests/                     # 115 tests (property-based + unit)
+├── tests/                     # 135 tests (property-based + unit)
 ├── config/config.yaml         # Default configuration
 ├── alembic/                   # Database migrations
 ├── docs/USER_GUIDE.md         # Full setup and usage guide
@@ -223,6 +237,8 @@ MeetingMinutesTaker/
 | Full-text search | SQLite FTS5 with BM25 ranking |
 | CLI | `typer` + `rich` |
 | Templates | Jinja2 |
+| API server | FastAPI + uvicorn |
+| Frontend | Svelte + SvelteKit + Tailwind CSS |
 | Event bus | `watchdog` (filesystem watcher) |
 | Testing | `pytest` + `hypothesis` (property-based) |
 
@@ -233,7 +249,7 @@ pip install -e ".[dev]"
 pytest tests/ -v
 ```
 
-115 tests covering all 37 correctness properties from the design spec, plus unit tests for every component.
+135 tests covering all 40 correctness properties from the design spec, plus unit tests for every component.
 
 ## Documentation
 

@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "api-server",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-m", "uvicorn", "meeting_minutes.api.main:app", "--host", "127.0.0.1", "--port", "8080", "--reload"],
+      "port": 8080
+    },
+    {
+      "name": "svelte-dev",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev"],
+      "port": 3000
+    }
+  ]
+}

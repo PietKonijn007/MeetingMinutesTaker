@@ -229,6 +229,43 @@ For transcripts exceeding the LLM context window:
 
 ---
 
+## 4A. Structured JSON Output via Anthropic tool_use
+
+### 4A.1 Overview
+
+The primary method for generating structured meeting minutes is via Anthropic's `tool_use` feature. Instead of asking the LLM to produce free-text that must be parsed with regex, the system defines a tool schema (`StructuredMinutesResponse`) and forces the LLM to call it, guaranteeing valid JSON output.
+
+### 4A.2 StructuredMinutesResponse Schema
+
+The tool definition includes these fields:
+
+- `summary` (str): Executive summary of the meeting
+- `sentiment` (str): Overall meeting sentiment (positive, neutral, negative, mixed)
+- `participants` (list[ParticipantInfo]): Participant details with name, role, contribution summary
+- `discussion_points` (list[DiscussionPoint]): Key topics with description, speaker, and outcome
+- `action_items` (list[StructuredActionItem]): With description, owner, due_date, priority (high/medium/low), transcript_segment_ids
+- `decisions` (list[StructuredDecision]): With description, made_by, rationale, confidence (high/medium/low), transcript_segment_ids
+- `risks_and_concerns` (list[RiskConcern]): Identified risks with description, severity, owner
+- `follow_ups` (list[FollowUp]): Items needing follow-up with description, owner, timeline
+- `parking_lot` (list[str]): Topics raised but deferred
+- `meeting_effectiveness` (MeetingEffectiveness): Rating and notes on meeting quality
+- `key_topics` (list[str]): Extracted topic keywords
+- `structured_data` (dict): Meeting-type-specific structured data
+- `minutes_markdown` (str): Full rendered markdown of the minutes
+
+### 4A.3 Tool Use Approach
+
+1. The `LLMClient.generate_structured()` method constructs a tool definition from the schema
+2. The tool is passed with `tool_choice: {"type": "tool", "name": "structured_minutes"}` to force the LLM to use it
+3. The response is parsed directly into a `StructuredMinutesResponse` Pydantic model
+4. A `StructuredMinutesAdapter` converts the structured response into the standard `ParsedMinutes` format used by the rest of the pipeline
+
+### 4A.4 Fallback to Text + Regex
+
+When structured output fails (e.g., non-Anthropic provider, API error, schema validation failure), the system falls back to the original text-based generation with regex parsing via `MinutesParser`.
+
+---
+
 ## 5. Output Formats
 
 ### 5.1 Primary Output: Structured Markdown
@@ -293,7 +330,9 @@ For transcripts exceeding the LLM context window:
       "owner": "Bob",
       "due_date": "2026-03-29",
       "status": "open",
-      "mentioned_at_seconds": 234
+      "priority": "high",
+      "mentioned_at_seconds": 234,
+      "transcript_segment_ids": [12, 13]
     }
   ],
   "decisions": [
@@ -301,11 +340,25 @@ For transcripts exceeding the LLM context window:
       "id": "d-001",
       "description": "Proceed with Option B for the database migration",
       "made_by": "Alice",
-      "mentioned_at_seconds": 567
+      "rationale": "Better long-term scalability and lower operational cost",
+      "confidence": "high",
+      "mentioned_at_seconds": 567,
+      "transcript_segment_ids": [28, 29, 30]
     }
   ],
   "key_topics": ["database migration", "Q2 planning", "hiring"],
   "sentiment": "positive",
+  "structured_data": {},
+  "participants": [
+    { "name": "Alice", "role": "organizer", "contribution_summary": "Led discussion..." }
+  ],
+  "discussion_points": [
+    { "topic": "Database migration", "description": "...", "speaker": "Alice", "outcome": "decided" }
+  ],
+  "risks_and_concerns": [],
+  "follow_ups": [],
+  "parking_lot": [],
+  "meeting_effectiveness": { "rating": 4, "notes": "Focused and productive" },
   "minutes_markdown": "# Meeting Minutes: Daily Standup\n...",
   "llm": {
     "provider": "anthropic",
@@ -341,6 +394,7 @@ For transcripts exceeding the LLM context window:
 - **Decision detection**: Flag sentences with decision keywords that may have been missed
 - **Length check**: Minutes should be 10-30% of original transcript length (configurable)
 - **Hallucination guard**: Flag any names, dates, or numbers in minutes that don't appear in transcript
+- **Structured data validation**: When using tool_use output, validate that the `StructuredMinutesResponse` Pydantic model parses without errors and all required fields are populated
 
 ### 6.2 Confidence Scoring
 

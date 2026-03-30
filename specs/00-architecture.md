@@ -13,8 +13,8 @@ The Meeting Minutes Taker is a three-system pipeline that captures meeting audio
 │                     │               │                     │               │                     │
 │  • Audio capture    │               │  • Type routing     │               │  • Database         │
 │  • Transcription    │               │  • Prompt selection │               │  • Full-text search │
-│  • Diarization      │               │  • LLM generation   │               │  • Semantic search  │
-│  • Metadata         │               │  • Quality checks   │               │  • API & Web UI     │
+│  • Diarization      │               │  • LLM generation   │               │  • REST API (:8080) │
+│  • Metadata         │               │  • Quality checks   │               │  • Svelte Web UI    │
 │                     │               │                     │               │  • Analytics        │
 └─────────────────────┘               └─────────────────────┘               └─────────────────────┘
         │                                                                           │
@@ -24,6 +24,7 @@ The Meeting Minutes Taker is a three-system pipeline that captures meeting audio
                               │  • Transcript JSON   │
                               │  • Minutes JSON/MD   │
                               │  • Config (YAML)     │
+                              │  • .env file         │
                               └─────────────────────┘
 ```
 
@@ -76,6 +77,8 @@ Meeting Occurs
     ├── 3. Construct prompt (system + template + context + transcript)
     │
     ├── 4. Send to LLM (Claude / GPT / local model)
+    │      Primary: structured JSON output via Anthropic tool_use
+    │      Fallback: text response + regex parsing
     │
     ├── 5. Parse response, extract action items & decisions
     │
@@ -207,13 +210,15 @@ Post-processing hooks fire
 
 ```
 ~/MeetingMinutesTaker/
+├── .env                         # API keys (optional, takes priority over env vars)
 ├── config/
 │   ├── config.yaml              # Main configuration
-│   ├── templates/               # Custom prompt templates
-│   │   ├── standup.md
-│   │   ├── decision_meeting.md
-│   │   └── ...
 │   └── vocabulary.txt           # Custom vocabulary for transcription
+│
+├── templates/                   # Jinja2 prompt templates
+│   ├── standup.md.j2
+│   ├── decision_meeting.md.j2
+│   └── ...
 │
 ├── data/
 │   ├── recordings/              # Audio files (System 1 output)
@@ -254,99 +259,46 @@ Post-processing hooks fire
 ```yaml
 # config/config.yaml
 
-general:
-  data_dir: "~/MeetingMinutesTaker/data"
-  log_level: "INFO"
-  pipeline_mode: "automatic"       # automatic | semi_automatic | manual
+data_dir: ~/MeetingMinutesTaker/data
+log_level: INFO
+
+pipeline:
+  mode: automatic                  # automatic | semi_automatic | manual
 
 # System 1 settings
 recording:
-  audio_device: "auto"
+  audio_device: "MeetingCapture"
   sample_rate: 16000
-  format: "flac"
-  auto_start: true
+  format: flac
   auto_stop_silence_minutes: 5
 
 transcription:
-  primary_engine: "whisper"
-  whisper_model: "medium"
-  language: "auto"
-  realtime: true
-  batch_reprocess: true
-  custom_vocabulary: "config/vocabulary.txt"
+  primary_engine: whisper
+  whisper_model: medium
+  language: auto
+  custom_vocabulary: null
 
 diarization:
   enabled: true
-  engine: "pyannote"
-
-calendar:
-  provider: "google"
-  credentials_file: "config/google_credentials.json"
-  auto_match: true
+  engine: pyannote
 
 # System 2 settings
 generation:
-  llm_provider: "anthropic"
-  model: "claude-sonnet-4-6-20250514"
-  fallback_model: "claude-haiku-4-5-20251001"
-  temperature: 0.2
-  templates_dir: "config/templates"
-  auto_classify: true
-  human_review: false              # require review before finalizing
-
-  model_by_type:
-    standup: "claude-haiku-4-5-20251001"
-    one_on_one: "claude-sonnet-4-6-20250514"
-    decision_meeting: "claude-opus-4-6-20250514"
-    client_call: "claude-sonnet-4-6-20250514"
-
-  cost:
-    monthly_budget_usd: 50.00
-    alert_threshold_percent: 80
+  templates_dir: templates         # Jinja2 prompt templates directory
+  llm:
+    primary_provider: anthropic
+    model: claude-sonnet-4-6-20250514
+    fallback_provider: null        # null = disabled, or "openai"
+    fallback_model: gpt-4o
+    temperature: 0.2
+    max_output_tokens: 4096
+    retry_attempts: 3
+    timeout_seconds: 120
 
 # System 3 settings
 storage:
-  database: "sqlite"
-  sqlite_path: "db/meetings.db"
-  vector_store: "chromadb"         # chromadb | sqlite-vss
-  embedding_model: "all-MiniLM-L6-v2"
-
-search:
-  default_results: 20
-  semantic_enabled: true
-  highlight_matches: true
-
-api:
-  enabled: true
-  host: "127.0.0.1"
-  port: 8080
-
-web_ui:
-  enabled: true
-  port: 3000
-
-# Integrations (post-processing)
-integrations:
-  email:
-    enabled: false
-    send_to_attendees: true
-    smtp_server: ""
-  slack:
-    enabled: false
-    webhook_url: ""
-    channel: "#meeting-notes"
-  google_docs:
-    enabled: false
-    folder_id: ""
-  task_manager:
-    enabled: false
-    provider: ""                   # jira | linear | asana
-
-# Retention
-retention:
-  audio_days: 90
-  transcript_days: -1
-  minutes_days: -1
+  database: sqlite
+  sqlite_path: db/meetings.db
 ```
 
 ---
@@ -362,8 +314,8 @@ retention:
 │  System 1 ──▶ System 2 ──▶ System 3         │
 │  (process)    (process)    (process + API)   │
 │                                              │
-│  SQLite DB    Local Whisper   Web UI :3000   │
-│  Audio files  Local LLM opt.  API :8080      │
+│  SQLite DB    Local Whisper   Web UI :8080   │
+│  Audio files  Anthropic API  API :8080       │
 └──────────────────────────────────────────────┘
 ```
 
@@ -372,22 +324,6 @@ retention:
 - SQLite for storage
 - Minimal dependencies, no external services required (when using local models)
 
-### 4.2 Single-User with Cloud Services
-
-```
-┌──────────────────────────────────────────────┐
-│  Local Machine                               │
-│                                              │
-│  System 1 ──▶ System 2 ──▶ System 3         │
-│  (process)    (process)    (process + API)   │
-│                                              │
-│  Audio ────▶ AWS Transcribe                  │
-│  Transcript ─▶ Anthropic API                 │
-│  Embeddings ─▶ OpenAI Embeddings             │
-│                                              │
-│  SQLite DB                 Web UI :3000      │
-└──────────────────────────────────────────────┘
-```
 
 ---
 
@@ -442,14 +378,13 @@ retention:
 |-------|-----------|
 | **Language** | Python 3.11+ |
 | **Audio** | `sounddevice`, BlackHole (macOS), WASAPI (Windows) |
-| **Transcription** | `faster-whisper`, AWS Transcribe |
+| **Transcription** | `faster-whisper` |
 | **Diarization** | `pyannote.audio` |
-| **LLM** | `anthropic` SDK, `openai` SDK, `ollama` |
-| **Database** | SQLite |
+| **LLM** | `anthropic` SDK (primary), `openai` SDK (fallback) |
+| **Database** | SQLite + SQLAlchemy |
 | **Search** | SQLite FTS5 |
-| **Vectors** | `chromadb` / `sqlite-vss` |
-| **API** | FastAPI |
-| **Web UI** | React or Svelte |
+| **API** | FastAPI + uvicorn |
+| **Web UI** | Svelte + SvelteKit + Tailwind CSS |
 | **CLI** | `typer` |
 | **Config** | YAML (`pyyaml`) |
 | **Events** | `watchdog` (filesystem) |

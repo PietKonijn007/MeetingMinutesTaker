@@ -56,7 +56,7 @@ mm --help
 mm init
 ```
 
-This creates the database (`db/meetings.db`), data directories (`data/recordings/`, `data/transcripts/`, `data/minutes/`), and the logs directory in one step.
+This creates the database (`db/meetings.db`), data directories (`data/recordings/`, `data/transcripts/`, `data/minutes/`), and the logs directory in one step. It also runs any pending Alembic database migrations.
 
 ### 2.3 Install the web UI (optional)
 
@@ -240,8 +240,8 @@ generation:
   llm:
     primary_provider: anthropic           # anthropic | openai
     model: claude-sonnet-4-6-20250514       # Model for minutes generation
-    fallback_provider: openai             # Fallback if primary is unavailable
-    fallback_model: gpt-4o                # Fallback model
+    fallback_provider: null                # Fallback provider (null = disabled, or "openai")
+    fallback_model: gpt-4o                # Fallback model (used when fallback_provider is set)
     temperature: 0.2                      # Low = more factual, less creative
     max_output_tokens: 4096               # Max length of generated minutes
     retry_attempts: 3                     # Retries on API failure
@@ -326,6 +326,19 @@ export HF_TOKEN="hf_..."
 ```
 
 If you don't want diarization, set `diarization.enabled: false` in the config and skip this step.
+
+### 5.4 Using a `.env` file
+
+Instead of setting environment variables in your shell, you can create a `.env` file at the project root. Values in `.env` take priority over variables set in the shell environment.
+
+```
+# .env (at the root of MeetingMinutesTaker/)
+ANTHROPIC_API_KEY=sk-ant-...
+HF_TOKEN=hf_...
+OPENAI_API_KEY=sk-...
+```
+
+The file is loaded automatically at startup via `env.py`. You do not need to source or export it.
 
 ---
 
@@ -524,7 +537,7 @@ Start and stop recordings directly from the browser.
 - **Recording state**: Pulsing red indicator, elapsed time counter, audio level bars, Pause and Stop buttons. A small red dot also appears in the top bar so you can see recording status from any page.
 - **Processing state**: Step-by-step progress showing each pipeline stage (audio saved, transcribing, generating minutes, indexing) with checkmarks as they complete.
 
-Recording status is delivered in real time via WebSocket — no polling.
+Recording status updates are delivered via HTTP polling at 5 Hz (200ms interval). Polling stops automatically when the pipeline completes.
 
 ### 7.9 Settings page
 
@@ -763,6 +776,7 @@ Back up both to preserve everything.
 | **BlackHole not visible** | Restart CoreAudio: `sudo killall -9 coreaudiod` — or reboot. |
 | **AirPods cause issues** | AirPods use a lower sample rate. Do not make AirPods the primary/clock device. Use Built-in Output as clock device instead. |
 | **"No device found" error** | Run `python -c "import sounddevice; print(sounddevice.query_devices())"` to list available devices. Use the exact name from this list. |
+| **PortAudio error -9986 (device unavailable)** | This usually means macOS denied microphone permission. Go to System Settings > Privacy & Security > Microphone and enable access for your terminal app. If the device was plugged in after the app started, the app will re-scan devices automatically via `sd._terminate()` + `sd._initialize()`. |
 
 ### Transcription issues
 
@@ -772,6 +786,14 @@ Back up both to preserve everything.
 | **Poor accuracy** | Use a larger model: `whisper_model: large-v3`. Add domain terms to the custom vocabulary file. |
 | **Wrong language detected** | Set the language explicitly: `language: en` (or `nl`, `fr`, `de`, etc.) |
 | **Model download stuck** | The first run downloads the Whisper model (~1.5 GB for medium). Ensure you have a stable internet connection. Models are cached in `~/.cache/huggingface/`. |
+| **NumPy compatibility error with pyannote** | If you see errors about NumPy version incompatibility, pin NumPy: `pip install "numpy<2.0"`. The pyannote.audio library may not yet support NumPy 2.x. |
+
+### Speaker diarization issues
+
+| Problem | Solution |
+|---------|----------|
+| **Diarization fails with `use_auth_token` error** | The pyannote.audio pipeline now uses `token=` instead of `use_auth_token`. Make sure your `HF_TOKEN` environment variable is set and you are using a recent version of the app. |
+| **Native sample rate mismatch** | The app automatically queries the audio device for its native sample rate and uses it for capture. If you see sample rate warnings, check that your audio device supports the detected rate. |
 
 ### Minutes generation issues
 

@@ -59,7 +59,7 @@ The Meeting Minutes Taker is a local-first, three-system pipeline application th
 
 #### Acceptance Criteria
 
-1. WHEN diarization is enabled in configuration, THE Diarization_Engine SHALL identify and label distinct speakers in the audio using `pyannote.audio`.
+1. WHEN diarization is enabled in configuration, THE Diarization_Engine SHALL identify and label distinct speakers in the audio using `pyannote.audio` (authenticating with `token=` parameter, not the deprecated `use_auth_token`).
 2. WHEN diarization completes, THE Diarization_Engine SHALL assign a speaker label (e.g., SPEAKER_00, SPEAKER_01) to each transcript segment.
 3. WHEN diarization completes, THE Diarization_Engine SHALL record the total number of distinct speakers detected in the Transcript_JSON metadata.
 4. IF diarization fails, THEN THE Transcription_Engine SHALL produce the transcript without speaker labels and mark diarization as failed in the Transcript_JSON.
@@ -209,3 +209,51 @@ The Meeting Minutes Taker is a local-first, three-system pipeline application th
 2. WHEN a user requests deletion of a meeting, THE Storage_Engine SHALL delete the associated audio file, transcript JSON file, and minutes files from the filesystem.
 3. WHEN a user requests deletion of a meeting, THE Storage_Engine SHALL remove the meeting content from the FTS5 search index.
 4. IF any file or record does not exist during deletion, THEN THE Storage_Engine SHALL skip the missing item, log a warning, and continue deleting remaining items.
+
+### Requirement 16: Structured LLM Output
+
+**User Story:** As a developer, I want the LLM to produce structured JSON output, so that minutes parsing is reliable and does not depend on regex.
+
+#### Acceptance Criteria
+
+1. WHEN generating minutes with the Anthropic provider, THE Minutes_Generator SHALL use Anthropic tool_use with a StructuredMinutesResponse schema to obtain guaranteed JSON output.
+2. WHEN using tool_use, THE Minutes_Generator SHALL set tool_choice to force the LLM to call the structured_minutes tool.
+3. WHEN the structured response is received, THE StructuredMinutesAdapter SHALL convert it into a ParsedMinutes object compatible with the rest of the pipeline.
+
+### Requirement 17: Structured Output Fallback
+
+**User Story:** As a user, I want the system to still generate minutes even when structured output fails, so that I always get results.
+
+#### Acceptance Criteria
+
+1. IF structured output via tool_use fails (API error, schema validation failure, non-Anthropic provider), THEN THE Minutes_Generator SHALL fall back to text-based generation with regex parsing.
+2. WHEN falling back, THE Minutes_Generator SHALL log a warning indicating the fallback reason.
+
+### Requirement 18: Enhanced Meeting Data
+
+**User Story:** As a user, I want richer meeting data extracted from transcripts, so that I can get more insight from my meetings.
+
+#### Acceptance Criteria
+
+1. WHEN generating structured minutes, THE Minutes_Generator SHALL extract: sentiment, participants with roles, discussion points, risks and concerns, follow-ups, parking lot items, and a meeting effectiveness rating.
+2. WHEN storing enhanced meeting data, THE Storage_Engine SHALL persist sentiment and structured_json in the minutes table, priority in the action_items table, and rationale and confidence in the decisions table.
+
+### Requirement 19: Environment Variable Loading
+
+**User Story:** As a user, I want to store API keys in a `.env` file, so that I don't have to set environment variables in my shell.
+
+#### Acceptance Criteria
+
+1. WHEN a `.env` file exists at the project root, THE Pipeline_Orchestrator SHALL load it at startup via `env.py`.
+2. WHEN both a `.env` file value and a shell environment variable exist for the same key, THE `.env` file value SHALL take priority.
+
+### Requirement 20: REST API
+
+**User Story:** As a user, I want a REST API to access my meeting data, so that the web UI and other tools can interact with the system.
+
+#### Acceptance Criteria
+
+1. WHEN a user runs `mm serve`, THE system SHALL start a FastAPI server at the configured host and port (default: 127.0.0.1:8080).
+2. THE API SHALL provide endpoints for meetings, search, action items, decisions, people, stats, recording control, and configuration (32 endpoints total).
+3. THE API SHALL serve auto-generated documentation at `/docs`.
+4. THE API SHALL serve the Svelte frontend build as static files at the root path.

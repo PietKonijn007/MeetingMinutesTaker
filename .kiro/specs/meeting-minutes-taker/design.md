@@ -76,6 +76,7 @@ meeting-minutes-taker/
 │       │   ├── router.py            # Meeting type routing
 │       │   ├── prompts.py           # Prompt construction (Jinja2)
 │       │   ├── llm_client.py        # LLM API client (Anthropic/OpenAI)
+│       │   ├── schema.py            # StructuredMinutesResponse (tool_use schema)
 │       │   ├── parser.py            # LLM response parser
 │       │   ├── quality.py           # Quality assurance checks
 │       │   └── output.py            # Minutes JSON/Markdown writer
@@ -86,7 +87,23 @@ meeting-minutes-taker/
 │       │   ├── search.py            # FTS5 search engine
 │       │   ├── storage.py           # Storage engine (CRUD)
 │       │   └── cli.py               # Typer CLI commands
-│       └── pipeline.py              # Pipeline orchestrator
+│       ├── env.py                   # .env file loading
+│       ├── pipeline.py              # Pipeline orchestrator
+│       └── api/                     # FastAPI REST API
+│           ├── __init__.py
+│           ├── main.py              # App factory, CORS, static files
+│           ├── deps.py              # Dependency injection
+│           ├── schemas.py           # Pydantic response models
+│           ├── ws.py                # WebSocket handlers
+│           └── routes/              # Route modules
+│               ├── meetings.py
+│               ├── search.py
+│               ├── actions.py
+│               ├── decisions.py
+│               ├── people.py
+│               ├── stats.py
+│               ├── recording.py
+│               └── config.py
 ├── templates/
 │   ├── general.md.j2
 │   ├── standup.md.j2
@@ -257,10 +274,23 @@ sequenceDiagram
       def __init__(self, config: LLMConfig) -> None: ...
       async def generate(self, prompt: str, system_prompt: str) -> LLMResponse:
           """Send prompt to configured LLM provider. Returns response with token usage."""
+      async def generate_structured(
+          self, prompt: str, system_prompt: str, schema: type
+      ) -> StructuredLLMResponse:
+          """Send prompt with tool_use for guaranteed JSON. Returns structured response."""
   ```
 - **Providers**: Anthropic (primary), OpenAI (fallback)
 - **Retry**: Up to 3 attempts with exponential backoff
 - **Output**: `LLMResponse` with text, token counts, cost, processing time
+
+#### StructuredMinutesAdapter
+- **Responsibility**: Convert StructuredMinutesResponse (from tool_use) to ParsedMinutes
+- **Interface**:
+  ```python
+  class StructuredMinutesAdapter:
+      def adapt(self, structured: StructuredMinutesResponse) -> ParsedMinutes:
+          """Convert structured LLM output to ParsedMinutes format."""
+  ```
 
 #### MinutesParser
 - **Responsibility**: Parse LLM response into structured minutes data
@@ -478,14 +508,19 @@ class ActionItem(BaseModel):
     description: str
     owner: str | None = None
     due_date: str | None = None
+    priority: str | None = None      # "high" | "medium" | "low"
     status: ActionItemStatus = ActionItemStatus.OPEN
     mentioned_at_seconds: float | None = None
+    transcript_segment_ids: list[int] = []
 
 class Decision(BaseModel):
     id: str = Field(default_factory=lambda: f"d-{uuid.uuid4().hex[:6]}")
     description: str
     made_by: str | None = None
+    rationale: str | None = None
+    confidence: str | None = None     # "high" | "medium" | "low"
     mentioned_at_seconds: float | None = None
+    transcript_segment_ids: list[int] = []
 
 class MinutesSection(BaseModel):
     heading: str
@@ -506,6 +541,47 @@ class LLMUsage(BaseModel):
     cost_usd: float
     processing_time_seconds: float
 
+class ParticipantInfo(BaseModel):
+    name: str
+    role: str | None = None
+    contribution_summary: str | None = None
+
+class DiscussionPoint(BaseModel):
+    topic: str
+    description: str
+    speaker: str | None = None
+    outcome: str | None = None
+
+class RiskConcern(BaseModel):
+    description: str
+    severity: str | None = None       # "high" | "medium" | "low"
+    owner: str | None = None
+
+class FollowUp(BaseModel):
+    description: str
+    owner: str | None = None
+    timeline: str | None = None
+
+class MeetingEffectiveness(BaseModel):
+    rating: int | None = None         # 1-5
+    notes: str | None = None
+
+class StructuredMinutesResponse(BaseModel):
+    """Schema used for Anthropic tool_use structured output."""
+    summary: str
+    sentiment: str | None = None
+    participants: list[ParticipantInfo] = []
+    discussion_points: list[DiscussionPoint] = []
+    action_items: list[ActionItem] = []
+    decisions: list[Decision] = []
+    risks_and_concerns: list[RiskConcern] = []
+    follow_ups: list[FollowUp] = []
+    parking_lot: list[str] = []
+    meeting_effectiveness: MeetingEffectiveness | None = None
+    key_topics: list[str] = []
+    structured_data: dict = {}
+    minutes_markdown: str = ""
+
 class MinutesJSON(BaseModel):
     schema_version: str = "1.0"
     meeting_id: str
@@ -514,10 +590,18 @@ class MinutesJSON(BaseModel):
     meeting_type: str
     metadata: MinutesMetadata
     summary: str
+    sentiment: str | None = None
+    participants: list[ParticipantInfo] = []
+    discussion_points: list[DiscussionPoint] = []
     sections: list[MinutesSection]
     action_items: list[ActionItem]
     decisions: list[Decision]
+    risks_and_concerns: list[RiskConcern] = []
+    follow_ups: list[FollowUp] = []
+    parking_lot: list[str] = []
+    meeting_effectiveness: MeetingEffectiveness | None = None
     key_topics: list[str]
+    structured_data: dict = {}
     minutes_markdown: str
     llm: LLMUsage
 ```
@@ -569,6 +653,8 @@ class MinutesORM(Base):
     minutes_id = Column(String, unique=True)
     markdown_content = Column(Text)
     summary = Column(Text)
+    sentiment = Column(String, nullable=True)
+    structured_json = Column(Text, nullable=True)  # Full structured output as JSON
     generated_at = Column(DateTime)
     llm_model = Column(String)
     review_status = Column(String, default="draft")
@@ -581,6 +667,7 @@ class ActionItemORM(Base):
     description = Column(Text)
     owner = Column(String, nullable=True)
     due_date = Column(String, nullable=True)
+    priority = Column(String, nullable=True)  # high | medium | low
     status = Column(String, default="open")
     mentioned_at_seconds = Column(Float, nullable=True)
     meeting = relationship("MeetingORM", back_populates="action_items")
@@ -591,6 +678,8 @@ class DecisionORM(Base):
     meeting_id = Column(String, ForeignKey("meetings.meeting_id"))
     description = Column(Text)
     made_by = Column(String, nullable=True)
+    rationale = Column(Text, nullable=True)
+    confidence = Column(String, nullable=True)  # high | medium | low
     mentioned_at_seconds = Column(Float, nullable=True)
     meeting = relationship("MeetingORM", back_populates="decisions")
 
@@ -920,6 +1009,24 @@ class AppConfig(BaseModel):
 *For any* stored meeting, after deletion by meeting_id: the meeting, transcript, minutes, action items, decisions, and attendee links SHALL be absent from the database; the audio, transcript JSON, and minutes files SHALL be absent from the filesystem; and searching for content unique to that meeting SHALL return no results.
 
 **Validates: Requirements 15.1, 15.2, 15.3**
+
+### Property 38: Structured output schema validity
+
+*For any* valid transcript processed with tool_use, the StructuredMinutesResponse returned by the LLM SHALL parse into a valid Pydantic model without validation errors.
+
+**Validates: Requirements 16.1, 16.2**
+
+### Property 39: Structured output adapter completeness
+
+*For any* valid StructuredMinutesResponse, the StructuredMinutesAdapter SHALL produce a ParsedMinutes object that contains: summary, at least one section, and the same count of action_items and decisions as the input.
+
+**Validates: Requirements 16.3**
+
+### Property 40: Structured output fallback
+
+*For any* failure in structured output generation (API error, validation error, non-Anthropic provider), the system SHALL successfully fall back to text-based generation and produce valid ParsedMinutes.
+
+**Validates: Requirements 17.1, 17.2**
 
 ## Error Handling
 

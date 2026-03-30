@@ -33,6 +33,8 @@ Meeting
 │   ├── minutes_id
 │   ├── markdown_content
 │   ├── summary
+│   ├── sentiment
+│   ├── structured_json (JSON blob of full structured output)
 │   ├── generated_at
 │   ├── llm_model
 │   └── review_status
@@ -42,6 +44,7 @@ Meeting
 │   ├── description
 │   ├── owner
 │   ├── due_date
+│   ├── priority (high | medium | low)
 │   ├── status (open | in_progress | done | cancelled)
 │   ├── linked_meeting_ids[] (tracks across meetings)
 │   └── mentioned_at_seconds
@@ -50,6 +53,8 @@ Meeting
 │   ├── decision_id
 │   ├── description
 │   ├── made_by
+│   ├── rationale
+│   ├── confidence (high | medium | low)
 │   └── mentioned_at_seconds
 │
 ├── Attendees[] (many:many)
@@ -105,6 +110,13 @@ Topic
 - Schema migrations via `alembic`
 - All core entities stored in a single `meetings.db` file
 - Use SQLAlchemy as the ORM to keep the door open for swapping backends later
+
+#### 2.1.1 Alembic Migrations
+
+| Migration | Description |
+|-----------|-------------|
+| `001_initial_schema` | Creates all core tables (meetings, transcripts, minutes, action_items, decisions, persons, meeting_attendees) and FTS5 virtual table |
+| `002_structured_minutes` | Adds `sentiment` and `structured_json` columns to minutes table, adds `priority` column to action_items, adds `rationale` and `confidence` columns to decisions |
 
 ### 2.2 Full-Text Search — SQLite FTS5 (MVP)
 
@@ -262,6 +274,9 @@ When semantic search is added:
 The CLI is the primary interface for the initial version.
 
 ```bash
+# Initialize
+mm init                                  # Create database + data directories
+
 # Search
 mm search "database migration"
 mm search --type standup --after 2026-03-01
@@ -283,13 +298,17 @@ mm tag <meeting_id> engineering client   # Add tags
 mm retranscribe <meeting_id>             # Re-run transcription
 mm regenerate <meeting_id>               # Re-generate minutes
 mm export <meeting_id> --format pdf      # Export meeting
+
+# Server
+mm serve                                 # Start web UI + API server at :8080
+mm serve --host 0.0.0.0 --port 9090     # Custom host/port
 ```
 
 > **Future CLI additions**: `mm search --semantic "..."` for semantic search.
 
-### 6.2 REST API (Future)
+### 6.2 REST API (Implemented)
 
-When a web UI or integrations are needed:
+The REST API is implemented with FastAPI and serves all data via 32 endpoints:
 
 ```
 GET    /api/meetings                     # List meetings (paginated, filtered)
@@ -318,19 +337,21 @@ GET    /api/topics/:id/meetings          # Meetings for a topic
 GET    /api/stats                        # Usage statistics
 ```
 
-### 6.3 Web UI (Future)
+### 6.3 Web UI (Implemented)
 
-A lightweight web interface for browsing and searching:
+A browser-based interface built with Svelte + SvelteKit + Tailwind CSS:
 
-- **Tech**: React or Svelte SPA with the REST API backend
+- Served at `localhost:8080` (production: FastAPI serves both API and static build)
+- Development mode: Svelte dev server at `:3000` proxies `/api` to `:8080`
 - **Features**:
-  - Search bar with autocomplete and filters
-  - Timeline/calendar/list views
-  - Meeting detail page with rendered minutes
-  - Audio player synced to transcript timestamps
-  - Action item dashboard
+  - Search bar with `Cmd+K` shortcut and filters
+  - List/grid/calendar views
+  - Meeting detail page with rendered minutes, audio player, action items, decisions
+  - Action item dashboard with cross-meeting tracking
   - Decision log
-  - Tag management
+  - Stats page with charts
+  - Recording page with live timer and audio levels
+  - Settings editor
   - Dark mode support
 
 ### 6.4 Integrations (Future)
@@ -431,13 +452,14 @@ retention:
 | File watching | `watchdog` |
 | Backup | `sqlite3 .backup` |
 
+| REST API | FastAPI + uvicorn |
+| Web UI | Svelte + SvelteKit + Tailwind CSS |
+
 ### Future Additions
 
 | Component | Technology |
 |-----------|-----------|
 | Vector store | `sqlite-vss` / `chromadb` |
 | Embeddings | `sentence-transformers` / OpenAI Embeddings |
-| REST API | FastAPI |
-| Web UI | React or Svelte + Vite |
 | Full-text search (advanced) | Meilisearch |
 | Background jobs | `celery` or `apscheduler` |

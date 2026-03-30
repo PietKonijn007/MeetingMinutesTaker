@@ -123,11 +123,13 @@ Remote participants (Zoom/Teams/etc.)
 
 ### 1.4 Audio Capture Engine
 
-- Real-time audio capture at configurable sample rate (default: 16kHz mono for transcription, optional 48kHz stereo archive)
+- **Native sample rate detection**: The capture engine queries the selected audio device for its native/default sample rate and uses that rate for recording. This avoids resampling artifacts and PortAudio errors from unsupported rates.
+- Real-time audio capture using the device's native sample rate
 - Circular buffer to prevent data loss during processing spikes
-- Automatic gain control (AGC) and noise gate to filter silence/background noise
+- **Logarithmic audio level calculation**: Audio levels are computed using RMS with logarithmic (dB) scaling, normalized to a 0.0-1.0 range for display in the web UI.
 - VAD (Voice Activity Detection) to detect when speech starts/stops
 - Continuous recording with configurable silence-based auto-stop (e.g., stop after 5 minutes of silence)
+- **PortAudio device re-scan**: When a device is not found or becomes unavailable, the engine re-scans audio devices by calling `sd._terminate()` followed by `sd._initialize()` to detect newly connected devices without restarting the application.
 
 ### 1.5 Recording Controls
 
@@ -169,8 +171,7 @@ Remote participants (Zoom/Teams/etc.)
 ### 2.2 Speaker Diarization
 
 - Identify and label distinct speakers in the audio
-- **Local**: `pyannote.audio` speaker diarization pipeline
-- **Cloud**: Amazon Transcribe speaker identification or AssemblyAI
+- **Local**: `pyannote.audio` speaker diarization pipeline (uses `token=` parameter for HuggingFace authentication, not the deprecated `use_auth_token`)
 - Map speaker labels to known participants (see metadata enrichment)
 - Support for pre-registering speaker voice profiles for improved identification
 
@@ -316,7 +317,7 @@ Remote participants (Zoom/Teams/etc.)
 
 ### 5.1 User Preferences
 
-Stored as `config.json` in the application data directory (default: `~/.meeting-minutes/config.json`).
+Stored in `config/config.yaml` (YAML format). Fallback: `~/.meeting-minutes/config.yaml`.
 
 ```json
 {

@@ -2,7 +2,7 @@
 
 ## Overview
 
-A visually polished, browser-based single-page application served at `localhost:3000`. Built with Svelte + Vite on the frontend and FastAPI on the backend. The UI provides an intuitive way to browse, search, and manage meetings without touching the CLI.
+A visually polished, browser-based single-page application. In production, everything (API + UI) is served from `localhost:8080` by FastAPI. In development, the Svelte dev server runs at `localhost:3000` and proxies API requests to `:8080`. Built with Svelte + Vite on the frontend and FastAPI on the backend. The UI provides an intuitive way to browse, search, and manage meetings without touching the CLI.
 
 ---
 
@@ -472,8 +472,11 @@ Controls for starting/stopping recording. Shows live status.
 
 - Pulsing red dot animation
 - Live elapsed time counter
-- Audio level visualizer (waveform or VU meter)
+- Audio level visualizer (waveform or VU meter) using logarithmic dB-scaled levels
 - The top bar also shows a small pulsing red dot when recording is active (visible from any page)
+- Recording status is delivered via HTTP polling at 5 Hz (200ms interval). Polling stops automatically when the pipeline completes.
+- Audio device selection uses native sample rate detection (queries device for its default rate)
+- PortAudio re-scan (`sd._terminate()` + `sd._initialize()`) is used to detect newly connected audio devices without restarting
 
 #### 3.7.3 Processing State
 
