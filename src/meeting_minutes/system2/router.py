@@ -54,8 +54,15 @@ class PromptRouter:
         return self._load_template(selected_type)
 
     def _load_template(self, meeting_type: str) -> PromptTemplate:
-        filename = TEMPLATE_FILENAME_MAP.get(meeting_type, "general.md.j2")
-        template_path = self._templates_dir / filename
+        # 1. Check for a type-specific template file by convention
+        convention_path = self._templates_dir / f"{meeting_type}.md.j2"
+        if convention_path.exists():
+            template_path = convention_path
+            filename = convention_path.name
+        else:
+            # 2. Fall back to TEMPLATE_FILENAME_MAP for built-in aliases (e.g. "other" -> "general.md.j2")
+            filename = TEMPLATE_FILENAME_MAP.get(meeting_type, "general.md.j2")
+            template_path = self._templates_dir / filename
 
         if not template_path.exists():
             # Fall back to general

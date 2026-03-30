@@ -71,4 +71,10 @@ export const api = {
   // Config
   getConfig: () => request('/config'),
   updateConfig: (data) => request('/config', { method: 'PATCH', body: JSON.stringify({ config: data }) }),
+
+  // Templates
+  getTemplates: () => request('/templates'),
+  getTemplate: (type) => request(`/templates/${type}`),
+  updateTemplate: (type, data) => request(`/templates/${type}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteTemplate: (type) => request(`/templates/${type}`, { method: 'DELETE' }),
 };
