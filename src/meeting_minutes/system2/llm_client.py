@@ -133,6 +133,84 @@ class LLMClient:
 
         return text, input_tokens, output_tokens
 
+    async def generate_structured(
+        self, prompt: str, system_prompt: str = "", tool_definition: dict | None = None
+    ) -> LLMResponse:
+        """Generate structured output using Anthropic tool_use. Returns LLMResponse with structured_data."""
+        if tool_definition is None:
+            from meeting_minutes.system2.schema import get_tool_definition
+            tool_definition = get_tool_definition()
+
+        for attempt in range(self._config.retry_attempts):
+            try:
+                return await self._call_anthropic_structured(
+                    prompt=prompt,
+                    system_prompt=system_prompt,
+                    model=self._config.model,
+                    tool_definition=tool_definition,
+                )
+            except Exception as exc:
+                if attempt < self._config.retry_attempts - 1:
+                    wait = 2 ** attempt
+                    await asyncio.sleep(wait)
+                else:
+                    raise RuntimeError(
+                        f"Structured generation failed after {self._config.retry_attempts} attempts: {exc}"
+                    ) from exc
+
+    async def _call_anthropic_structured(
+        self, prompt: str, system_prompt: str, model: str, tool_definition: dict
+    ) -> LLMResponse:
+        api_key = os.environ.get("ANTHROPIC_API_KEY")
+        if not api_key:
+            raise RuntimeError("ANTHROPIC_API_KEY environment variable not set")
+
+        try:
+            import anthropic
+        except ImportError as exc:
+            raise RuntimeError("anthropic package not installed") from exc
+
+        client = anthropic.AsyncAnthropic(api_key=api_key)
+
+        start = time.time()
+        response = await client.messages.create(
+            model=model,
+            max_tokens=self._config.max_output_tokens,
+            temperature=self._config.temperature,
+            system=system_prompt if system_prompt else "You are a helpful assistant.",
+            messages=[{"role": "user", "content": prompt}],
+            tools=[tool_definition],
+            tool_choice={"type": "tool", "name": tool_definition["name"]},
+        )
+        elapsed = time.time() - start
+
+        # Extract structured data from tool_use block
+        structured_data = None
+        preamble_text = ""
+        for block in response.content:
+            if block.type == "tool_use":
+                structured_data = block.input
+            elif block.type == "text":
+                preamble_text += block.text
+
+        if structured_data is None:
+            raise RuntimeError("LLM did not return a tool_use block")
+
+        input_tokens = response.usage.input_tokens
+        output_tokens = response.usage.output_tokens
+        cost = _calculate_cost("anthropic", model, input_tokens, output_tokens)
+
+        return LLMResponse(
+            text=preamble_text,
+            provider="anthropic",
+            model=model,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cost_usd=cost,
+            processing_time_seconds=elapsed,
+            structured_data=structured_data,
+        )
+
     async def _call_openai(
         self, prompt: str, system_prompt: str, model: str
     ) -> tuple[str, int, int]:

@@ -13,6 +13,7 @@ from meeting_minutes.models import (
     MeetingContext,
     MinutesSection,
     ParsedMinutes,
+    StructuredMinutesResponse,
 )
 
 
@@ -277,3 +278,63 @@ class MinutesParser:
                 topics.append(heading)
 
         return topics[:10]  # cap at 10
+
+
+class StructuredMinutesAdapter:
+    """Convert StructuredMinutesResponse to ParsedMinutes."""
+
+    def adapt(self, structured: StructuredMinutesResponse, meeting_context: MeetingContext) -> ParsedMinutes:
+        """Map structured LLM output to ParsedMinutes."""
+        # Map discussion_points to MinutesSection
+        sections = [
+            MinutesSection(heading=dp.topic, content=dp.summary, type="discussion")
+            for dp in structured.discussion_points
+        ]
+
+        # Map action items
+        action_items = [
+            ActionItem(
+                description=ai.description,
+                owner=ai.owner,
+                due_date=ai.due_date,
+                priority=ai.priority,
+                transcript_segment_ids=ai.transcript_segment_ids,
+                status=ActionItemStatus.OPEN,
+            )
+            for ai in structured.action_items
+        ]
+
+        # Map decisions
+        decisions = [
+            Decision(
+                description=d.description,
+                made_by=d.made_by,
+                rationale=d.rationale,
+                confidence=d.confidence,
+                transcript_segment_ids=d.transcript_segment_ids,
+            )
+            for d in structured.decisions
+        ]
+
+        return ParsedMinutes(
+            meeting_id=meeting_context.meeting_id,
+            title=structured.title,
+            summary=structured.summary,
+            sections=sections,
+            action_items=action_items,
+            decisions=decisions,
+            key_topics=structured.key_topics,
+            raw_llm_response=structured.model_dump_json(),
+            meeting_context={
+                "title": structured.title,
+                "date": meeting_context.date,
+                "attendees": meeting_context.attendees,
+            },
+            sentiment=structured.sentiment,
+            participants=structured.participants,
+            discussion_points=structured.discussion_points,
+            risks_and_concerns=structured.risks_and_concerns,
+            follow_ups=structured.follow_ups,
+            parking_lot=structured.parking_lot,
+            meeting_effectiveness=structured.meeting_effectiveness,
+        )

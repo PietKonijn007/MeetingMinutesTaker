@@ -94,6 +94,14 @@ class StorageEngine:
         minutes_orm.summary = mj.summary
         minutes_orm.generated_at = mj.generated_at
         minutes_orm.llm_model = mj.llm.model
+        minutes_orm.sentiment = getattr(mj, "sentiment", None)
+        # Store structured data as JSON string if available
+        structured = getattr(mj, "structured_data", None)
+        if structured is not None:
+            import json
+            minutes_orm.structured_json = json.dumps(structured)
+        else:
+            minutes_orm.structured_json = None
 
         # Upsert TranscriptORM
         if minutes_data.transcript_json:
@@ -119,6 +127,7 @@ class StorageEngine:
                     due_date=ai.due_date,
                     status=ai.status.value,
                     mentioned_at_seconds=ai.mentioned_at_seconds,
+                    priority=getattr(ai, "priority", None),
                 )
             )
 
@@ -132,6 +141,8 @@ class StorageEngine:
                     description=dec.description,
                     made_by=dec.made_by,
                     mentioned_at_seconds=dec.mentioned_at_seconds,
+                    rationale=getattr(dec, "rationale", None),
+                    confidence=getattr(dec, "confidence", None),
                 )
             )
 

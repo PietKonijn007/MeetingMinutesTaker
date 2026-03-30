@@ -1,37 +1,31 @@
 data_dir: ~/MeetingMinutesTaker/data
 log_level: INFO
-
 pipeline:
-  mode: automatic  # automatic | semi_automatic | manual
-
+  mode: automatic
 recording:
-  audio_device: auto
+  audio_device: MacBook Air Microphone
   sample_rate: 16000
   format: flac
   auto_stop_silence_minutes: 5
-
 transcription:
   primary_engine: whisper
   whisper_model: medium
   language: auto
   custom_vocabulary: null
-
 diarization:
   enabled: true
   engine: pyannote
-
 generation:
   llm:
     primary_provider: anthropic
-    model: claude-sonnet-4-6-20250514
-    fallback_provider: openai
-    fallback_model: gpt-4o
+    model: claude-sonnet-4-6
+    fallback_provider: null
+    fallback_model: null
     temperature: 0.2
     max_output_tokens: 4096
     retry_attempts: 3
     timeout_seconds: 120
   templates_dir: templates
-
 storage:
   database: sqlite
   sqlite_path: db/meetings.db

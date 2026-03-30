@@ -215,36 +215,78 @@ class PipelineOrchestrator:
         )
         _console(f"  Context: {context.date} | {context.duration} | {len(attendees)} attendees")
 
-        # Render prompt
+        # Render prompt and generate
         prompt_engine = PromptTemplateEngine(templates_dir)
-        full_prompt = prompt_engine.render(template, context, transcript_data.full_text)
-        _console(f"  Prompt rendered: {len(full_prompt):,} chars")
-
-        # Generate with LLM
         provider = gen_config.llm.primary_provider
         model = gen_config.llm.model
-        _console(f"  Calling LLM: {provider} / {model}...", "yellow")
-
-        t0 = time.time()
         llm_client = LLMClient(gen_config.llm)
-        llm_response = await llm_client.generate(full_prompt, system_prompt=template.system_prompt)
-        t_llm = time.time() - t0
 
-        _console(f"  ✓ LLM response received in {t_llm:.1f}s", "green")
-        _console(f"    Provider: {llm_response.provider} | Model: {llm_response.model}")
-        _console(f"    Tokens: {llm_response.input_tokens:,} in + {llm_response.output_tokens:,} out")
-        _console(f"    Cost: ${llm_response.cost_usd:.4f}")
-        _console(f"    Response length: {len(llm_response.text):,} chars")
+        # Try structured generation first
+        try:
+            _console(f"  Trying structured generation (tool_use)...", "yellow")
+            system_prompt, user_prompt = prompt_engine.render_structured(template, context, transcript_data.full_text)
+            _console(f"  Prompt rendered: {len(user_prompt):,} chars")
+            _console(f"  Calling LLM: {provider} / {model}...", "yellow")
 
-        # Parse response
-        _console(f"  Parsing LLM response...")
-        parser = MinutesParser()
-        parsed_minutes = parser.parse(llm_response.text, context)
+            t0 = time.time()
+            llm_response = await llm_client.generate_structured(user_prompt, system_prompt)
+            t_llm = time.time() - t0
 
-        # Use LLM-generated title if available, fall back to context title
-        if parsed_minutes.title:
-            context.title = parsed_minutes.title
+            _console(f"  ✓ LLM response received in {t_llm:.1f}s", "green")
+            _console(f"    Provider: {llm_response.provider} | Model: {llm_response.model}")
+            _console(f"    Tokens: {llm_response.input_tokens:,} in + {llm_response.output_tokens:,} out")
+            _console(f"    Cost: ${llm_response.cost_usd:.4f}")
+
+            # Parse structured response
+            from meeting_minutes.models import StructuredMinutesResponse
+            from meeting_minutes.system2.parser import StructuredMinutesAdapter
+
+            structured = StructuredMinutesResponse(**llm_response.structured_data)
+            adapter = StructuredMinutesAdapter()
+            parsed_minutes = adapter.adapt(structured, context)
+
+            # Use LLM-generated title
+            if parsed_minutes.title:
+                context.title = parsed_minutes.title
+
+            _console(f"  ✓ Structured generation succeeded", "green")
             _console(f"    Title: {parsed_minutes.title}")
+            _console(f"    Sentiment: {parsed_minutes.sentiment}")
+            _console(f"    Discussion points: {len(parsed_minutes.discussion_points)}")
+            _console(f"    Decisions: {len(parsed_minutes.decisions)}")
+            _console(f"    Action items: {len(parsed_minutes.action_items)}")
+            _console(f"    Risks: {len(parsed_minutes.risks_and_concerns)}")
+            _console(f"    Follow-ups: {len(parsed_minutes.follow_ups)}")
+            _console(f"    Parking lot: {len(parsed_minutes.parking_lot)}")
+
+        except Exception as structured_exc:
+            _console(f"  ⚠ Structured generation failed: {structured_exc}", "yellow")
+            _console(f"  Falling back to text+regex path...", "yellow")
+
+            # Fall back to old text+regex path
+            full_prompt = prompt_engine.render(template, context, transcript_data.full_text)
+            _console(f"  Prompt rendered: {len(full_prompt):,} chars")
+            _console(f"  Calling LLM: {provider} / {model}...", "yellow")
+
+            t0 = time.time()
+            llm_response = await llm_client.generate(full_prompt, system_prompt=template.system_prompt)
+            t_llm = time.time() - t0
+
+            _console(f"  ✓ LLM response received in {t_llm:.1f}s", "green")
+            _console(f"    Provider: {llm_response.provider} | Model: {llm_response.model}")
+            _console(f"    Tokens: {llm_response.input_tokens:,} in + {llm_response.output_tokens:,} out")
+            _console(f"    Cost: ${llm_response.cost_usd:.4f}")
+            _console(f"    Response length: {len(llm_response.text):,} chars")
+
+            # Parse response
+            _console(f"  Parsing LLM response...")
+            parser = MinutesParser()
+            parsed_minutes = parser.parse(llm_response.text, context)
+
+            if parsed_minutes.title:
+                context.title = parsed_minutes.title
+
+        _console(f"    Title: {parsed_minutes.title}")
         _console(f"    Summary: {len(parsed_minutes.summary)} chars")
         _console(f"    Sections: {len(parsed_minutes.sections)}")
         _console(f"    Action items: {len(parsed_minutes.action_items)}")

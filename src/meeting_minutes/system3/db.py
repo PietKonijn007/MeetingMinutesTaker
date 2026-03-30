@@ -72,6 +72,8 @@ class MinutesORM(Base):
     generated_at = Column(DateTime)
     llm_model = Column(String)
     review_status = Column(String, default="draft")
+    sentiment = Column(String, nullable=True)
+    structured_json = Column(Text, nullable=True)
 
     meeting = relationship("MeetingORM", back_populates="minutes")
 
@@ -86,6 +88,7 @@ class ActionItemORM(Base):
     due_date = Column(String, nullable=True)
     status = Column(String, default="open")
     mentioned_at_seconds = Column(Float, nullable=True)
+    priority = Column(String, nullable=True)
 
     meeting = relationship("MeetingORM", back_populates="action_items")
 
@@ -98,6 +101,8 @@ class DecisionORM(Base):
     description = Column(Text)
     made_by = Column(String, nullable=True)
     mentioned_at_seconds = Column(Float, nullable=True)
+    rationale = Column(Text, nullable=True)
+    confidence = Column(String, nullable=True)
 
     meeting = relationship("MeetingORM", back_populates="decisions")
 

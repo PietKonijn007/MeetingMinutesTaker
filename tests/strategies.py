@@ -10,12 +10,20 @@ from meeting_minutes.models import (
     ActionItem,
     ActionItemStatus,
     Decision,
+    DiscussionPoint,
+    FollowUp,
     LLMUsage,
+    MeetingEffectiveness,
     MinutesJSON,
     MinutesMetadata,
     MinutesSection,
+    ParticipantInfo,
+    RiskConcern,
     SearchQuery,
     SpeakerMapping,
+    StructuredActionItem,
+    StructuredDecision,
+    StructuredMinutesResponse,
     TranscriptJSON,
     TranscriptMetadata,
     TranscriptSegment,
@@ -160,6 +168,8 @@ def action_item_strategy():
             st.none(),
             st.floats(min_value=0.0, max_value=3600.0, allow_nan=False, allow_infinity=False),
         ),
+        priority=st.one_of(st.none(), st.sampled_from(["high", "medium", "low"])),
+        transcript_segment_ids=st.lists(st.integers(min_value=0, max_value=100), max_size=5),
     )
 
 
@@ -172,6 +182,92 @@ def decision_strategy():
             st.none(),
             st.floats(min_value=0.0, max_value=3600.0, allow_nan=False, allow_infinity=False),
         ),
+        rationale=st.one_of(st.none(), safe_text),
+        confidence=st.one_of(st.none(), st.sampled_from(["high", "medium", "low"])),
+        transcript_segment_ids=st.lists(st.integers(min_value=0, max_value=100), max_size=5),
+    )
+
+
+def participant_info_strategy():
+    return st.builds(
+        ParticipantInfo,
+        name=safe_name,
+        role=st.one_of(st.none(), st.sampled_from(["facilitator", "presenter", "contributor", "observer"])),
+    )
+
+
+def discussion_point_strategy():
+    return st.builds(
+        DiscussionPoint,
+        topic=safe_text,
+        summary=safe_text,
+        participants=st.lists(safe_name, max_size=4),
+        sentiment=st.one_of(st.none(), st.sampled_from(["positive", "neutral", "tense"])),
+        transcript_segment_ids=st.lists(st.integers(min_value=0, max_value=100), max_size=5),
+    )
+
+
+def risk_concern_strategy():
+    return st.builds(
+        RiskConcern,
+        description=safe_text,
+        raised_by=st.one_of(st.none(), safe_name),
+    )
+
+
+def follow_up_strategy():
+    return st.builds(
+        FollowUp,
+        description=safe_text,
+        owner=st.one_of(st.none(), safe_name),
+        timeframe=st.one_of(st.none(), st.just("next week"), st.just("end of month")),
+    )
+
+
+def meeting_effectiveness_strategy():
+    return st.builds(
+        MeetingEffectiveness,
+        had_clear_agenda=st.one_of(st.none(), st.booleans()),
+        decisions_made=st.integers(min_value=0, max_value=20),
+        action_items_assigned=st.integers(min_value=0, max_value=20),
+        unresolved_items=st.integers(min_value=0, max_value=20),
+    )
+
+
+def structured_minutes_response_strategy():
+    return st.builds(
+        StructuredMinutesResponse,
+        title=safe_text,
+        summary=safe_text,
+        meeting_type_suggestion=st.one_of(st.none(), st.sampled_from(["standup", "planning", "other"])),
+        sentiment=st.one_of(st.none(), st.sampled_from(["constructive", "positive", "neutral", "tense", "negative"])),
+        participants=st.lists(participant_info_strategy(), max_size=4),
+        discussion_points=st.lists(discussion_point_strategy(), max_size=3),
+        decisions=st.lists(
+            st.builds(
+                StructuredDecision,
+                description=safe_text,
+                made_by=st.one_of(st.none(), safe_name),
+                rationale=st.one_of(st.none(), safe_text),
+                confidence=st.one_of(st.none(), st.sampled_from(["high", "medium", "low"])),
+            ),
+            max_size=3,
+        ),
+        action_items=st.lists(
+            st.builds(
+                StructuredActionItem,
+                description=safe_text,
+                owner=st.one_of(st.none(), safe_name),
+                due_date=st.one_of(st.none(), st.just("2026-04-30")),
+                priority=st.one_of(st.none(), st.sampled_from(["high", "medium", "low"])),
+            ),
+            max_size=3,
+        ),
+        risks_and_concerns=st.lists(risk_concern_strategy(), max_size=3),
+        follow_ups=st.lists(follow_up_strategy(), max_size=3),
+        key_topics=st.lists(safe_word, max_size=6),
+        parking_lot=st.lists(safe_text, max_size=3),
+        meeting_effectiveness=st.one_of(st.none(), meeting_effectiveness_strategy()),
     )
 
 

@@ -96,6 +96,8 @@ class ActionItem(BaseModel):
     due_date: str | None = None
     status: ActionItemStatus = ActionItemStatus.OPEN
     mentioned_at_seconds: float | None = None
+    priority: str | None = None  # high, medium, low
+    transcript_segment_ids: list[int] = []
 
 
 class Decision(BaseModel):
@@ -103,6 +105,9 @@ class Decision(BaseModel):
     description: str
     made_by: str | None = None
     mentioned_at_seconds: float | None = None
+    rationale: str | None = None
+    confidence: str | None = None  # high, medium, low
+    transcript_segment_ids: list[int] = []
 
 
 class MinutesSection(BaseModel):
@@ -127,6 +132,70 @@ class LLMUsage(BaseModel):
     processing_time_seconds: float
 
 
+class ParticipantInfo(BaseModel):
+    name: str
+    role: str | None = None  # facilitator, presenter, contributor, observer
+
+
+class DiscussionPoint(BaseModel):
+    topic: str
+    summary: str
+    participants: list[str] = []
+    sentiment: str | None = None
+    transcript_segment_ids: list[int] = []
+
+
+class StructuredDecision(BaseModel):
+    description: str
+    made_by: str | None = None
+    rationale: str | None = None
+    confidence: str | None = None  # high, medium, low
+    transcript_segment_ids: list[int] = []
+
+
+class StructuredActionItem(BaseModel):
+    description: str
+    owner: str | None = None
+    due_date: str | None = None
+    priority: str | None = None  # high, medium, low
+    transcript_segment_ids: list[int] = []
+
+
+class RiskConcern(BaseModel):
+    description: str
+    raised_by: str | None = None
+
+
+class FollowUp(BaseModel):
+    description: str
+    owner: str | None = None
+    timeframe: str | None = None
+
+
+class MeetingEffectiveness(BaseModel):
+    had_clear_agenda: bool | None = None
+    decisions_made: int = 0
+    action_items_assigned: int = 0
+    unresolved_items: int = 0
+
+
+class StructuredMinutesResponse(BaseModel):
+    """The complete schema the LLM fills via tool_use."""
+    title: str = ""
+    summary: str = ""
+    meeting_type_suggestion: str | None = None
+    sentiment: str | None = None  # constructive, positive, neutral, tense, negative
+    participants: list[ParticipantInfo] = []
+    discussion_points: list[DiscussionPoint] = []
+    decisions: list[StructuredDecision] = []
+    action_items: list[StructuredActionItem] = []
+    risks_and_concerns: list[RiskConcern] = []
+    follow_ups: list[FollowUp] = []
+    key_topics: list[str] = []
+    parking_lot: list[str] = []
+    meeting_effectiveness: MeetingEffectiveness | None = None
+
+
 class MinutesJSON(BaseModel):
     schema_version: str = "1.0"
     meeting_id: str
@@ -141,6 +210,14 @@ class MinutesJSON(BaseModel):
     key_topics: list[str]
     minutes_markdown: str
     llm: LLMUsage
+    sentiment: str | None = None
+    participants: list[ParticipantInfo] = []
+    discussion_points: list[DiscussionPoint] = []
+    risks_and_concerns: list[RiskConcern] = []
+    follow_ups: list[FollowUp] = []
+    parking_lot: list[str] = []
+    meeting_effectiveness: MeetingEffectiveness | None = None
+    structured_data: dict | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -235,6 +312,13 @@ class ParsedMinutes(BaseModel):
     key_topics: list[str]
     raw_llm_response: str
     meeting_context: dict = Field(default_factory=dict)
+    sentiment: str | None = None
+    participants: list[ParticipantInfo] = []
+    discussion_points: list[DiscussionPoint] = []
+    risks_and_concerns: list[RiskConcern] = []
+    follow_ups: list[FollowUp] = []
+    parking_lot: list[str] = []
+    meeting_effectiveness: MeetingEffectiveness | None = None
 
 
 class QualityIssue(BaseModel):
@@ -261,6 +345,7 @@ class LLMResponse(BaseModel):
     output_tokens: int
     cost_usd: float
     processing_time_seconds: float
+    structured_data: dict | None = None
 
 
 class PromptTemplate(BaseModel):
