@@ -263,6 +263,10 @@
               </div>
             {/each}
           </div>
+        {:else if transcript?.full_text}
+          <div class="bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg p-5">
+            <p class="text-sm text-[var(--text-primary)] whitespace-pre-wrap leading-relaxed">{transcript.full_text}</p>
+          </div>
         {:else}
           <p class="text-sm text-[var(--text-muted)] italic">No transcript available.</p>
         {/if}
