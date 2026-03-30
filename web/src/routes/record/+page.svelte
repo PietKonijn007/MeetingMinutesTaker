@@ -11,24 +11,19 @@
   let selectedLanguage = $state('auto');
   let startingRecording = $state(false);
   let stoppingRecording = $state(false);
-  let liveAudioLevel = $state(0);
   let levelHistory = $state(new Array(24).fill(0));
-  let levelPollTimer = $state(null);
-
-  const state = $derived($recording.state);
-  const elapsedSeconds = $derived($recording.elapsedSeconds);
-  const audioLevel = $derived($recording.audioLevel);
-  const meetingId = $derived($recording.meetingId);
+  let refreshingDevices = $state(false);
+  let devicePollTimer = $state(null);
 
   function formatElapsed(sec) {
-    if (sec == null) return '00:00';
+    if (sec == null || sec === 0) return '00:00';
     const totalSec = Math.floor(sec);
     const m = Math.floor(totalSec / 60);
     const s = totalSec % 60;
     return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
   }
 
-  const pipelineSteps = $derived(() => {
+  function getPipelineSteps() {
     const step = $recording.step;
     const progress = $recording.progress;
 
@@ -57,16 +52,14 @@
     }
 
     return steps;
-  });
+  }
 
-  // Use WebSocket audio level — update history whenever audioLevel changes
+  // Update audio level history from WebSocket data
   $effect(() => {
-    if (state === 'recording') {
-      liveAudioLevel = audioLevel;
-      levelHistory = [...levelHistory.slice(1), audioLevel];
-    } else if (state !== 'recording') {
-      liveAudioLevel = 0;
-      levelHistory = new Array(24).fill(0);
+    const level = $recording.audioLevel;
+    const recState = $recording.state;
+    if (recState === 'recording' && level != null) {
+      levelHistory = [...levelHistory.slice(1), level];
     }
   });
 
@@ -99,9 +92,6 @@
 
   let inputDevices = $derived(audioDevices.filter(d => d.max_input_channels > 0));
   let outputDevices = $derived(audioDevices.filter(d => d.max_output_channels > 0));
-
-  let refreshingDevices = $state(false);
-  let devicePollTimer = $state(null);
 
   async function loadDevices() {
     try {
@@ -144,7 +134,7 @@
 
     // Poll for new devices every 3 seconds only when idle (picks up AirPods, USB mics, etc.)
     devicePollTimer = setInterval(() => {
-      if (state === 'idle' || state === 'done') loadDevices();
+      if ($recording.state === 'idle' || $recording.state === 'done') loadDevices();
     }, 3000);
 
     return () => {
@@ -158,7 +148,7 @@
   <h1 class="text-2xl font-bold text-[var(--text-primary)] mb-8 text-center">Record</h1>
 
   <!-- Idle state -->
-  {#if state === 'idle' || state === 'done'}
+  {#if $recording.state === 'idle' || $recording.state === 'done'}
     <div class="flex flex-col items-center">
       <!-- Big record button -->
       <button
@@ -247,9 +237,9 @@
       </div>
 
       <!-- Show link to last meeting if done -->
-      {#if state === 'done' && meetingId}
+      {#if $recording.state === 'done' && meetingId}
         <a
-          href="/meeting/{meetingId}"
+          href="/meeting/{$recording.meetingId}"
           class="mt-6 inline-flex items-center gap-2 px-4 py-2 bg-[var(--accent)] text-white rounded-lg text-sm font-medium
                  hover:bg-[var(--accent-hover)] transition-colors"
         >
@@ -262,7 +252,7 @@
     </div>
 
   <!-- Recording state -->
-  {:else if state === 'recording'}
+  {:else if $recording.state === 'recording'}
     <div class="flex flex-col items-center">
       <!-- Pulsing red dot + time -->
       <div class="flex items-center gap-3 mb-6">
@@ -271,7 +261,7 @@
       </div>
 
       <div class="text-5xl font-mono font-bold text-[var(--text-primary)] mb-8">
-        {formatElapsed(elapsedSeconds)}
+        {formatElapsed($recording.elapsedSeconds)}
       </div>
 
       <!-- Audio level visualization — real levels from mic -->
@@ -304,18 +294,18 @@
     </div>
 
   <!-- Processing state -->
-  {:else if state === 'processing'}
+  {:else if $recording.state === 'processing'}
     <div class="bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg p-6">
       <h2 class="text-lg font-semibold text-[var(--text-primary)] mb-6">
-        Processing meeting{meetingId ? ` ${meetingId.slice(0, 8)}...` : ''}
+        Processing meeting{$recording.meetingId ? ` ${$recording.meetingId.slice(0, 8)}...` : ''}
       </h2>
 
-      <StatusStepper steps={pipelineSteps()} />
+      <StatusStepper steps={getPipelineSteps()} />
 
-      {#if meetingId}
+      {#if $recording.meetingId}
         <div class="mt-6 text-center">
           <a
-            href="/meeting/{meetingId}"
+            href="/meeting/{$recording.meetingId}"
             class="text-sm text-[var(--accent)] hover:underline"
           >
             View when ready
