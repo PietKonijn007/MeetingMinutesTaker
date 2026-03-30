@@ -10,20 +10,20 @@
   let saving = $state(false);
   let audioDevices = $state([]);
 
-  // Local editable state
-  let recording_device = $state('');
+  // Local editable state — maps to AppConfig fields
+  let recording_device = $state('auto');
   let recording_sample_rate = $state(16000);
-  let recording_silence_threshold = $state(30);
+  let recording_silence_minutes = $state(5);
   let transcription_model = $state('medium');
-  let transcription_language = $state('en');
+  let transcription_language = $state('auto');
   let diarization_enabled = $state(true);
-  let llm_provider = $state('ollama');
-  let llm_model = $state('');
-  let llm_temperature = $state(0.3);
+  let llm_provider = $state('anthropic');
+  let llm_model = $state('claude-sonnet-4-6-20250514');
+  let llm_temperature = $state(0.2);
   let llm_max_tokens = $state(4096);
   let pipeline_mode = $state('automatic');
-  let storage_db_path = $state('');
-  let storage_data_dir = $state('');
+  let storage_db_path = $state('db/meetings.db');
+  let storage_data_dir = $state('~/MeetingMinutesTaker/data');
 
   async function loadConfig() {
     loading = true;
@@ -35,27 +35,29 @@
 
       if (cfg.status === 'fulfilled') {
         config = cfg.value;
-        // Populate local state from config
-        const r = config.recording || {};
-        const t = config.transcription || {};
-        const s = config.speaker_id || {};
-        const m = config.minutes || {};
-        const p = config.pipeline || {};
-        const st = config.storage || {};
+        // Map from AppConfig structure: config.config.{section}
+        const c = config.config || config || {};
+        const r = c.recording || {};
+        const t = c.transcription || {};
+        const d = c.diarization || {};
+        const g = c.generation || {};
+        const llm = g.llm || {};
+        const p = c.pipeline || {};
+        const st = c.storage || {};
 
-        recording_device = r.audio_device || '';
+        recording_device = r.audio_device || 'auto';
         recording_sample_rate = r.sample_rate || 16000;
-        recording_silence_threshold = r.silence_threshold || 30;
-        transcription_model = t.model || 'medium';
-        transcription_language = t.language || 'en';
-        diarization_enabled = s.enabled !== false;
-        llm_provider = m.provider || 'ollama';
-        llm_model = m.model || '';
-        llm_temperature = m.temperature ?? 0.3;
-        llm_max_tokens = m.max_tokens || 4096;
+        recording_silence_minutes = r.auto_stop_silence_minutes || 5;
+        transcription_model = t.whisper_model || 'medium';
+        transcription_language = t.language || 'auto';
+        diarization_enabled = d.enabled !== false;
+        llm_provider = llm.primary_provider || 'anthropic';
+        llm_model = llm.model || 'claude-sonnet-4-6-20250514';
+        llm_temperature = llm.temperature ?? 0.2;
+        llm_max_tokens = llm.max_output_tokens || 4096;
         pipeline_mode = p.mode || 'automatic';
-        storage_db_path = st.db_path || '';
-        storage_data_dir = st.data_dir || '';
+        storage_db_path = st.sqlite_path || 'db/meetings.db';
+        storage_data_dir = c.data_dir || '~/MeetingMinutesTaker/data';
       }
 
       if (devices.status === 'fulfilled') {
@@ -72,30 +74,32 @@
     saving = true;
     try {
       await api.updateConfig({
+        data_dir: storage_data_dir,
         recording: {
           audio_device: recording_device,
           sample_rate: recording_sample_rate,
-          silence_threshold: recording_silence_threshold
+          auto_stop_silence_minutes: recording_silence_minutes
         },
         transcription: {
-          model: transcription_model,
+          whisper_model: transcription_model,
           language: transcription_language
         },
-        speaker_id: {
+        diarization: {
           enabled: diarization_enabled
         },
-        minutes: {
-          provider: llm_provider,
-          model: llm_model,
-          temperature: llm_temperature,
-          max_tokens: llm_max_tokens
+        generation: {
+          llm: {
+            primary_provider: llm_provider,
+            model: llm_model,
+            temperature: llm_temperature,
+            max_output_tokens: llm_max_tokens
+          }
         },
         pipeline: {
           mode: pipeline_mode
         },
         storage: {
-          db_path: storage_db_path,
-          data_dir: storage_data_dir
+          sqlite_path: storage_db_path
         }
       });
       addToast('Settings saved', 'success');
@@ -156,15 +160,15 @@
 
           <div>
             <label class="block text-sm font-medium text-[var(--text-primary)] mb-1">
-              Auto-stop silence threshold: {recording_silence_threshold}s
+              Auto-stop after silence: {recording_silence_minutes} min
             </label>
             <input
               type="range"
-              bind:value={recording_silence_threshold}
-              min="10" max="120" step="5"
+              bind:value={recording_silence_minutes}
+              min="1" max="30" step="1"
               class="w-full accent-[var(--accent)]"
             />
-            <p class="text-xs text-[var(--text-muted)] mt-1">Stop recording after this many seconds of silence.</p>
+            <p class="text-xs text-[var(--text-muted)] mt-1">Stop recording after this many minutes of silence.</p>
           </div>
         </div>
       </section>
