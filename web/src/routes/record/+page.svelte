@@ -15,6 +15,32 @@
   let refreshingDevices = $state(false);
   let devicePollTimer = $state(null);
 
+  // Local reactive copies of WebSocket store data.
+  // Svelte 5 reliably re-renders $state variables but may not deeply
+  // track nested properties on store subscriptions in templates.
+  let recState = $state('idle');
+  let recElapsed = $state(0);
+  let recLevel = $state(0);
+  let recMeetingId = $state(null);
+  let recStep = $state(null);
+  let recProgress = $state(0);
+
+  // Mirror the WebSocket store into local $state on every update
+  $effect(() => {
+    const r = $recording;
+    recState = r.state;
+    recElapsed = r.elapsedSeconds;
+    recLevel = r.audioLevel;
+    recMeetingId = r.meetingId;
+    recStep = r.step;
+    recProgress = r.progress;
+
+    // Update level history during recording
+    if (r.state === 'recording' && r.audioLevel != null) {
+      levelHistory = [...levelHistory.slice(1), r.audioLevel];
+    }
+  });
+
   function formatElapsed(sec) {
     if (sec == null || sec === 0) return '00:00';
     const totalSec = Math.floor(sec);
@@ -24,9 +50,6 @@
   }
 
   function getPipelineSteps() {
-    const step = $recording.step;
-    const progress = $recording.progress;
-
     const steps = [
       { label: 'Audio saved', subtitle: '', status: 'done' },
       { label: 'Transcribing', subtitle: '', status: 'pending' },
@@ -34,18 +57,18 @@
       { label: 'Indexing', subtitle: '', status: 'pending' }
     ];
 
-    if (step === 'transcribing') {
+    if (recStep === 'transcribing') {
       steps[1].status = 'active';
-      steps[1].progress = progress;
-    } else if (step === 'generating') {
+      steps[1].progress = recProgress;
+    } else if (recStep === 'generating') {
       steps[1].status = 'done';
       steps[2].status = 'active';
-      steps[2].progress = progress;
-    } else if (step === 'indexing') {
+      steps[2].progress = recProgress;
+    } else if (recStep === 'indexing') {
       steps[1].status = 'done';
       steps[2].status = 'done';
       steps[3].status = 'active';
-    } else if (step === 'done' || $recording.state === 'done') {
+    } else if (recStep === 'done' || recState === 'done') {
       steps[1].status = 'done';
       steps[2].status = 'done';
       steps[3].status = 'done';
@@ -53,15 +76,6 @@
 
     return steps;
   }
-
-  // Update audio level history from WebSocket data
-  $effect(() => {
-    const level = $recording.audioLevel;
-    const recState = $recording.state;
-    if (recState === 'recording' && level != null) {
-      levelHistory = [...levelHistory.slice(1), level];
-    }
-  });
 
   async function startRecording() {
     startingRecording = true;
@@ -134,7 +148,7 @@
 
     // Poll for new devices every 3 seconds only when idle (picks up AirPods, USB mics, etc.)
     devicePollTimer = setInterval(() => {
-      if ($recording.state === 'idle' || $recording.state === 'done') loadDevices();
+      if (recState === 'idle' || recState === 'done') loadDevices();
     }, 3000);
 
     return () => {
@@ -148,7 +162,7 @@
   <h1 class="text-2xl font-bold text-[var(--text-primary)] mb-8 text-center">Record</h1>
 
   <!-- Idle state -->
-  {#if $recording.state === 'idle' || $recording.state === 'done'}
+  {#if recState === 'idle' || recState === 'done'}
     <div class="flex flex-col items-center">
       <!-- Big record button -->
       <button
@@ -237,9 +251,9 @@
       </div>
 
       <!-- Show link to last meeting if done -->
-      {#if $recording.state === 'done' && meetingId}
+      {#if recState === 'done' && recMeetingId}
         <a
-          href="/meeting/{$recording.meetingId}"
+          href="/meeting/{recMeetingId}"
           class="mt-6 inline-flex items-center gap-2 px-4 py-2 bg-[var(--accent)] text-white rounded-lg text-sm font-medium
                  hover:bg-[var(--accent-hover)] transition-colors"
         >
@@ -252,7 +266,7 @@
     </div>
 
   <!-- Recording state -->
-  {:else if $recording.state === 'recording'}
+  {:else if recState === 'recording'}
     <div class="flex flex-col items-center">
       <!-- Pulsing red dot + time -->
       <div class="flex items-center gap-3 mb-6">
@@ -261,7 +275,7 @@
       </div>
 
       <div class="text-5xl font-mono font-bold text-[var(--text-primary)] mb-8">
-        {formatElapsed($recording.elapsedSeconds)}
+        {formatElapsed(recElapsed)}
       </div>
 
       <!-- Audio level visualization — real levels from mic -->
@@ -294,18 +308,18 @@
     </div>
 
   <!-- Processing state -->
-  {:else if $recording.state === 'processing'}
+  {:else if recState === 'processing'}
     <div class="bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg p-6">
       <h2 class="text-lg font-semibold text-[var(--text-primary)] mb-6">
-        Processing meeting{$recording.meetingId ? ` ${$recording.meetingId.slice(0, 8)}...` : ''}
+        Processing meeting{recMeetingId ? ` ${recMeetingId.slice(0, 8)}...` : ''}
       </h2>
 
       <StatusStepper steps={getPipelineSteps()} />
 
-      {#if $recording.meetingId}
+      {#if recMeetingId}
         <div class="mt-6 text-center">
           <a
-            href="/meeting/{$recording.meetingId}"
+            href="/meeting/{recMeetingId}"
             class="text-sm text-[var(--accent)] hover:underline"
           >
             View when ready
