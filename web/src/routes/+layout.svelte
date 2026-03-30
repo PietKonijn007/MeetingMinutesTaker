@@ -97,7 +97,7 @@
             onclick={() => { if (isMobile) sidebarOpen = false; }}
             class="flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors duration-150
                    {active
-                     ? 'bg-[var(--accent)] bg-opacity-10 text-[var(--accent)] font-medium border-l-2 border-[var(--accent)] -ml-0.5 pl-[10px]'
+                     ? 'font-medium border-l-2 border-[var(--accent)] -ml-0.5 pl-[10px] text-[var(--accent)] sidebar-active'
                      : 'text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)]'}"
           >
             {#if item.icon === 'clipboard'}
@@ -124,7 +124,7 @@
             onclick={() => { if (isMobile) sidebarOpen = false; }}
             class="flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors duration-150
                    {active
-                     ? 'bg-[var(--accent)] bg-opacity-10 text-[var(--accent)] font-medium border-l-2 border-[var(--accent)] -ml-0.5 pl-[10px]'
+                     ? 'font-medium border-l-2 border-[var(--accent)] -ml-0.5 pl-[10px] text-[var(--accent)] sidebar-active'
                      : 'text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)]'}"
           >
             {#if item.icon === 'record'}

@@ -85,6 +85,11 @@ body {
   animation: shimmer 1.5s ease-in-out infinite;
 }
 
+/* Active sidebar item — light tinted background */
+.sidebar-active {
+  background-color: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
 /* Pulsing recording dot */
 @keyframes pulse-recording {
   0%, 100% { opacity: 1; }
