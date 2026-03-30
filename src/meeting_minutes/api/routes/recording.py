@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 from pathlib import Path
@@ -12,6 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from meeting_minutes.api.deps import get_config
 from meeting_minutes.api.schemas import (
     AudioDeviceResponse,
+    PipelineJobStatus,
     RecordingStartRequest,
     RecordingStartResponse,
     RecordingStatusResponse,
@@ -20,18 +22,22 @@ from meeting_minutes.config import AppConfig
 
 router = APIRouter(tags=["recording"])
 
-# Simple in-process state for recording.  A production system would use a
-# background task or separate process, but for the single-user MVP this is
-# sufficient.
-_recording_state: dict = {
-    "state": "idle",
+# ---------------------------------------------------------------------------
+# State: one active recording, many concurrent pipeline jobs
+# ---------------------------------------------------------------------------
+
+# Current recording (only one at a time)
+_current_recording: dict = {
+    "state": "idle",        # "idle" | "recording"
     "meeting_id": None,
     "start_time": None,
     "engine": None,
-    # Pipeline progress tracking (used by WebSocket)
-    "pipeline_step": None,      # "transcribing" | "generating" | "indexing" | "done"
-    "pipeline_progress": 0.0,   # 0.0–1.0 within current step
+    "language": None,
 }
+
+# Background pipeline jobs (many concurrent)
+# { meeting_id: { "step": "transcribing", "progress": 0.5, "error": None, "started_at": time.time() } }
+_pipeline_jobs: dict[str, dict] = {}
 
 
 @router.post("/api/recording/start", response_model=RecordingStartResponse)
@@ -43,9 +49,9 @@ def start_recording(
     import traceback as tb
 
     try:
-        # Check if actually still recording
-        if _recording_state["state"] == "recording":
-            eng = _recording_state.get("engine")
+        # Only check if we're currently recording — don't care about pipeline jobs
+        if _current_recording["state"] == "recording":
+            eng = _current_recording.get("engine")
             if eng and eng.is_recording():
                 raise HTTPException(status_code=409, detail="Already recording")
 
@@ -67,11 +73,11 @@ def start_recording(
         engine = AudioCaptureEngine(rec_config, output_dir=recordings_dir)
         meeting_id = engine.start()
 
-        _recording_state["state"] = "recording"
-        _recording_state["meeting_id"] = meeting_id
-        _recording_state["start_time"] = time.time()
-        _recording_state["engine"] = engine
-        _recording_state["language"] = language
+        _current_recording["state"] = "recording"
+        _current_recording["meeting_id"] = meeting_id
+        _current_recording["start_time"] = time.time()
+        _current_recording["engine"] = engine
+        _current_recording["language"] = language
 
         # Also write state file for CLI interop
         state_file = Path("/tmp/mm_recording_state.json")
@@ -90,92 +96,51 @@ def start_recording(
         tb.print_exc()
         raise HTTPException(status_code=500, detail=str(exc))
 
-    return RecordingStartResponse(meeting_id=meeting_id, status="recording")
-
 
 @router.post("/api/recording/stop")
 async def stop_recording(
     config: Annotated[AppConfig, Depends(get_config)],
 ):
     """Stop recording and trigger the pipeline."""
-    if _recording_state["state"] != "recording":
+    if _current_recording["state"] != "recording":
         raise HTTPException(status_code=409, detail="Not currently recording")
 
-    engine = _recording_state["engine"]
+    engine = _current_recording["engine"]
     if engine is None:
         raise HTTPException(status_code=500, detail="Recording engine not available")
 
-    meeting_id = _recording_state["meeting_id"]
-
-    # Set state to processing immediately so the UI updates
-    _recording_state["state"] = "processing"
-    _recording_state["pipeline_step"] = "saving"
-    _recording_state["pipeline_progress"] = 0.0
+    meeting_id = _current_recording["meeting_id"]
 
     try:
         # Run stop (which writes the FLAC file) in a thread to avoid blocking
-        import asyncio
         loop = asyncio.get_event_loop()
         result = await loop.run_in_executor(None, engine.stop)
     except Exception as exc:
-        _recording_state["state"] = "idle"
-        _recording_state["engine"] = None
+        _current_recording["state"] = "idle"
+        _current_recording["engine"] = None
         raise HTTPException(status_code=500, detail=f"Failed to stop recording: {exc}")
 
-    _recording_state["engine"] = None
+    # Reset recording state immediately so a new recording can start
+    _current_recording["state"] = "idle"
+    _current_recording["meeting_id"] = None
+    _current_recording["start_time"] = None
+    _current_recording["engine"] = None
+    _current_recording["language"] = None
 
     # Clean up state file
     state_file = Path("/tmp/mm_recording_state.json")
     state_file.unlink(missing_ok=True)
 
-    # Trigger pipeline in the background (don't block the response)
-    import asyncio
+    # Create pipeline job entry
+    _pipeline_jobs[meeting_id] = {
+        "step": "saving",
+        "progress": 0.0,
+        "error": None,
+        "started_at": time.time(),
+    }
 
-    from meeting_minutes.pipeline import PipelineOrchestrator
-
-    orchestrator = PipelineOrchestrator(config)
-
-    async def _run_pipeline():
-        try:
-            # Step 1: Transcription
-            _recording_state["pipeline_step"] = "transcribing"
-            _recording_state["pipeline_progress"] = 0.0
-            await orchestrator.run_transcription(meeting_id)
-            _recording_state["pipeline_progress"] = 1.0
-
-            # Step 2: Generation
-            _recording_state["pipeline_step"] = "generating"
-            _recording_state["pipeline_progress"] = 0.0
-            await orchestrator.run_generation(meeting_id)
-            _recording_state["pipeline_progress"] = 1.0
-
-            # Step 3: Ingestion
-            _recording_state["pipeline_step"] = "indexing"
-            _recording_state["pipeline_progress"] = 0.0
-            await orchestrator.run_ingestion(meeting_id)
-            _recording_state["pipeline_progress"] = 1.0
-
-            # Done
-            _recording_state["pipeline_step"] = "done"
-            _recording_state["state"] = "done"
-        except Exception as exc:
-            import traceback
-            print(f"\n{'='*60}")
-            print(f"  PIPELINE ERROR for meeting {meeting_id}")
-            print(f"  {type(exc).__name__}: {exc}")
-            print(f"{'='*60}")
-            traceback.print_exc()
-            _recording_state["pipeline_step"] = "error"
-        finally:
-            # After a short delay so the frontend can see "done", reset to idle
-            await asyncio.sleep(2)
-            _recording_state["state"] = "idle"
-            _recording_state["meeting_id"] = None
-            _recording_state["start_time"] = None
-            _recording_state["pipeline_step"] = None
-            _recording_state["pipeline_progress"] = 0.0
-
-    asyncio.create_task(_run_pipeline())
+    # Fire background pipeline task
+    asyncio.create_task(_run_pipeline(meeting_id, config))
 
     return {
         "status": "processing",
@@ -185,12 +150,54 @@ async def stop_recording(
     }
 
 
+async def _run_pipeline(meeting_id: str, config: AppConfig):
+    """Run the full pipeline for a meeting as a background task."""
+    job = _pipeline_jobs[meeting_id]
+    try:
+        from meeting_minutes.pipeline import PipelineOrchestrator
+
+        orchestrator = PipelineOrchestrator(config)
+
+        # Step 1: Transcription
+        job["step"] = "transcribing"
+        job["progress"] = 0.0
+        await orchestrator.run_transcription(meeting_id)
+        job["progress"] = 1.0
+
+        # Step 2: Generation
+        job["step"] = "generating"
+        job["progress"] = 0.0
+        await orchestrator.run_generation(meeting_id)
+        job["progress"] = 1.0
+
+        # Step 3: Ingestion
+        job["step"] = "indexing"
+        job["progress"] = 0.0
+        await orchestrator.run_ingestion(meeting_id)
+        job["progress"] = 1.0
+
+        # Done
+        job["step"] = "done"
+    except Exception as exc:
+        job["step"] = "error"
+        job["error"] = str(exc)
+        import traceback
+        print(f"\n{'='*60}")
+        print(f"  PIPELINE ERROR for meeting {meeting_id}")
+        print(f"  {type(exc).__name__}: {exc}")
+        print(f"{'='*60}")
+        traceback.print_exc()
+
+    # Clean up after 60 seconds so UI can see completion
+    await asyncio.sleep(60)
+    _pipeline_jobs.pop(meeting_id, None)
+
+
 @router.get("/api/recording/status", response_model=RecordingStatusResponse)
 def recording_status():
     """Get current recording state including live audio level."""
-    # Determine the real state by checking the engine
-    engine = _recording_state.get("engine")
-    actual_state = _recording_state["state"]
+    engine = _current_recording.get("engine")
+    actual_state = _current_recording["state"]
 
     # If we think we're recording, verify the engine agrees
     if actual_state == "recording" and engine and not engine.is_recording():
@@ -198,17 +205,36 @@ def recording_status():
 
     elapsed = None
     audio_level = 0.0
-    if actual_state == "recording" and _recording_state["start_time"]:
-        elapsed = time.time() - _recording_state["start_time"]
+    if actual_state == "recording" and _current_recording["start_time"]:
+        elapsed = time.time() - _current_recording["start_time"]
         if engine and hasattr(engine, "get_audio_level"):
             audio_level = engine.get_audio_level()
 
     return RecordingStatusResponse(
         state=actual_state,
-        meeting_id=_recording_state["meeting_id"],
+        meeting_id=_current_recording["meeting_id"],
         elapsed_seconds=round(elapsed, 1) if elapsed else None,
         audio_level=round(audio_level, 3),
     )
+
+
+@router.get("/api/pipelines", response_model=list[PipelineJobStatus])
+def list_pipelines():
+    """Return all active/recent pipeline jobs."""
+    now = time.time()
+    result = []
+    for mid, job in _pipeline_jobs.items():
+        result.append(
+            PipelineJobStatus(
+                meeting_id=mid,
+                step=job["step"],
+                progress=job["progress"],
+                error=job.get("error"),
+                started_at=job["started_at"],
+                elapsed_seconds=round(now - job["started_at"], 1),
+            )
+        )
+    return result
 
 
 @router.get("/api/languages")

@@ -67,6 +67,7 @@ export const api = {
   getRecordingStatus: () => request('/recording/status'),
   getAudioDevices: () => request('/audio-devices'),
   getLanguages: () => request('/languages'),
+  getPipelines: () => request('/pipelines'),
 
   // Config
   getConfig: () => request('/config'),

@@ -1,7 +1,6 @@
 <script>
   import { onMount, onDestroy } from 'svelte';
   import { api } from '$lib/api.js';
-  import StatusStepper from '$lib/components/StatusStepper.svelte';
   import { addToast } from '$lib/stores/toasts.js';
 
   let audioDevices = $state([]);
@@ -19,8 +18,9 @@
   let recElapsed = $state(0);
   let recLevel = $state(0);
   let recMeetingId = $state(null);
-  let recStep = $state(null);
-  let recProgress = $state(0);
+
+  // Active pipeline jobs — updated by polling /api/pipelines
+  let activePipelines = $state([]);
 
   let statusPollTimer = null;
 
@@ -33,15 +33,17 @@
         recElapsed = status.elapsed_seconds || 0;
         recLevel = status.audio_level || 0;
         recMeetingId = status.meeting_id || null;
-        recStep = status.step || null;
-        recProgress = status.progress || 0;
 
         if (recState === 'recording' && recLevel != null) {
           levelHistory = [...levelHistory.slice(1), recLevel];
         }
 
-        // Stop polling once pipeline is done and state returns to idle
-        if (recState === 'idle' && !startingRecording) {
+        // Also fetch pipeline jobs
+        const pipelines = await api.getPipelines();
+        activePipelines = pipelines || [];
+
+        // Stop polling once idle and no active pipelines
+        if (recState === 'idle' && !startingRecording && activePipelines.length === 0) {
           stopStatusPolling();
         }
       } catch (e) {
@@ -63,34 +65,6 @@
     const m = Math.floor(totalSec / 60);
     const s = totalSec % 60;
     return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
-  }
-
-  function getPipelineSteps() {
-    const steps = [
-      { label: 'Audio saved', subtitle: '', status: 'done' },
-      { label: 'Transcribing', subtitle: '', status: 'pending' },
-      { label: 'Generating minutes', subtitle: '', status: 'pending' },
-      { label: 'Indexing', subtitle: '', status: 'pending' }
-    ];
-
-    if (recStep === 'transcribing') {
-      steps[1].status = 'active';
-      steps[1].progress = recProgress;
-    } else if (recStep === 'generating') {
-      steps[1].status = 'done';
-      steps[2].status = 'active';
-      steps[2].progress = recProgress;
-    } else if (recStep === 'indexing') {
-      steps[1].status = 'done';
-      steps[2].status = 'done';
-      steps[3].status = 'active';
-    } else if (recStep === 'done' || recState === 'done') {
-      steps[1].status = 'done';
-      steps[2].status = 'done';
-      steps[3].status = 'done';
-    }
-
-    return steps;
   }
 
   async function startRecording() {
@@ -116,7 +90,13 @@
     stoppingRecording = true;
     try {
       await api.stopRecording();
-      addToast('Recording stopped. Processing...', 'info');
+      // Recording slot is now free — reset local state immediately
+      recState = 'idle';
+      recMeetingId = null;
+      recElapsed = 0;
+      levelHistory = new Array(24).fill(0);
+      addToast('Recording stopped. Processing in background...', 'info');
+      // Keep polling to track pipeline progress
     } catch (e) {
       addToast(`Failed to stop recording: ${e.message}`, 'error');
     } finally {
@@ -166,20 +146,23 @@
     loadDevices();
     loadLanguages();
 
-    // Check initial recording state — resume polling if already recording
-    api.getRecordingStatus().then((status) => {
+    // Check initial recording state — resume polling if already recording or pipelines active
+    Promise.all([
+      api.getRecordingStatus(),
+      api.getPipelines(),
+    ]).then(([status, pipelines]) => {
       recState = status.state || 'idle';
       recElapsed = status.elapsed_seconds || 0;
       recMeetingId = status.meeting_id || null;
-      recStep = status.step || null;
-      if (status.state === 'recording' || status.state === 'processing') {
+      activePipelines = pipelines || [];
+      if (status.state === 'recording' || (pipelines && pipelines.length > 0)) {
         startStatusPolling();
       }
     }).catch(() => {});
 
     // Poll for new devices every 3 seconds only when idle
     devicePollTimer = setInterval(() => {
-      if (recState === 'idle' || recState === 'done') loadDevices();
+      if (recState === 'idle') loadDevices();
     }, 3000);
 
     return () => {
@@ -187,13 +170,30 @@
       stopStatusPolling();
     };
   });
+
+  /**
+   * Determine step completion status for a pipeline job.
+   */
+  function stepStatus(job, step) {
+    const stepOrder = ['transcribing', 'generating', 'indexing'];
+    const stepIdx = stepOrder.indexOf(step);
+    const jobIdx = stepOrder.indexOf(job.step);
+
+    if (job.step === 'done' || job.step === 'error') {
+      // If done, all steps are done. If error, mark steps up to where it failed.
+      return job.step === 'done' ? 'done' : (jobIdx > stepIdx ? 'done' : jobIdx === stepIdx ? 'error' : 'pending');
+    }
+    if (jobIdx > stepIdx) return 'done';
+    if (jobIdx === stepIdx) return 'active';
+    return 'pending';
+  }
 </script>
 
 <div class="max-w-xl mx-auto">
   <h1 class="text-2xl font-bold text-[var(--text-primary)] mb-8 text-center">Record</h1>
 
-  <!-- Idle state -->
-  {#if recState === 'idle' || recState === 'done'}
+  <!-- Idle state — always show record button when not recording -->
+  {#if recState === 'idle'}
     <div class="flex flex-col items-center">
       <!-- Big record button -->
       <button
@@ -280,20 +280,6 @@
           </p>
         </div>
       </div>
-
-      <!-- Show link to last meeting if done -->
-      {#if recState === 'done' && recMeetingId}
-        <a
-          href="/meeting/{recMeetingId}"
-          class="mt-6 inline-flex items-center gap-2 px-4 py-2 bg-[var(--accent)] text-white rounded-lg text-sm font-medium
-                 hover:bg-[var(--accent-hover)] transition-colors"
-        >
-          View Meeting
-          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
-          </svg>
-        </a>
-      {/if}
     </div>
 
   <!-- Recording state -->
@@ -337,26 +323,65 @@
         </button>
       </div>
     </div>
+  {/if}
 
-  <!-- Processing state -->
-  {:else if recState === 'processing'}
-    <div class="bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg p-6">
-      <h2 class="text-lg font-semibold text-[var(--text-primary)] mb-6">
-        Processing meeting{recMeetingId ? ` ${recMeetingId.slice(0, 8)}...` : ''}
-      </h2>
-
-      <StatusStepper steps={getPipelineSteps()} />
-
-      {#if recMeetingId}
-        <div class="mt-6 text-center">
-          <a
-            href="/meeting/{recMeetingId}"
-            class="text-sm text-[var(--accent)] hover:underline"
-          >
-            View when ready
-          </a>
+  <!-- Active Pipelines — always shown below recording controls -->
+  {#if activePipelines.length > 0}
+    <div class="mt-8 w-full">
+      <h3 class="text-sm font-medium text-[var(--text-secondary)] mb-3">Processing</h3>
+      {#each activePipelines as job}
+        <div class="bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg p-4 mb-3">
+          <div class="flex items-center justify-between mb-2">
+            <span class="text-sm font-medium text-[var(--text-primary)]">
+              Meeting {job.meeting_id.slice(0, 8)}...
+            </span>
+            <div class="flex items-center gap-3">
+              <span class="text-xs text-[var(--text-muted)]">
+                {Math.round(job.elapsed_seconds)}s
+              </span>
+              {#if job.step === 'done'}
+                <a
+                  href="/meeting/{job.meeting_id}"
+                  class="text-xs text-[var(--accent)] hover:underline"
+                >
+                  View
+                </a>
+              {/if}
+            </div>
+          </div>
+          <!-- Step indicator -->
+          <div class="flex items-center gap-2 text-xs">
+            {#each ['transcribing', 'generating', 'indexing'] as step, i}
+              {@const status = stepStatus(job, step)}
+              <div class="flex items-center gap-1">
+                {#if status === 'done'}
+                  <span class="text-green-500">&#10003;</span>
+                {:else if status === 'active'}
+                  <span class="text-[var(--accent)] animate-pulse">&#9203;</span>
+                {:else if status === 'error'}
+                  <span class="text-red-500">&#10007;</span>
+                {:else}
+                  <span class="text-[var(--text-muted)]">&#9675;</span>
+                {/if}
+                <span class="{status === 'active' ? 'text-[var(--accent)] font-medium' : status === 'done' ? 'text-green-500' : status === 'error' ? 'text-red-500' : 'text-[var(--text-muted)]'}">
+                  {step === 'transcribing' ? 'Transcribe' : step === 'generating' ? 'Generate' : 'Index'}
+                </span>
+              </div>
+              {#if i < 2}
+                <span class="text-[var(--text-muted)]">&rarr;</span>
+              {/if}
+            {/each}
+            {#if job.step === 'done'}
+              <span class="text-green-500 font-medium ml-2">&#10003; Done</span>
+            {:else if job.step === 'error'}
+              <span class="text-red-500 font-medium ml-2">&#10007; Error</span>
+            {/if}
+          </div>
+          {#if job.step === 'error' && job.error}
+            <p class="mt-2 text-xs text-red-500 truncate" title={job.error}>{job.error}</p>
+          {/if}
         </div>
-      {/if}
+      {/each}
     </div>
   {/if}
 </div>
