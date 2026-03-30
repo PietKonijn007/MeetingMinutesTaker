@@ -207,6 +207,7 @@ pytest tests/ -v
 - **[System 1 Spec](specs/01-recording-and-transcription.md)** — Audio capture, transcription, diarization
 - **[System 2 Spec](specs/02-minutes-generation.md)** — Minutes generation, templates, LLM integration
 - **[System 3 Spec](specs/03-storage-and-search.md)** — Storage, search, API, CLI
+- **[Web UI Spec](specs/04-web-ui.md)** — Browser-based GUI (Svelte + FastAPI), all pages, components, API
 - **[Design Doc](.kiro/specs/meeting-minutes-taker/design.md)** — Component interfaces, data models, correctness properties
 - **[Requirements](.kiro/specs/meeting-minutes-taker/requirements.md)** — Formal acceptance criteria
 
