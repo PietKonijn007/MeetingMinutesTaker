@@ -9,7 +9,7 @@ recording:
   auto_stop_silence_minutes: 5
 transcription:
   primary_engine: whisper
-  whisper_model: large-v3
+  whisper_model: medium
   language: auto
   custom_vocabulary: null
 diarization:
