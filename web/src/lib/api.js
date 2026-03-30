@@ -7,7 +7,14 @@ async function request(path, options = {}) {
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: res.statusText }));
-    throw new Error(err.error || err.detail || res.statusText);
+    // FastAPI validation errors return detail as an array of objects
+    let msg = err.error || err.detail || res.statusText;
+    if (Array.isArray(msg)) {
+      msg = msg.map(e => e.msg || JSON.stringify(e)).join('; ');
+    } else if (typeof msg === 'object') {
+      msg = JSON.stringify(msg);
+    }
+    throw new Error(msg);
   }
   return res.json();
 }
@@ -63,5 +70,5 @@ export const api = {
 
   // Config
   getConfig: () => request('/config'),
-  updateConfig: (data) => request('/config', { method: 'PATCH', body: JSON.stringify(data) }),
+  updateConfig: (data) => request('/config', { method: 'PATCH', body: JSON.stringify({ config: data }) }),
 };
