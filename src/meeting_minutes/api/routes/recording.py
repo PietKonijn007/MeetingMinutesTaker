@@ -316,10 +316,12 @@ def list_audio_devices():
     try:
         import sounddevice as sd
 
-        # Force PortAudio to re-scan — required to detect devices
-        # connected after the server started (AirPods, USB mics, etc.)
-        sd._terminate()
-        sd._initialize()
+        # Force PortAudio to re-scan — but ONLY when not recording.
+        # Calling _terminate() during an active recording stream causes
+        # a bus error crash (PortAudio internal state corruption).
+        if _current_recording["state"] != "recording":
+            sd._terminate()
+            sd._initialize()
 
         devices = sd.query_devices()
         result = []
