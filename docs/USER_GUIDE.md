@@ -15,8 +15,9 @@ This guide walks you through installing the system, setting up audio capture, co
 7. [Using the Web UI](#7-using-the-web-ui)
 8. [Pipeline Modes](#8-pipeline-modes)
 9. [Customizing Templates](#9-customizing-templates)
-10. [Managing Your Data](#10-managing-your-data)
-11. [Troubleshooting](#11-troubleshooting)
+10. [Template Manager (Web UI)](#10-template-manager-web-ui)
+11. [Managing Your Data](#11-managing-your-data)
+12. [Troubleshooting](#12-troubleshooting)
 
 ---
 
@@ -114,7 +115,8 @@ A Multi-Output Device sends audio to two places at once — your speakers (so yo
    - **Built-in Output** (or MacBook Pro Speakers) — this must be first/top
    - **BlackHole 2ch**
 4. Enable **Drift Correction** for BlackHole 2ch (leave it off for the top device)
-5. Right-click the new Multi-Output Device → **Use This Device For Sound Output**
+5. Rename the Multi-Output Device to **Meeting Output** (with the emoji prefix: `🔊 Meeting Output`)
+6. Right-click **Meeting Output** → **Use This Device For Sound Output**
 
 > **Important:** The Built-in Output must be listed first (as the clock/primary device). If BlackHole appears first, uncheck and re-check Built-in Output to reorder it.
 
@@ -129,22 +131,30 @@ An Aggregate Device combines your microphone and BlackHole into one device, so t
    - **Built-in Microphone** (or your external mic) — must be first/top
    - **BlackHole 2ch**
 3. Enable **Drift Correction** for BlackHole 2ch
-4. Rename the Aggregate Device to **MeetingCapture** (or any name you prefer)
+4. Rename the Aggregate Device to **Meeting Capture** (with the emoji prefix: `🎙 Meeting Capture`)
 
-### 3.4 Tell the app to use it
+### 3.4 Meeting app audio settings
 
-Edit `config/config.yaml`:
+In **Zoom, Google Meet, Teams, Slack**, etc.: leave audio settings at their defaults. The system-level Multi-Output Device routes meeting audio to both your speakers and BlackHole automatically — no per-app configuration needed.
+
+### 3.5 Tell the Meeting Minutes app to use it
+
+In the Meeting Minutes web UI (Settings page) or in `config/config.yaml`, select **Meeting Capture** as the input device:
 
 ```yaml
 recording:
-  audio_device: "MeetingCapture"
+  audio_device: "Meeting Capture"
 ```
 
 The app now receives:
 - **Channels 1-2**: Your microphone (your voice, room audio)
 - **Channels 3-4**: BlackHole (remote participants via Zoom/Teams/Slack/etc.)
 
-### 3.5 Audio signal flow
+**Summary of device roles:**
+- **System output** → set to `🔊 Meeting Output` (you hear audio + BlackHole captures it)
+- **Meeting Minutes input** → set to `🎙 Meeting Capture` (mic + BlackHole combined)
+
+### 3.6 Audio signal flow
 
 ```
 Remote participants (Zoom/Teams/etc.)
@@ -152,12 +162,12 @@ Remote participants (Zoom/Teams/etc.)
         ▼
   System Audio Output
         │
-        ├──► Multi-Output Device
+        ├──► 🔊 Meeting Output (Multi-Output Device)
         │         ├──► Built-in Output (you hear audio)
         │         └──► BlackHole 2ch (loopback for capture)
         │
         ▼
-  Aggregate Device ("MeetingCapture")
+  🎙 Meeting Capture (Aggregate Device)
         ├──► Built-in Microphone (your voice)
         └──► BlackHole 2ch (remote audio)
         │
@@ -165,7 +175,7 @@ Remote participants (Zoom/Teams/etc.)
   Meeting Minutes Taker (captures both)
 ```
 
-### 3.6 Physical meetings only
+### 3.7 Physical meetings only
 
 If you're only recording in-person meetings (no virtual component), skip the BlackHole setup. Just set your mic directly:
 
@@ -181,7 +191,7 @@ recording:
   audio_device: "auto"
 ```
 
-### 3.7 List available audio devices
+### 3.8 List available audio devices
 
 To see which audio devices are available on your system:
 
@@ -211,7 +221,7 @@ pipeline:
 
 # ─── Recording (System 1) ──────────────────────────────
 recording:
-  audio_device: "MeetingCapture"          # Device name from Audio MIDI Setup, or "auto"
+  audio_device: "Meeting Capture"          # Device name from Audio MIDI Setup, or "auto"
   sample_rate: 16000                      # 16000 Hz is optimal for speech recognition
   format: flac                            # Audio format: flac (lossless)
   auto_stop_silence_minutes: 5            # Stop recording after N minutes of silence
@@ -259,7 +269,7 @@ If you just want to get started, create `config/config.yaml` with only what you 
 
 ```yaml
 recording:
-  audio_device: "MeetingCapture"
+  audio_device: "Meeting Capture"
 
 generation:
   llm:
@@ -317,7 +327,10 @@ export OPENAI_API_KEY="sk-..."
 The `pyannote.audio` models are gated. You need to:
 
 1. Create a free account at [huggingface.co](https://huggingface.co/)
-2. Accept the user agreement for `pyannote/speaker-diarization-3.1` at its model page
+2. Accept the license/user agreement on **all three** model pages:
+   - [pyannote/speaker-diarization-3.1](https://huggingface.co/pyannote/speaker-diarization-3.1)
+   - [pyannote/segmentation-3.0](https://huggingface.co/pyannote/segmentation-3.0)
+   - [pyannote/speaker-diarization-community-1](https://huggingface.co/pyannote/speaker-diarization-community-1)
 3. Create an access token at [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens)
 4. Set the token:
 
@@ -454,35 +467,32 @@ Open [http://localhost:8080](http://localhost:8080) in your browser. The API doc
 
 | Page | URL | What it shows |
 |------|-----|---------------|
-| **Meetings** | `/` | All meetings in a searchable list or grid. Filter by type, date, person. |
+| **Meetings** | `/` | Calendar view with day list and inline meeting detail. Filter by type, search. |
 | **Meeting Detail** | `/meeting/:id` | Full minutes, transcript with audio player, action items, decisions, tags. |
 | **Action Items** | `/actions` | All action items across meetings. Filter by owner, status, overdue. Check items off. |
 | **Decisions** | `/decisions` | Chronological log of all decisions, grouped by date. |
 | **People** | `/people` | Directory of everyone who has appeared in meetings, with meeting counts and action items. |
 | **Stats** | `/stats` | Charts: meetings over time, distribution by type, action item velocity, time in meetings. |
-| **Record** | `/record` | Start/stop recording with a live timer and audio level display. Shows pipeline progress. |
+| **Record** | `/record` | Start/stop recording with live timer and audio levels. Shows concurrent pipeline job status. |
+| **Templates** | `/templates` | View, edit, and create meeting prompt templates. Built-in templates are protected from deletion. |
 | **Settings** | `/settings` | Visual configuration editor for all settings (audio device, Whisper model, LLM, pipeline mode). |
 
 ### 7.3 Navigation
 
-- **Sidebar**: Always visible on desktop (collapses on mobile). Shows all pages plus a recording status indicator.
+- **Sidebar**: Always visible on desktop (collapses on mobile). Shows all pages (including Templates) plus a recording status indicator.
 - **Search**: Global search bar in the top bar. Press `Cmd+K` (or `Ctrl+K`) from anywhere to focus it.
 - **Dark mode**: Toggle via the sun/moon icon in the top-right corner. Follows your system preference on first visit.
 
-### 7.4 Meetings page
+### 7.4 Meetings page (Calendar View)
 
-The default landing page shows all your meetings. Three view modes:
+The default landing page is a calendar-first view with two panels:
 
-- **List** (default): Cards showing title, date, type badge, duration, attendees, summary snippet, action/decision counts.
-- **Grid**: Same data in a multi-column card layout.
-- **Calendar**: Month view with dots on meeting days.
+- **Left panel**: A month calendar with colored dots on days that have meetings. Below the calendar, a list of meetings for the selected day. Click any day to see its meetings.
+- **Right panel**: Meeting detail rendered inline — clicking a meeting in the day list shows its full minutes, transcript, and actions without navigating away from the page.
 
 Filter using the controls at the top:
 - **Search**: Full-text search across all transcripts and minutes.
 - **Type**: Filter by meeting type (standup, decision, etc.) — multi-select.
-- **Date**: Date range picker with presets (Today, This Week, This Month, This Quarter).
-
-Click any meeting card to open its detail page.
 
 ### 7.5 Meeting detail page
 
@@ -535,9 +545,11 @@ Start and stop recordings directly from the browser.
 
 - **Idle state**: Large record button, current audio device, recent recordings list.
 - **Recording state**: Pulsing red indicator, elapsed time counter, audio level bars, Pause and Stop buttons. A small red dot also appears in the top bar so you can see recording status from any page.
-- **Processing state**: Step-by-step progress showing each pipeline stage (audio saved, transcribing, generating minutes, indexing) with checkmarks as they complete.
+- **Processing state**: Below the recording controls, a "Processing" section shows per-meeting pipeline status. Each job displays steps — Transcribe, Generate, Index — with checkmarks as they complete. Pipeline jobs run sequentially (queued) to avoid memory thrashing with Whisper.
 
-Recording status updates are delivered via HTTP polling at 5 Hz (200ms interval). Polling stops automatically when the pipeline completes.
+You can record a new meeting immediately after stopping the previous one — the previous meeting's pipeline continues processing in the background.
+
+Recording and pipeline status updates are delivered in real time via a WebSocket connection (no polling).
 
 ### 7.9 Settings page
 
@@ -724,9 +736,38 @@ mm generate <meeting_id> --type board_meeting
 
 ---
 
-## 10. Managing Your Data
+## 10. Template Manager (Web UI)
 
-### 10.1 Where data is stored
+The Template Manager lets you view, edit, and create meeting prompt templates directly from the browser at `/templates`.
+
+### 10.1 Viewing and editing templates
+
+All `.md.j2` template files from the `templates/` directory appear in the Template Manager. Click any template to view its contents in an editor. Built-in templates (standup, one_on_one, customer_meeting, etc.) are protected from deletion but can be edited.
+
+### 10.2 Creating custom meeting types
+
+To create a new meeting type:
+
+1. Go to the Templates page and click **New Template**.
+2. Enter a name (e.g., `board_meeting`). This creates `templates/board_meeting.md.j2`.
+3. Write your prompt template using Jinja2 syntax (see section 9 for template variables).
+4. Save. The new type is immediately available as a valid meeting type throughout the system.
+
+Any `.md.j2` file you add to the `templates/` directory — whether via the Template Manager or by creating the file directly — becomes a valid meeting type.
+
+### 10.3 Updated built-in templates
+
+The `one_on_one` and `customer_meeting` templates include enriched sections:
+
+- **Service Feedback**: AWS Services, NetApp Services, Other Services
+- **Blockers**: Categorized as Operational, Organizational, Physical/Infrastructure, Roadmap/Strategic
+- **Customer meetings** additionally include: Competitive Intelligence, and split Commitments (ours vs. customer's)
+
+---
+
+## 11. Managing Your Data
+
+### 11.1 Where data is stored
 
 | Data | Location | Retention |
 |------|----------|-----------|
@@ -736,7 +777,7 @@ mm generate <meeting_id> --type board_meeting
 | Database | `db/meetings.db` | Kept indefinitely |
 | Logs | `logs/*.log` | Manual cleanup |
 
-### 10.2 Deleting a meeting
+### 11.2 Deleting a meeting
 
 To completely remove a meeting and all its data (audio, transcript, minutes, database records, search index):
 
@@ -744,7 +785,7 @@ To completely remove a meeting and all its data (audio, transcript, minutes, dat
 mm delete <meeting_id>
 ```
 
-### 10.3 Exporting meetings
+### 11.3 Exporting meetings
 
 ```bash
 # Export to PDF
@@ -754,7 +795,7 @@ mm export <meeting_id> --format pdf
 mm export <meeting_id> --format md
 ```
 
-### 10.4 Backing up
+### 11.4 Backing up
 
 The entire state of the system is in two places:
 - `data/` directory (audio, transcripts, minutes files)
@@ -764,14 +805,14 @@ Back up both to preserve everything.
 
 ---
 
-## 11. Troubleshooting
+## 12. Troubleshooting
 
 ### Audio issues
 
 | Problem | Solution |
 |---------|----------|
-| **No audio captured** | Check that the Multi-Output Device is set as system sound output. Right-click it in Audio MIDI Setup → "Use This Device For Sound Output". |
-| **No remote audio** | Make sure Zoom/Teams/Slack is outputting to the system default (which should be the Multi-Output Device). Check the meeting app's audio settings. |
+| **No audio captured** | Check that "Meeting Output" is set as system sound output. Right-click it in Audio MIDI Setup → "Use This Device For Sound Output". |
+| **No remote audio** | Make sure Zoom/Teams/Slack is outputting to the system default (which should be "Meeting Output"). Leave the meeting app's audio settings at their defaults. |
 | **Audio glitches or crackling** | Enable Drift Correction on all non-clock devices. Make sure BlackHole 2ch is **not** the primary/clock device (it should be second in the list). |
 | **BlackHole not visible** | Restart CoreAudio: `sudo killall -9 coreaudiod` — or reboot. |
 | **AirPods cause issues** | AirPods use a lower sample rate. Do not make AirPods the primary/clock device. Use Built-in Output as clock device instead. |
@@ -786,12 +827,14 @@ Back up both to preserve everything.
 | **Poor accuracy** | Use a larger model: `whisper_model: large-v3`. Add domain terms to the custom vocabulary file. |
 | **Wrong language detected** | Set the language explicitly: `language: en` (or `nl`, `fr`, `de`, etc.) |
 | **Model download stuck** | The first run downloads the Whisper model (~1.5 GB for medium). Ensure you have a stable internet connection. Models are cached in `~/.cache/huggingface/`. |
+| **Out of memory with `large-v3`** | The `large-v3` model requires ~10 GB RAM and a ~3 GB download. On machines with 16 GB RAM, use `medium` instead (the default). You can change the model in the Settings page or `config.yaml`. |
 | **NumPy compatibility error with pyannote** | If you see errors about NumPy version incompatibility, pin NumPy: `pip install "numpy<2.0"`. The pyannote.audio library may not yet support NumPy 2.x. |
 
 ### Speaker diarization issues
 
 | Problem | Solution |
 |---------|----------|
+| **Diarization fails with 403 or "gated repo" error** | You must accept the license on **all three** HuggingFace model pages: `pyannote/speaker-diarization-3.1`, `pyannote/segmentation-3.0`, and `pyannote/speaker-diarization-community-1`. Missing any one of them causes this error. |
 | **Diarization fails with `use_auth_token` error** | The pyannote.audio pipeline now uses `token=` instead of `use_auth_token`. Make sure your `HF_TOKEN` environment variable is set and you are using a recent version of the app. |
 | **Native sample rate mismatch** | The app automatically queries the audio device for its native sample rate and uses it for capture. If you see sample rate warnings, check that your audio device supports the detected rate. |
 
@@ -822,5 +865,5 @@ Back up both to preserve everything.
 | **"CORS error" in browser console** | This only happens if you access the Svelte dev server directly without the proxy. Make sure `vite.config.js` proxies `/api` to `:8080`, or access the API server directly at `:8080`. |
 | **Dark mode doesn't persist** | The preference is stored in `localStorage`. Clear your browser storage if it gets stuck, or toggle it again. |
 | **Charts not rendering on Stats page** | Chart.js must be installed: `cd web && npm install`. If charts appear but are blank, there may be no meeting data yet — record a few meetings first. |
-| **Recording page shows "disconnected"** | The WebSocket connection to `/ws/recording` failed. Make sure `mm serve` is running. The page will auto-reconnect when the server comes back. |
+| **Recording page shows "disconnected"** | The WebSocket connection to the server failed. Make sure `mm serve` is running. The page will auto-reconnect when the server comes back. |
 | **Settings don't save** | Check that `config/config.yaml` is writable. The API writes changes to the YAML file on disk. |

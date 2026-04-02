@@ -63,13 +63,18 @@ OPENAI_API_KEY=sk-...
 
 ### Configure audio
 
-Set up BlackHole and create an Aggregate Device named `MeetingCapture` (see [User Guide](docs/USER_GUIDE.md#3-audio-setup-macos) for step-by-step instructions), then:
+Set up BlackHole with two virtual devices (see [User Guide](docs/USER_GUIDE.md#3-audio-setup-macos) for step-by-step instructions):
+
+- Set your system output to **Meeting Output** (Multi-Output Device that sends audio to speakers + BlackHole)
+- In the Meeting Minutes app, select **Meeting Capture** (Aggregate Device combining mic + BlackHole) as input
 
 ```yaml
 # config/config.yaml
 recording:
-  audio_device: "MeetingCapture"
+  audio_device: "Meeting Capture"
 ```
+
+Leave audio settings in Zoom/Meet/Teams at their defaults — the system-level routing handles everything.
 
 ### Record a meeting
 
@@ -111,7 +116,7 @@ mm actions complete <action_id>                   # Mark done
 
 ## Web UI
 
-A browser-based interface built with Svelte + Tailwind CSS at `localhost:8080` with meetings list, action items, decisions, people, stats, recording controls, and settings.
+A browser-based interface built with Svelte + Tailwind CSS at `localhost:8080` with calendar view, action items, decisions, people, stats, recording controls, template manager, and settings.
 
 ```bash
 # Start the server
@@ -121,9 +126,9 @@ mm serve
 open http://localhost:8080
 ```
 
-**Pages**: Meetings (list/grid), Meeting Detail (minutes/transcript/actions tabs with audio player), Action Items, Decisions, People, Stats (charts), Record (live waveform), Settings.
+**Pages**: Meetings (calendar view with day list + inline detail), Meeting Detail, Action Items, Decisions, People, Stats (charts), Record (live waveform + concurrent pipeline status), Templates (view/edit/create prompt templates), Settings.
 
-**Features**: Dark mode, full-text search with `Cmd+K`, keyboard navigation, responsive layout, meeting type color coding.
+**Features**: Dark mode, full-text search with `Cmd+K`, keyboard navigation, responsive layout, meeting type color coding, WebSocket-based real-time updates, concurrent pipeline processing (record a new meeting while the previous one processes in background).
 
 **Development** (with hot reload):
 ```bash
@@ -146,7 +151,7 @@ pipeline:
   mode: automatic              # automatic | semi_automatic | manual
 
 recording:
-  audio_device: "MeetingCapture"
+  audio_device: "Meeting Capture"
   sample_rate: 16000
   auto_stop_silence_minutes: 5
 
@@ -208,7 +213,7 @@ MeetingMinutesTaker/
 │   └── src/
 │       ├── lib/components/    #   14 reusable components
 │       ├── lib/stores/        #   Theme + recording state stores
-│       └── routes/            #   8 pages (meetings, detail, actions, stats, etc.)
+│       └── routes/            #   9 pages (calendar, detail, actions, templates, stats, etc.)
 ├── templates/                 # Jinja2 meeting-type prompt templates
 ├── tests/                     # 135 tests (property-based + unit)
 ├── config/config.yaml         # Default configuration
