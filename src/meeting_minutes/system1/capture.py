@@ -79,6 +79,7 @@ class AudioCaptureEngine:
         self._buffer: CircularAudioBuffer | None = None
         self._stream = None
         self._lock = threading.Lock()
+        self._frames_lock = threading.Lock()  # protects _frames_list
         self._frames_list: list = []
         self._actual_sample_rate: int = config.sample_rate
 
@@ -109,8 +110,12 @@ class AudioCaptureEngine:
                 import sys
                 print(f"  [audio] {status}", file=sys.stderr)
             if self._recording:
-                self._buffer.write(indata.copy())
-                self._frames_list.append(indata.copy())
+                data = indata.copy()
+                buf = self._buffer
+                if buf is not None:
+                    buf.write(data)
+                with self._frames_lock:
+                    self._frames_list.append(data)
 
         if self._stream_factory is not None:
             self._stream = self._stream_factory(
@@ -156,21 +161,22 @@ class AudioCaptureEngine:
     def stop(self) -> AudioRecordingResult:
         """Stop recording. Write FLAC file. Return metadata."""
         import sys
+        import time as _time
 
         with self._lock:
             if not self._recording:
                 raise RuntimeError("Not recording")
-            self._recording = False
+            self._recording = False  # callback checks this flag first
 
         end_time = datetime.now(timezone.utc)
         print(f"  [audio] Stopping stream...", file=sys.stderr)
 
-        # Close stream immediately — don't wait
+        # 1. Stop the stream using stop() (not abort()) to let the callback
+        #    finish its current invocation, then close. This is safer than
+        #    abort() which can corrupt state mid-callback.
         if self._stream is not None:
             try:
-                if hasattr(self._stream, "abort"):
-                    self._stream.abort()  # faster than stop() — drops remaining buffers
-                elif hasattr(self._stream, "stop"):
+                if hasattr(self._stream, "stop"):
                     self._stream.stop()
                 if hasattr(self._stream, "close"):
                     self._stream.close()
@@ -178,20 +184,28 @@ class AudioCaptureEngine:
                 pass
             self._stream = None
 
+        # 2. Small delay to ensure the callback thread has fully exited.
+        #    PortAudio's stop() waits for the current callback to finish,
+        #    but we add a tiny margin for safety. Skip for mock streams (tests).
+        if not self._stream_factory:
+            _time.sleep(0.05)
+
         print(f"  [audio] Stream closed. Writing audio file...", file=sys.stderr)
 
-        # Write FLAC
+        # 3. Now safe to access _frames_list — callback is stopped.
+        #    Take the lock to be absolutely sure no straggler callback runs.
         import numpy as np  # lazy import
 
-        sample_rate = getattr(self, "_actual_sample_rate", self._config.sample_rate)
+        sample_rate = self._actual_sample_rate
 
-        if self._frames_list:
-            audio_data = np.concatenate(self._frames_list, axis=0)
-        else:
-            audio_data = np.zeros((sample_rate, 1), dtype=np.float32)
+        with self._frames_lock:
+            if self._frames_list:
+                audio_data = np.concatenate(self._frames_list, axis=0)
+            else:
+                audio_data = np.zeros((sample_rate, 1), dtype=np.float32)
+            # Free memory
+            self._frames_list = []
 
-        # Free memory immediately
-        self._frames_list = []
         self._buffer = None
 
         print(f"  [audio] Audio: {len(audio_data)} samples, {len(audio_data)/sample_rate:.1f}s at {sample_rate}Hz", file=sys.stderr)
@@ -236,11 +250,14 @@ class AudioCaptureEngine:
         """
         import numpy as np
 
-        if not self._recording or not self._frames_list:
+        if not self._recording:
             return 0.0
         try:
             # Use the last few chunks for responsive but stable level
-            recent_chunks = self._frames_list[-3:] if len(self._frames_list) >= 3 else self._frames_list[-1:]
+            with self._frames_lock:
+                if not self._frames_list:
+                    return 0.0
+                recent_chunks = self._frames_list[-3:] if len(self._frames_list) >= 3 else self._frames_list[-1:]
             recent = np.concatenate(recent_chunks, axis=0)
 
             # Peak amplitude is more responsive than RMS for visualization

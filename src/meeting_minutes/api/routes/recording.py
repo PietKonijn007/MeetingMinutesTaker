@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import threading
 import time
 from pathlib import Path
 from typing import Annotated
@@ -25,6 +26,9 @@ router = APIRouter(tags=["recording"])
 # ---------------------------------------------------------------------------
 # State: one active recording, many concurrent pipeline jobs
 # ---------------------------------------------------------------------------
+
+# Lock to prevent PortAudio device re-scan from racing with stream operations
+_audio_lock = threading.Lock()
 
 # Current recording (only one at a time)
 _current_recording: dict = {
@@ -320,8 +324,9 @@ def list_audio_devices():
         # Calling _terminate() during an active recording stream causes
         # a bus error crash (PortAudio internal state corruption).
         if _current_recording["state"] != "recording":
-            sd._terminate()
-            sd._initialize()
+            with _audio_lock:
+                sd._terminate()
+                sd._initialize()
 
         devices = sd.query_devices()
         result = []
