@@ -82,6 +82,8 @@ class AudioCaptureEngine:
         self._frames_lock = threading.Lock()  # protects _frames_list
         self._frames_list: list = []
         self._actual_sample_rate: int = config.sample_rate
+        self._autosave_timer: threading.Timer | None = None
+        self._autosave_interval = 300  # 5 minutes
 
     def start(self) -> str:
         """Begin recording. Returns meeting_id."""
@@ -99,6 +101,7 @@ class AudioCaptureEngine:
 
         self._output_dir.mkdir(parents=True, exist_ok=True)
         self._start_stream()
+        self._start_autosave()
         return self._meeting_id
 
     def _start_stream(self) -> None:
@@ -204,6 +207,47 @@ class AudioCaptureEngine:
                 self._recording = False
                 raise RuntimeError(f"Failed to open audio stream: {exc}") from exc
 
+    def _start_autosave(self) -> None:
+        """Start periodic auto-save to prevent data loss on crash."""
+        def _autosave():
+            if not self._recording:
+                return
+            self._do_autosave()
+            # Schedule next auto-save
+            self._autosave_timer = threading.Timer(self._autosave_interval, _autosave)
+            self._autosave_timer.daemon = True
+            self._autosave_timer.start()
+
+        self._autosave_timer = threading.Timer(self._autosave_interval, _autosave)
+        self._autosave_timer.daemon = True
+        self._autosave_timer.start()
+
+    def _stop_autosave(self) -> None:
+        """Cancel the auto-save timer."""
+        if self._autosave_timer is not None:
+            self._autosave_timer.cancel()
+            self._autosave_timer = None
+
+    def _do_autosave(self) -> None:
+        """Save current audio data to a temporary recovery file."""
+        import sys
+        try:
+            import numpy as np
+            import soundfile as sf
+
+            with self._frames_lock:
+                if not self._frames_list:
+                    return
+                audio_data = np.concatenate(self._frames_list, axis=0)
+
+            sample_rate = self._actual_sample_rate
+            autosave_file = self._output_dir / f"{self._meeting_id}_autosave.flac"
+            sf.write(str(autosave_file), audio_data, sample_rate)
+            duration = len(audio_data) / sample_rate
+            print(f"  [audio] Auto-saved {duration:.0f}s to {autosave_file.name}", file=sys.stderr)
+        except Exception as e:
+            print(f"  [audio] Auto-save failed: {e}", file=sys.stderr)
+
     def stop(self) -> AudioRecordingResult:
         """Stop recording. Write FLAC file. Return metadata."""
         import sys
@@ -214,6 +258,7 @@ class AudioCaptureEngine:
                 raise RuntimeError("Not recording")
             self._recording = False  # callback checks this flag first
 
+        self._stop_autosave()
         end_time = datetime.now(timezone.utc)
         print(f"  [audio] Stopping stream...", file=sys.stderr)
 
@@ -265,6 +310,11 @@ class AudioCaptureEngine:
             raise RuntimeError(f"Failed to write audio file: {exc}") from exc
 
         print(f"  [audio] Saved: {audio_file.name} ({audio_file.stat().st_size / 1024:.0f} KB)", file=sys.stderr)
+
+        # Clean up autosave file now that the real file is saved
+        autosave_file = self._output_dir / f"{self._meeting_id}_autosave.flac"
+        if autosave_file.exists():
+            autosave_file.unlink()
 
         duration = (end_time - self._start_time).total_seconds()
 
