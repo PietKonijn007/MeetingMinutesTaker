@@ -34,5 +34,5 @@ backup:
   backup_dir: backups
   interval_hours: 1
 obsidian:
-  enabled: false
-  vault_path: ""
+  enabled: true
+  vault_path: "/Users/jurgenhofkens/Documents/NetApp/Meeting Minutes"
