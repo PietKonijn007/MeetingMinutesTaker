@@ -62,6 +62,7 @@ export const api = {
   getActionVelocity: () => request('/stats/action-velocity'),
 
   // Recording
+  autoDetectDevice: () => request('/auto-detect-device'),
   startRecording: (data = {}) => request('/recording/start', { method: 'POST', body: JSON.stringify(data) }),
   stopRecording: () => request('/recording/stop', { method: 'POST' }),
   getRecordingStatus: () => request('/recording/status'),

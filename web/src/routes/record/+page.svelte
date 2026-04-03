@@ -134,6 +134,8 @@
   let inputDevices = $derived(audioDevices.filter(d => d.max_input_channels > 0));
   let outputDevices = $derived(audioDevices.filter(d => d.max_output_channels > 0));
 
+  let autoDetectedDevice = $state(null);
+
   async function loadDevices() {
     try {
       const data = await api.getAudioDevices();
@@ -144,10 +146,22 @@
       const newNames = newDevices.map(d => d.name).sort().join(',');
       if (oldNames !== newNames) {
         audioDevices = newDevices;
-        // Default to first input device if nothing selected yet
-        const inputs = newDevices.filter(d => d.max_input_channels > 0);
-        if (inputs.length > 0 && !selectedDevice) {
-          selectedDevice = inputs[0].name;
+      }
+
+      // Auto-detect best device on first load
+      if (!selectedDevice) {
+        try {
+          const autoResult = await api.autoDetectDevice();
+          if (autoResult.device) {
+            selectedDevice = autoResult.device;
+            autoDetectedDevice = autoResult.device;
+          }
+        } catch {
+          // Fallback to first input device
+          const inputs = newDevices.filter(d => d.max_input_channels > 0);
+          if (inputs.length > 0) {
+            selectedDevice = inputs[0].name;
+          }
         }
       }
     } catch (e) {
@@ -272,6 +286,9 @@
           </select>
           <p class="mt-1.5 text-xs text-[var(--text-muted)]">
             {audioDevices.length} device{audioDevices.length !== 1 ? 's' : ''} detected ({inputDevices.length} with input)
+            {#if autoDetectedDevice && selectedDevice === autoDetectedDevice}
+              <span class="text-[var(--success)]"> — auto-detected</span>
+            {/if}
           </p>
         </div>
 

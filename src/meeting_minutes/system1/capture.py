@@ -61,6 +61,89 @@ class CircularAudioBuffer:
             self._total_frames = 0
 
 
+def auto_select_capture_device() -> str | None:
+    """Auto-detect the best capture device for meeting recording.
+
+    Priority:
+    1. MeetingCapture aggregate devices (contain BlackHole for loopback)
+       — prefer the one whose non-BlackHole sub-device is currently online
+    2. Any aggregate/multi-channel device with BlackHole in it
+    3. System default input device
+
+    Returns the device name, or None if no suitable device found.
+    """
+    import sys
+
+    try:
+        import sounddevice as sd
+
+        devices = sd.query_devices()
+        candidates = []
+
+        for i, d in enumerate(devices):
+            if d["max_input_channels"] <= 0:
+                continue
+            name = d["name"]
+            channels = d["max_input_channels"]
+
+            # Score: higher is better
+            score = 0
+
+            # Prefer devices with "MeetingCapture" or "Meeting Capture" in the name
+            name_lower = name.lower()
+            if "meetingcapture" in name_lower or "meeting capture" in name_lower:
+                score += 100
+
+            # Prefer aggregate/multi-channel devices (likely have BlackHole)
+            if channels >= 2:
+                score += 10
+
+            # Prefer devices with "blackhole" in name (direct BlackHole input)
+            if "blackhole" in name_lower:
+                score += 5
+
+            # Penalize raw hardware devices (no loopback)
+            if channels == 1 and score < 100:
+                score -= 5
+
+            # Test if the device is actually functional by checking if it can be opened
+            # (offline aggregate sub-devices cause open errors)
+            if score >= 100:
+                try:
+                    test_stream = sd.InputStream(
+                        device=i, channels=1, samplerate=d["default_samplerate"],
+                        dtype="float32", blocksize=256,
+                    )
+                    test_stream.start()
+                    test_stream.stop()
+                    test_stream.close()
+                    score += 50  # Device is online and functional
+                except Exception:
+                    score -= 200  # Device has offline sub-devices, skip it
+
+            candidates.append((score, name, i))
+
+        candidates.sort(key=lambda x: x[0], reverse=True)
+
+        if candidates:
+            best_score, best_name, best_idx = candidates[0]
+            if best_score > 0:
+                print(f"  [audio] Auto-selected: {best_name} (score={best_score})", file=sys.stderr)
+                return best_name
+
+        # Fallback: system default
+        try:
+            default_info = sd.query_devices(None, kind="input")
+            print(f"  [audio] Auto-selected default: {default_info['name']}", file=sys.stderr)
+            return default_info["name"]
+        except Exception:
+            return None
+
+    except Exception as e:
+        print(f"  [audio] Auto-detect failed: {e}", file=sys.stderr)
+        return None
+
+
 class AudioCaptureEngine:
     """Record audio from configured audio device and save to FLAC."""
 
@@ -132,11 +215,12 @@ class AudioCaptureEngine:
                 import sounddevice as sd  # lazy import
                 import sys
 
-                device = (
-                    None
-                    if self._config.audio_device == "auto"
-                    else self._config.audio_device
-                )
+                if self._config.audio_device == "auto":
+                    # Auto-detect the best capture device
+                    auto_device = auto_select_capture_device()
+                    device = auto_device  # can be name or None (system default)
+                else:
+                    device = self._config.audio_device
 
                 # Query native sample rate and channel count
                 try:

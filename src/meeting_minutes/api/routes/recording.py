@@ -310,6 +310,14 @@ def list_languages():
     ]
 
 
+@router.get("/api/auto-detect-device")
+def auto_detect_device():
+    """Auto-detect the best capture device for meeting recording."""
+    from meeting_minutes.system1.capture import auto_select_capture_device
+    device = auto_select_capture_device()
+    return {"device": device, "auto": True}
+
+
 @router.get("/api/audio-devices", response_model=list[AudioDeviceResponse])
 def list_audio_devices():
     """List all available audio devices (input, output, and bidirectional).
