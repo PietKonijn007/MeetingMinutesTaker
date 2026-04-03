@@ -96,6 +96,49 @@ class PromptRouter:
 
         return self._load_template(selected_type)
 
+    def _extract_type_descriptions(self, all_types: set[str]) -> dict[str, str]:
+        """Extract descriptions from actual template files.
+
+        Reads the system prompt (first section before ---) from each template
+        and uses it as the type description. This way the classifier knows
+        exactly what each template is designed to capture.
+        """
+        descriptions = {}
+        for meeting_type in sorted(all_types):
+            # Find the template file
+            if meeting_type == "other":
+                template_path = self._templates_dir / "general.md.j2"
+            else:
+                template_path = self._templates_dir / f"{meeting_type}.md.j2"
+
+            if template_path.exists():
+                try:
+                    content = template_path.read_text(encoding="utf-8")
+                    # Extract system prompt (everything before the --- separator)
+                    system_prompt = content.split("\n---\n")[0].strip() if "\n---\n" in content else ""
+
+                    # Also extract section headings to show what the template captures
+                    headings = []
+                    for line in content.split("\n"):
+                        if line.startswith("## ") and line.strip() not in ("## Transcript", "## Title", "## Summary", "## Key Topics"):
+                            heading = line[3:].strip()
+                            # Remove Jinja2 template syntax
+                            if "{{" not in heading and "{%" not in heading and "[" not in heading:
+                                headings.append(heading)
+
+                    # Build description: system prompt + key sections
+                    desc = system_prompt[:300]  # First 300 chars of system prompt
+                    if headings:
+                        desc += f" Key sections: {', '.join(headings[:8])}"
+                    descriptions[meeting_type] = desc
+
+                except Exception:
+                    descriptions[meeting_type] = f"Meeting type: {meeting_type.replace('_', ' ').title()}"
+            else:
+                descriptions[meeting_type] = f"Meeting type: {meeting_type.replace('_', ' ').title()}"
+
+        return descriptions
+
     async def classify_with_llm(
         self, transcript_excerpt: str, num_speakers: int = 0,
         calendar_title: str = "", num_attendees: int = 0,
@@ -106,25 +149,10 @@ class PromptRouter:
         Uses Anthropic tool_use to guarantee valid JSON.
         Cost: ~$0.001–0.003 per classification.
         """
-        # Build the list of available types with descriptions
+        # Build type descriptions from actual template files
         all_types = _discover_all_types(self._templates_dir)
-        type_descriptions = {
-            "standup": "Daily standup / scrum — brief per-person updates (done, today, blockers)",
-            "one_on_one": "1:1 manager-direct report meeting — career, feedback, goals, blockers",
-            "team_meeting": "Broader team meeting — business review, financials, strategy, org updates, team health",
-            "decision_meeting": "Meeting focused on making specific decisions — options, pros/cons, voting",
-            "customer_meeting": "Meeting with external customer or client — requirements, demos, feedback",
-            "brainstorm": "Ideation / brainstorming session — generating and evaluating ideas",
-            "retrospective": "Team retrospective — what went well, what didn't, improvements",
-            "planning": "Sprint or project planning — goals, tasks, estimates, timelines",
-            "other": "General meeting that doesn't fit other categories",
-        }
-        # Include custom types without descriptions
-        for t in all_types:
-            if t not in type_descriptions:
-                type_descriptions[t] = f"Custom meeting type: {t.replace('_', ' ').title()}"
-
-        types_list = "\n".join(f"- {t}: {desc}" for t, desc in type_descriptions.items())
+        type_descriptions = self._extract_type_descriptions(all_types)
+        types_list = "\n".join(f"- **{t}**: {desc}" for t, desc in type_descriptions.items())
 
         # Update the tool schema with the actual enum values
         tool = dict(_CLASSIFICATION_TOOL)
