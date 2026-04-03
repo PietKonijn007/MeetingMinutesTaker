@@ -299,13 +299,75 @@ def delete_meeting(
     meeting_id: str,
     storage: Annotated[StorageEngine, Depends(get_storage)],
     search_engine: Annotated[SearchEngine, Depends(get_search)],
+    config: Annotated[AppConfig, Depends(get_config)],
 ):
-    """Delete a meeting and all associated data."""
+    """Delete a meeting and all associated data: DB, search index, files, and Obsidian."""
+    import json as _json
+
+    # 1. Get meeting info before deleting (needed for Obsidian file lookup)
+    meeting = storage.get_meeting(meeting_id)
+    minutes_title = None
+    minutes_date = None
+    if meeting and meeting.minutes:
+        # Read minutes JSON to get the title and date for Obsidian file
+        data_dir = Path(config.data_dir).expanduser()
+        minutes_json_path = data_dir / "minutes" / f"{meeting_id}.json"
+        if minutes_json_path.exists():
+            try:
+                mdata = _json.loads(minutes_json_path.read_text())
+                metadata = mdata.get("metadata", {})
+                minutes_title = metadata.get("title", "")
+                minutes_date = metadata.get("date", "")
+            except Exception:
+                pass
+
+    # 2. Delete from search index
     search_engine.remove_from_index(meeting_id)
+
+    # 3. Delete from database (cascades to transcript, minutes, actions, decisions)
     ok = storage.delete_meeting(meeting_id)
     if not ok:
         raise HTTPException(status_code=404, detail=f"No meeting with ID {meeting_id}")
-    return {"status": "deleted", "meeting_id": meeting_id}
+
+    # 4. Delete files from disk
+    data_dir = Path(config.data_dir).expanduser()
+    deleted_files = []
+    for subdir, pattern in [
+        ("recordings", f"{meeting_id}.*"),
+        ("transcripts", f"{meeting_id}.json"),
+        ("minutes", f"{meeting_id}.json"),
+        ("minutes", f"{meeting_id}.md"),
+    ]:
+        folder = data_dir / subdir
+        for f in folder.glob(pattern):
+            try:
+                f.unlink()
+                deleted_files.append(f.name)
+            except Exception:
+                pass
+
+    # 5. Delete Obsidian file if export is enabled
+    if config.obsidian.enabled and config.obsidian.vault_path and minutes_title and minutes_date:
+        try:
+            from datetime import datetime as dt
+            vault_path = Path(config.obsidian.vault_path).expanduser()
+            date_obj = dt.fromisoformat(minutes_date.split("T")[0])
+            year = date_obj.strftime("%Y")
+            year_month = date_obj.strftime("%Y-%m")
+            date_str = date_obj.strftime("%Y-%m-%d")
+
+            # Build the expected filename
+            safe_title = "".join(c if c.isalnum() or c in " -_" else "_" for c in minutes_title).strip()[:80]
+            obsidian_file = vault_path / "Meeting Minutes" / year / year_month / f"{date_str} {safe_title}.md"
+
+            if obsidian_file.exists():
+                obsidian_file.unlink()
+                deleted_files.append(f"obsidian:{obsidian_file.name}")
+        except Exception:
+            pass  # Non-fatal — Obsidian cleanup is best-effort
+
+    print(f"  Deleted meeting {meeting_id}: DB + {len(deleted_files)} files ({', '.join(deleted_files)})")
+    return {"status": "deleted", "meeting_id": meeting_id, "files_deleted": len(deleted_files)}
 
 
 @router.post("/{meeting_id}/regenerate")
