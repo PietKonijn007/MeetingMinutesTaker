@@ -28,9 +28,11 @@ app = typer.Typer(
 
 record_app = typer.Typer(help="Recording commands.")
 actions_app = typer.Typer(help="Action item commands.")
+backup_app = typer.Typer(help="Database backup commands.")
 
 app.add_typer(record_app, name="record")
 app.add_typer(actions_app, name="actions")
+app.add_typer(backup_app, name="backup")
 
 console = Console()
 err_console = Console(stderr=True)
@@ -457,6 +459,83 @@ def serve_cmd(
         port=port,
         reload=False,
     )
+
+
+# ---------------------------------------------------------------------------
+# mm backup
+# ---------------------------------------------------------------------------
+
+
+@backup_app.callback(invoke_without_command=True)
+def backup_now(ctx: typer.Context):
+    """Create a database backup now."""
+    if ctx.invoked_subcommand is not None:
+        return
+
+    from meeting_minutes.backup import backup_database, rotate_backups
+
+    config = _load_config()
+    db_path = Path(config.storage.sqlite_path).expanduser()
+    backup_dir = Path(config.backup.backup_dir)
+
+    if not db_path.exists():
+        err_console.print(f"[red]Database not found: {db_path}[/red]")
+        raise typer.Exit(code=1)
+
+    backup_file = backup_database(db_path, backup_dir)
+    deleted = rotate_backups(backup_dir)
+    console.print(f"[green]Backup created: {backup_file}[/green]")
+    if deleted:
+        console.print(f"[dim]Rotated {deleted} old backup(s)[/dim]")
+
+
+@backup_app.command("list")
+def backup_list():
+    """List all available backups."""
+    from meeting_minutes.backup import list_backups
+
+    config = _load_config()
+    backups = list_backups(config.backup.backup_dir)
+
+    if not backups:
+        console.print("[yellow]No backups found.[/yellow]")
+        return
+
+    table = Table(title="Database Backups")
+    table.add_column("Filename")
+    table.add_column("Size")
+    table.add_column("Created")
+    for b in backups:
+        table.add_row(b["filename"], f"{b['size_mb']} MB", b["created"])
+    console.print(table)
+
+
+@backup_app.command("restore")
+def backup_restore(
+    filename: str = typer.Argument(..., help="Backup filename to restore from"),
+):
+    """Restore database from a backup."""
+    from meeting_minutes.backup import restore_backup
+
+    config = _load_config()
+    backup_dir = Path(config.backup.backup_dir)
+    backup_file = backup_dir / filename
+    db_path = Path(config.storage.sqlite_path).expanduser()
+
+    if not backup_file.exists():
+        err_console.print(f"[red]Backup not found: {backup_file}[/red]")
+        raise typer.Exit(code=1)
+
+    confirmed = typer.confirm(
+        f"Restore from {filename}? Current database will be backed up first."
+    )
+    if not confirmed:
+        console.print("Aborted.")
+        return
+
+    restore_backup(backup_file, db_path)
+    console.print(f"[green]Database restored from {filename}[/green]")
+    console.print(f"[dim]Previous database saved as {db_path}.pre_restore[/dim]")
 
 
 if __name__ == "__main__":

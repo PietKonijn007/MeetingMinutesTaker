@@ -55,6 +55,10 @@ class PipelineOrchestrator:
         _console("\n[3/3] Database ingestion...", "bold cyan")
         await self.run_ingestion(meeting_id)
 
+        # Post-processing: backup and Obsidian export
+        self._maybe_backup()
+        self._export_to_obsidian_from_file(meeting_id)
+
         elapsed = time.time() - pipeline_start
         _console(f"\n{'='*60}", "bold")
         _console(f"  PIPELINE COMPLETE — {elapsed:.1f}s total", "bold green")
@@ -423,6 +427,79 @@ class PipelineOrchestrator:
         _console(f"\n{'='*60}", "bold")
         _console(f"  REPROCESS COMPLETE — {elapsed:.1f}s", "bold green")
         _console(f"{'='*60}\n")
+
+    def _maybe_backup(self) -> None:
+        """Create a backup if the last one is older than the configured interval."""
+        if not self._config.backup.enabled:
+            return
+
+        from meeting_minutes.backup import backup_database, rotate_backups
+
+        backup_dir = Path(self._config.backup.backup_dir)
+
+        # Check last backup time
+        if backup_dir.exists():
+            backups = sorted(backup_dir.glob("meetings_*.db"), reverse=True)
+            if backups:
+                last_backup_time = backups[0].stat().st_mtime
+                hours_since = (time.time() - last_backup_time) / 3600
+                if hours_since < self._config.backup.interval_hours:
+                    return
+
+        db_path = Path(self._config.storage.sqlite_path).expanduser()
+        if db_path.exists():
+            try:
+                backup_file = backup_database(db_path, backup_dir)
+                deleted = rotate_backups(backup_dir)
+                _console(f"  \u2713 Database backed up: {backup_file.name}", "green")
+                if deleted:
+                    _console(f"    Rotated {deleted} old backup(s)", "dim")
+            except Exception as exc:
+                _console(f"  \u26a0 Backup failed: {exc}", "yellow")
+
+    def _export_to_obsidian_from_file(self, meeting_id: str) -> None:
+        """Export meeting minutes to Obsidian vault from the minutes JSON file."""
+        if not self._config.obsidian.enabled or not self._config.obsidian.vault_path:
+            return
+
+        import json as _json
+
+        from meeting_minutes.obsidian import export_to_obsidian
+
+        vault_path = Path(self._config.obsidian.vault_path).expanduser()
+        minutes_path = self._minutes_dir / f"{meeting_id}.json"
+        md_path = self._minutes_dir / f"{meeting_id}.md"
+
+        if not minutes_path.exists():
+            return
+
+        try:
+            with open(minutes_path, "r", encoding="utf-8") as f:
+                data = _json.load(f)
+
+            metadata = data.get("metadata", {})
+            md_content = ""
+            if md_path.exists():
+                md_content = md_path.read_text(encoding="utf-8")
+            elif data.get("minutes_markdown"):
+                md_content = data["minutes_markdown"]
+
+            filepath = export_to_obsidian(
+                vault_path=vault_path,
+                title=metadata.get("title", f"Meeting {meeting_id[:8]}"),
+                date=metadata.get("date", ""),
+                meeting_type=data.get("meeting_type", "other"),
+                attendees=metadata.get("attendees", []),
+                minutes_markdown=md_content,
+                summary=data.get("summary", ""),
+                action_items=data.get("action_items", []),
+                decisions=data.get("decisions", []),
+                key_topics=data.get("key_topics", []),
+                meeting_id=meeting_id,
+            )
+            _console(f"  \u2713 Exported to Obsidian: {filepath.name}", "green")
+        except Exception as e:
+            _console(f"  \u26a0 Obsidian export failed: {e}", "yellow")
 
     def start_watcher(self) -> None:
         """Start filesystem watcher for automatic mode (watchdog)."""

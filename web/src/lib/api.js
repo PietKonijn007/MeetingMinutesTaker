@@ -80,6 +80,11 @@ export const api = {
     return res.json();
   }),
 
+  // Backups
+  getBackups: () => request('/backups'),
+  createBackup: () => request('/backups', { method: 'POST' }),
+  testObsidian: () => request('/backups/obsidian-test', { method: 'POST' }),
+
   // Templates
   getTemplates: () => request('/templates'),
   getTemplate: (type) => request(`/templates/${type}`),

@@ -52,6 +52,17 @@ class PipelineConfig(BaseModel):
     mode: str = "automatic"  # automatic | semi_automatic | manual
 
 
+class BackupConfig(BaseModel):
+    enabled: bool = True
+    backup_dir: str = "backups"
+    interval_hours: int = 1  # min time between auto-backups
+
+
+class ObsidianConfig(BaseModel):
+    enabled: bool = False
+    vault_path: str = ""  # e.g., "~/Documents/Obsidian Vault"
+
+
 class AppConfig(BaseModel):
     data_dir: str = "~/MeetingMinutesTaker/data"
     log_level: str = "INFO"
@@ -61,6 +72,8 @@ class AppConfig(BaseModel):
     diarization: DiarizationConfig = DiarizationConfig()
     generation: GenerationConfig = GenerationConfig()
     storage: StorageConfig = StorageConfig()
+    backup: BackupConfig = BackupConfig()
+    obsidian: ObsidianConfig = ObsidianConfig()
 
 
 class ConfigLoader:

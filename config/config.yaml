@@ -29,3 +29,10 @@ generation:
 storage:
   database: sqlite
   sqlite_path: db/meetings.db
+backup:
+  enabled: true
+  backup_dir: backups
+  interval_hours: 1
+obsidian:
+  enabled: false
+  vault_path: ""

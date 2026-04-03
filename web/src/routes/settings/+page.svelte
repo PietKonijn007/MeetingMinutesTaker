@@ -25,6 +25,18 @@
   let storage_db_path = $state('db/meetings.db');
   let storage_data_dir = $state('~/MeetingMinutesTaker/data');
 
+  // Backup settings
+  let backup_enabled = $state(true);
+  let backup_dir = $state('backups');
+  let backup_interval = $state(1);
+  let backups = $state([]);
+  let backing_up = $state(false);
+
+  // Obsidian settings
+  let obsidian_enabled = $state(false);
+  let obsidian_vault_path = $state('');
+  let testing_obsidian = $state(false);
+
   async function loadConfig() {
     loading = true;
     try {
@@ -58,6 +70,22 @@
         pipeline_mode = p.mode || 'automatic';
         storage_db_path = st.sqlite_path || 'db/meetings.db';
         storage_data_dir = c.data_dir || '~/MeetingMinutesTaker/data';
+
+        const bk = c.backup || {};
+        backup_enabled = bk.enabled !== false;
+        backup_dir = bk.backup_dir || 'backups';
+        backup_interval = bk.interval_hours || 1;
+
+        const ob = c.obsidian || {};
+        obsidian_enabled = ob.enabled === true;
+        obsidian_vault_path = ob.vault_path || '';
+      }
+
+      // Load backup list
+      try {
+        backups = await api.getBackups();
+      } catch (_) {
+        backups = [];
       }
 
       if (devices.status === 'fulfilled') {
@@ -100,6 +128,15 @@
         },
         storage: {
           sqlite_path: storage_db_path
+        },
+        backup: {
+          enabled: backup_enabled,
+          backup_dir: backup_dir,
+          interval_hours: backup_interval
+        },
+        obsidian: {
+          enabled: obsidian_enabled,
+          vault_path: obsidian_vault_path
         }
       });
       addToast('Settings saved', 'success');
@@ -327,6 +364,162 @@
               class="w-full px-3 py-2 bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg text-sm text-[var(--text-primary)] font-mono
                      focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
             />
+          </div>
+        </div>
+      </section>
+
+      <!-- Backup -->
+      <section>
+        <h2 class="text-lg font-semibold text-[var(--text-primary)] mb-1">Database Backups</h2>
+        <p class="text-sm text-[var(--text-muted)] mb-4">Automatic SQLite backups with rotation.</p>
+
+        <div class="space-y-4">
+          <label class="flex items-center gap-3 cursor-pointer">
+            <input
+              type="checkbox"
+              bind:checked={backup_enabled}
+              class="w-4 h-4 rounded border-[var(--border-subtle)] text-[var(--accent)]
+                     focus:ring-[var(--accent)] focus:ring-2"
+            />
+            <div>
+              <span class="text-sm font-medium text-[var(--text-primary)]">Enable automatic backups</span>
+              <p class="text-xs text-[var(--text-muted)]">Create a backup after each pipeline run (rate-limited).</p>
+            </div>
+          </label>
+
+          <div>
+            <label class="block text-sm font-medium text-[var(--text-primary)] mb-1">Backup Directory</label>
+            <input
+              type="text"
+              bind:value={backup_dir}
+              placeholder="backups"
+              class="w-full px-3 py-2 bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg text-sm text-[var(--text-primary)] font-mono
+                     focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
+            />
+          </div>
+
+          <div>
+            <label class="block text-sm font-medium text-[var(--text-primary)] mb-1">
+              Auto-backup interval: {backup_interval} hour{backup_interval !== 1 ? 's' : ''}
+            </label>
+            <input
+              type="range"
+              bind:value={backup_interval}
+              min="1" max="24" step="1"
+              class="w-full accent-[var(--accent)]"
+            />
+            <p class="text-xs text-[var(--text-muted)] mt-1">Minimum hours between automatic backups.</p>
+          </div>
+
+          <div class="flex items-center gap-3">
+            <button
+              onclick={async () => {
+                backing_up = true;
+                try {
+                  const result = await api.createBackup();
+                  addToast(`Backup created: ${result.filename}`, 'success');
+                  backups = await api.getBackups();
+                } catch (e) {
+                  addToast(`Backup failed: ${e.message}`, 'error');
+                } finally {
+                  backing_up = false;
+                }
+              }}
+              disabled={backing_up}
+              class="px-4 py-2 bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg text-sm font-medium text-[var(--text-primary)]
+                     hover:bg-[var(--bg-hover)] disabled:opacity-50 transition-colors duration-150"
+            >
+              {backing_up ? 'Backing up...' : 'Backup Now'}
+            </button>
+          </div>
+
+          {#if backups.length > 0}
+            <div>
+              <p class="text-sm font-medium text-[var(--text-primary)] mb-2">Recent Backups</p>
+              <div class="border border-[var(--border-subtle)] rounded-lg overflow-hidden">
+                <table class="w-full text-sm">
+                  <thead class="bg-[var(--bg-surface)]">
+                    <tr>
+                      <th class="px-3 py-2 text-left text-[var(--text-muted)] font-medium">Filename</th>
+                      <th class="px-3 py-2 text-left text-[var(--text-muted)] font-medium">Size</th>
+                      <th class="px-3 py-2 text-left text-[var(--text-muted)] font-medium">Created</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {#each backups.slice(0, 5) as b}
+                      <tr class="border-t border-[var(--border-subtle)]">
+                        <td class="px-3 py-2 text-[var(--text-primary)] font-mono text-xs">{b.filename}</td>
+                        <td class="px-3 py-2 text-[var(--text-secondary)]">{b.size_mb} MB</td>
+                        <td class="px-3 py-2 text-[var(--text-secondary)]">{new Date(b.created).toLocaleString()}</td>
+                      </tr>
+                    {/each}
+                  </tbody>
+                </table>
+              </div>
+              {#if backups.length > 5}
+                <p class="text-xs text-[var(--text-muted)] mt-1">Showing 5 of {backups.length} backups.</p>
+              {/if}
+            </div>
+          {/if}
+        </div>
+      </section>
+
+      <!-- Obsidian -->
+      <section>
+        <h2 class="text-lg font-semibold text-[var(--text-primary)] mb-1">Obsidian Export</h2>
+        <p class="text-sm text-[var(--text-muted)] mb-4">Auto-export meeting minutes to an Obsidian vault.</p>
+
+        <div class="space-y-4">
+          <label class="flex items-center gap-3 cursor-pointer">
+            <input
+              type="checkbox"
+              bind:checked={obsidian_enabled}
+              class="w-4 h-4 rounded border-[var(--border-subtle)] text-[var(--accent)]
+                     focus:ring-[var(--accent)] focus:ring-2"
+            />
+            <div>
+              <span class="text-sm font-medium text-[var(--text-primary)]">Enable Obsidian export</span>
+              <p class="text-xs text-[var(--text-muted)]">Export minutes as Markdown with YAML frontmatter after each pipeline run.</p>
+            </div>
+          </label>
+
+          <div>
+            <label class="block text-sm font-medium text-[var(--text-primary)] mb-1">Vault Path</label>
+            <input
+              type="text"
+              bind:value={obsidian_vault_path}
+              placeholder="~/Documents/Obsidian Vault"
+              class="w-full px-3 py-2 bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg text-sm text-[var(--text-primary)] font-mono
+                     focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
+            />
+            <p class="text-xs text-[var(--text-muted)] mt-1">Absolute path to your Obsidian vault root folder.</p>
+          </div>
+
+          <div class="flex items-center gap-3">
+            <button
+              onclick={async () => {
+                testing_obsidian = true;
+                try {
+                  // Save config first so the API has the vault path
+                  await saveConfig();
+                  const result = await api.testObsidian();
+                  if (result.success) {
+                    addToast(`Test note written: ${result.path}`, 'success');
+                  } else {
+                    addToast(`Obsidian test failed: ${result.error}`, 'error');
+                  }
+                } catch (e) {
+                  addToast(`Obsidian test failed: ${e.message}`, 'error');
+                } finally {
+                  testing_obsidian = false;
+                }
+              }}
+              disabled={testing_obsidian || !obsidian_vault_path}
+              class="px-4 py-2 bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg text-sm font-medium text-[var(--text-primary)]
+                     hover:bg-[var(--bg-hover)] disabled:opacity-50 transition-colors duration-150"
+            >
+              {testing_obsidian ? 'Testing...' : 'Test Connection'}
+            </button>
           </div>
         </div>
       </section>
