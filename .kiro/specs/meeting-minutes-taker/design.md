@@ -112,7 +112,8 @@ meeting-minutes-taker/
 │   ├── customer_meeting.md.j2
 │   ├── brainstorm.md.j2
 │   ├── retrospective.md.j2
-│   └── planning.md.j2
+│   ├── planning.md.j2
+│   └── team_meeting.md.j2
 ├── tests/
 │   ├── conftest.py
 │   ├── test_config.py
@@ -180,6 +181,13 @@ sequenceDiagram
   ```
 - **Dependencies**: `sounddevice`, configuration
 - **Output**: FLAC audio file + `AudioRecordingResult` dataclass
+- **Additional function**:
+  ```python
+  def auto_select_capture_device() -> str:
+      """Prefers MeetingCapture aggregate devices. Tests each candidate by opening
+      a brief stream to verify it is online. Skips offline devices (e.g., disconnected AirPods).
+      Available via API endpoint GET /api/auto-detect-device."""
+  ```
 
 #### TranscriptionEngine
 - **Responsibility**: Convert audio to text with timestamps and confidence scores
@@ -250,6 +258,16 @@ sequenceDiagram
           self, transcript_excerpt: str, calendar_metadata: dict
       ) -> tuple[str, float]:
           """LLM-based secondary classification when confidence is low."""
+      def classify_with_llm(
+          self, transcript_text: str, speaker_count: int, calendar_title: str | None
+      ) -> dict:
+          """LLM classifier using Claude Haiku with tool_use enum constraint.
+          Sends first 4000 chars of transcript + metadata.
+          Returns {"meeting_type": str, "confidence": float, "reasoning": str}.
+          Falls back to keyword matching if API unavailable."""
+      def _extract_type_descriptions(self) -> dict[str, str]:
+          """Read template files to extract system prompt + section headings for each type.
+          Auto-discovers custom template types from templates directory."""
   ```
 - **Logic**: confidence >= 0.7 → use type; < 0.7 → LLM classify; override → use override; no match → "other"
 
@@ -436,6 +454,7 @@ import uuid
 class MeetingType(str, Enum):
     STANDUP = "standup"
     ONE_ON_ONE = "one_on_one"
+    TEAM_MEETING = "team_meeting"
     DECISION_MEETING = "decision_meeting"
     CUSTOMER_MEETING = "customer_meeting"
     BRAINSTORM = "brainstorm"

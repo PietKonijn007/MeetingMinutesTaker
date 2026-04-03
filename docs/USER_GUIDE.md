@@ -473,7 +473,7 @@ Open [http://localhost:8080](http://localhost:8080) in your browser. The API doc
 | **Decisions** | `/decisions` | Chronological log of all decisions, grouped by date. |
 | **People** | `/people` | Directory of everyone who has appeared in meetings, with meeting counts and action items. |
 | **Stats** | `/stats` | Charts: meetings over time, distribution by type, action item velocity, time in meetings. |
-| **Record** | `/record` | Start/stop recording with live timer and audio levels. Shows concurrent pipeline job status. |
+| **Record** | `/record` | Start/stop recording with live timer, audio levels, auto-detected device. Shows concurrent pipeline job status. |
 | **Templates** | `/templates` | View, edit, and create meeting prompt templates. Built-in templates are protected from deletion. |
 | **Settings** | `/settings` | Visual configuration editor for all settings (audio device, Whisper model, LLM, pipeline mode). |
 
@@ -543,13 +543,13 @@ Charts respect dark mode and are interactive (hover for tooltips).
 
 Start and stop recordings directly from the browser.
 
-- **Idle state**: Large record button, current audio device, recent recordings list.
-- **Recording state**: Pulsing red indicator, elapsed time counter, audio level bars, Pause and Stop buttons. A small red dot also appears in the top bar so you can see recording status from any page.
+- **Idle state**: Large record button, auto-detected audio device (prefers MeetingCapture aggregate devices, skips offline devices like disconnected AirPods) with an "auto-detected" indicator, recent recordings list. You can also select a device manually.
+- **Recording state**: Pulsing red indicator, elapsed time counter, audio level bars, Pause and Stop buttons. A small red dot also appears in the top bar so you can see recording status from any page. Audio is auto-saved every 5 minutes as a recovery file in case of crashes.
 - **Processing state**: Below the recording controls, a "Processing" section shows per-meeting pipeline status. Each job displays steps — Transcribe, Generate, Index — with checkmarks as they complete. Pipeline jobs run sequentially (queued) to avoid memory thrashing with Whisper.
 
 You can record a new meeting immediately after stopping the previous one — the previous meeting's pipeline continues processing in the background.
 
-Recording and pipeline status updates are delivered in real time via a WebSocket connection (no polling).
+Recording and pipeline status updates are delivered in real time via WebSocket push (no polling). Each pipeline job is tracked with step/progress/error and auto-cleans up after 60 seconds.
 
 ### 7.9 Settings page
 
@@ -665,11 +665,12 @@ Meeting minutes are generated using Jinja2 templates in the `templates/` directo
 | File | Meeting Type | When Used |
 |------|-------------|-----------|
 | `standup.md.j2` | Daily standup | Per-person Done/Today/Blockers |
-| `one_on_one.md.j2` | 1:1 meeting | Discussion topics, feedback, action items |
+| `one_on_one.md.j2` | 1:1 meeting | Mood check-in, accomplishments, objectives progress, blockers, feedback (SBI), career development, coaching notes, engagement signals, action items |
 | `customer_meeting.md.j2` | Client/external call | Client requests, commitments, timeline |
 | `decision_meeting.md.j2` | Decision meeting | Options, pros/cons, decision, rationale |
 | `brainstorm.md.j2` | Brainstorming session | Ideas generated, themes, top ideas |
 | `retrospective.md.j2` | Retrospective | Went well, didn't go well, improvements |
+| `team_meeting.md.j2` | Team meeting | Prior action items, decisions, financial review, blockers, strategic updates, action items |
 | `planning.md.j2` | Sprint/project planning | Goals, tasks, estimates, risks |
 | `general.md.j2` | Other / fallback | Summary, discussion points, decisions, actions |
 
@@ -755,12 +756,26 @@ To create a new meeting type:
 
 Any `.md.j2` file you add to the `templates/` directory — whether via the Template Manager or by creating the file directly — becomes a valid meeting type.
 
-### 10.3 Updated built-in templates
+### 10.3 LLM-Based Meeting Type Classification
 
-The `one_on_one` and `customer_meeting` templates include enriched sections:
+The system uses an LLM classifier (Claude Haiku) to automatically detect meeting types. When the initial keyword-based classifier produces a confidence score below 0.7, the LLM classifier is invoked automatically. It sends the first 4000 characters of the transcript along with metadata (speaker count, calendar title) to the LLM, which returns the meeting type, a confidence score, and reasoning.
 
-- **Service Feedback**: AWS Services, NetApp Services, Other Services
-- **Blockers**: Categorized as Operational, Organizational, Physical/Infrastructure, Roadmap/Strategic
+The classifier reads actual template descriptions (system prompt and section headings) from your templates directory to make its decision, so custom template types are auto-discovered. The cost is approximately $0.001 per classification. If the Anthropic API is unavailable, the system falls back to keyword matching.
+
+You can always override the detected type manually:
+
+```bash
+mm generate <meeting_id> --type team_meeting
+```
+
+### 10.5 Updated built-in templates
+
+The `one_on_one`, `customer_meeting`, and `team_meeting` templates include enriched sections:
+
+- **one_on_one**: Mood/Energy Check-in, Accomplishments & Wins (dated), Progress Against Objectives, Blockers (4 types with handling status + support needed), Feedback Given (SBI format), Feedback Received (upward), Service Feedback, Customer Feedback, Team & Org Observations, Career Development, Coaching Notes, Engagement Signals (positive + concerning), Action Items (split into employee vs manager commitments)
+- **team_meeting**: Prior Action Items Review, Decisions (with rationale), Financial Review (cloud spend, optimization, P&L), Blockers (4 categories + cross-team dependencies), Strategic Updates, Technology Decisions, Service Feedback (AWS/NetApp), Customer Impact, Resource & Capacity, Team Health & Morale, Announcements, Parking Lot, Action Items (split by urgency)
+- **Service Feedback** (shared across templates): AWS Services, NetApp Services, Other Services
+- **Blockers** (shared across templates): Categorized as Operational, Organizational, Physical/Infrastructure, Roadmap/Strategic
 - **Customer meetings** additionally include: Competitive Intelligence, and split Commitments (ours vs. customer's)
 
 ---

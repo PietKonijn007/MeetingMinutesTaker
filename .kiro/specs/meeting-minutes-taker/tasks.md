@@ -207,6 +207,47 @@ Incremental implementation of the three-system meeting minutes pipeline. Each ta
   - [x] 17.2 Add Alembic migration 002_structured_minutes for new database columns (sentiment, structured_json, priority, rationale, confidence)
     - _Requirements: 18.2_
 
+- [x] 18. LLM-based meeting type classifier
+  - [x] 18.1 Replace keyword-matching classifier with LLM call using Claude Haiku in `src/meeting_minutes/system2/router.py` — uses Anthropic tool_use with enum constraint, sends first 4000 chars of transcript + metadata (speaker count, calendar title), returns meeting_type/confidence/reasoning
+    - _Requirements: 21.1, 21.2_
+  - [x] 18.2 Implement `_extract_type_descriptions()` to read template files (system prompt + section headings) for template-aware classification, auto-discovers custom types
+    - _Requirements: 21.3, 21.4_
+  - [x] 18.3 Add fallback to keyword matching when Anthropic API is unavailable
+    - _Requirements: 21.5_
+
+- [x] 19. Team meeting template
+  - [x] 19.1 Add `TEAM_MEETING` to MeetingType enum in `src/meeting_minutes/models.py`
+  - [x] 19.2 Create `templates/team_meeting.md.j2` with sections: Prior Action Items Review, Decisions (with rationale), Financial Review (cloud spend, optimization, P&L), Blockers (4 categories + cross-team dependencies), Strategic Updates, Technology Decisions, Service Feedback (AWS/NetApp), Customer Impact, Resource & Capacity, Team Health & Morale, Announcements, Parking Lot, Action Items (split by urgency)
+  - [x] 19.3 Add `team_meeting` to TEMPLATE_FILENAME_MAP in router
+
+- [x] 20. Enhanced 1:1 template
+  - [x] 20.1 Rewrite `templates/one_on_one.md.j2` with enriched sections: Mood/Energy Check-in, Accomplishments & Wins (dated), Progress Against Objectives, Blockers (4 types), Feedback Given (SBI format), Feedback Received, Service Feedback, Customer Feedback, Team & Org Observations, Career Development, Coaching Notes, Engagement Signals, Action Items (split employee vs manager)
+
+- [x] 21. Auto-detect capture device
+  - [x] 21.1 Implement `auto_select_capture_device()` function in `src/meeting_minutes/system1/capture.py` — prefers MeetingCapture aggregate devices, tests each device by opening a brief stream, skips offline devices
+    - _Requirements: 22.1, 22.2_
+  - [x] 21.2 Add API endpoint `GET /api/auto-detect-device`
+    - _Requirements: 22.3_
+  - [x] 21.3 Update Record page to auto-select best device on load with "auto-detected" indicator
+    - _Requirements: 22.4_
+
+- [x] 22. Audio capture improvements
+  - [x] 22.1 Add device fallback: retry with default device on macOS audio errors
+  - [x] 22.2 Add explicit blocksize=1024 for predictable callback timing
+  - [x] 22.3 Implement auto-save every 5 minutes during recording (recovery file)
+    - _Requirements: 23.1, 23.2_
+  - [x] 22.4 Add multi-channel capture: open all channels on aggregate devices, mix to mono
+
+- [x] 23. Concurrent pipeline and threading fixes
+  - [x] 23.1 Separate recording and pipeline state fully — can record, stop, immediately record again
+  - [x] 23.2 Queue pipeline jobs for sequential processing (prevents memory thrashing)
+  - [x] 23.3 Track each job with step/progress/error, WebSocket push for real-time status (replaced HTTP polling)
+  - [x] 23.4 Auto-cleanup after 60 seconds
+  - [x] 23.5 Add _frames_lock protecting audio buffer from concurrent access
+  - [x] 23.6 Use stream.stop() instead of abort() for safe shutdown
+  - [x] 23.7 PortAudio re-scan only when not recording
+  - [x] 23.8 Graceful shutdown on Ctrl+C
+
 ## Notes
 
 - Tasks marked with `*` are optional and can be skipped for faster MVP

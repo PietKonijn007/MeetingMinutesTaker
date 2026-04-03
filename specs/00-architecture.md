@@ -51,7 +51,9 @@ Meeting Occurs
     │   (Google Calendar / Outlook → attendees, title, type)
     │
     ├── 5. Classify meeting type
-    │   (standup, 1:1, decision meeting, client call, etc.)
+    │   (standup, 1:1, team meeting, decision meeting, client call, etc.)
+    │   Uses LLM classifier (Claude Haiku) when keyword confidence < 0.7
+    │   Reads template descriptions for template-aware classification
     │
     ├── 6. Map speakers to attendees
     │
@@ -66,6 +68,7 @@ Meeting Occurs
     │   ┌──────────────────────────────────────────────┐
     │   │  standup        → standup_template.md         │
     │   │  one_on_one     → one_on_one_template.md      │
+    │   │  team_meeting   → team_meeting_template.md    │
     │   │  decision       → decision_template.md        │
     │   │  client_call    → client_call_template.md     │
     │   │  brainstorm     → brainstorm_template.md      │

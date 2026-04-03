@@ -99,7 +99,7 @@ The Meeting Minutes Taker is a local-first, three-system pipeline application th
 2. WHEN a transcript has a meeting_type with confidence < 0.7, THE Prompt_Router SHALL run a secondary LLM-based classification on the first 10 minutes of transcript text combined with calendar metadata.
 3. WHEN no matching template exists for the classified meeting type, THE Prompt_Router SHALL fall back to the general-purpose ("other") template.
 4. WHEN a user provides a meeting type override via CLI flag, THE Prompt_Router SHALL use the overridden type regardless of the classified type and confidence.
-5. THE Prompt_Router SHALL support at minimum these meeting types: standup, one_on_one, decision_meeting, customer_meeting, brainstorm, retrospective, planning, and other.
+5. THE Prompt_Router SHALL support at minimum these meeting types: standup, one_on_one, team_meeting, decision_meeting, customer_meeting, brainstorm, retrospective, planning, and other.
 
 ### Requirement 7: Minutes JSON Output
 
@@ -257,3 +257,35 @@ The Meeting Minutes Taker is a local-first, three-system pipeline application th
 2. THE API SHALL provide endpoints for meetings, search, action items, decisions, people, stats, recording control, and configuration (32 endpoints total).
 3. THE API SHALL serve auto-generated documentation at `/docs`.
 4. THE API SHALL serve the Svelte frontend build as static files at the root path.
+
+### Requirement 21: LLM-Based Meeting Type Classification
+
+**User Story:** As a user, I want the system to use an LLM to classify meeting types when keyword matching is uncertain, so that meeting minutes use the most appropriate template.
+
+#### Acceptance Criteria
+
+1. WHEN the initial meeting type confidence is below 0.7, THE Prompt_Router SHALL invoke an LLM classifier using Claude Haiku with the first 4000 characters of the transcript and metadata (speaker count, calendar title).
+2. WHEN classifying with the LLM, THE Prompt_Router SHALL use Anthropic tool_use with an enum constraint to guarantee a valid meeting type is returned.
+3. THE LLM classifier SHALL read actual template descriptions (system prompt and section headings) from the templates directory to inform its classification decision.
+4. THE LLM classifier SHALL auto-discover custom template types added to the templates directory.
+5. IF the Anthropic API is unavailable, THE Prompt_Router SHALL fall back to keyword-based classification.
+
+### Requirement 22: Auto-Detect Capture Device
+
+**User Story:** As a user, I want the system to automatically select the best audio capture device, so that I do not have to manually configure it each time.
+
+#### Acceptance Criteria
+
+1. WHEN auto-detect is requested, THE Audio_Capture_Engine SHALL prefer MeetingCapture aggregate devices.
+2. WHEN testing candidate devices, THE Audio_Capture_Engine SHALL open a brief stream to verify the device is online and skip offline devices (e.g., disconnected AirPods).
+3. THE system SHALL provide an API endpoint `GET /api/auto-detect-device` returning the selected device.
+4. THE Record page SHALL auto-select the best device on load with an "auto-detected" indicator.
+
+### Requirement 23: Auto-Save During Recording
+
+**User Story:** As a user, I want my recording to be saved periodically, so that I do not lose audio data if the application crashes.
+
+#### Acceptance Criteria
+
+1. WHILE recording is active, THE Audio_Capture_Engine SHALL auto-save the audio every 5 minutes as a recovery file.
+2. WHEN the recording completes normally, THE recovery file SHALL be replaced by the final recording.

@@ -33,8 +33,25 @@ An LLM-powered system that takes structured transcript JSON from System 1 and ge
 ### 2.1 Classification Validation
 
 - Use the `meeting_type` from System 1 as the primary classification
-- If `meeting_type_confidence < 0.7`, run a secondary LLM-based classification on the first 10 minutes of transcript + calendar metadata
+- If `meeting_type_confidence < 0.7`, run the LLM-based classifier automatically (see Section 2.4)
 - Allow user override via CLI flag or config
+
+### 2.4 LLM-Based Meeting Type Classifier
+
+The keyword-matching classifier has been replaced with an LLM call using Claude Haiku for improved accuracy.
+
+**How it works:**
+1. Sends the first 4000 characters of the transcript plus metadata (speaker count, calendar title) to Claude Haiku
+2. Uses Anthropic `tool_use` with an enum constraint to guarantee a valid meeting type is returned
+3. The LLM returns `meeting_type`, `confidence` (0-1), and `reasoning`
+4. The classifier reads actual template descriptions (system prompt + section headings) via `_extract_type_descriptions()` to inform its decision
+5. Custom template types added to the `templates/` directory are auto-discovered
+
+**Cost:** Approximately $0.001 per classification.
+
+**Fallback:** If the Anthropic API is unavailable, the system falls back to keyword matching.
+
+**Trigger:** Runs automatically when the initial transcript confidence is below 0.7.
 
 ### 2.2 Supported Meeting Types & Templates
 
@@ -44,7 +61,7 @@ An LLM-powered system that takes structured transcript JSON from System 1 and ge
 | `one_on_one_direct_report` | Coaching, growth, performance | Discussion topics, Feedback given, Career development, Action items, Follow-ups |
 | `one_on_one_leader` | Updates, alignment, support needs | Status updates, Guidance received, Decisions, Escalations, Action items |
 | `standup` | Brief, per-person updates | Yesterday, Today, Blockers per person |
-| `team_meeting` | Decisions and status | Agenda items, Discussion summaries, Decisions, Action items |
+| `team_meeting` | Decisions, financials, strategy | Prior action items review, Decisions (with rationale), Financial review, Blockers (4 categories + cross-team), Strategic updates, Technology decisions, Service feedback, Customer impact, Resource & capacity, Team health, Announcements, Parking lot, Action items (split by urgency) |
 | `interview` | Candidate assessment | Questions asked, Candidate responses (summarized), Assessment notes, Recommendation |
 | `brainstorm` | Ideas and themes | Ideas generated, Themes/clusters, Top ideas, Next steps |
 | `decision_meeting` | Options and outcomes | Context, Options discussed, Pros/cons, Decision made, Rationale |

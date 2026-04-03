@@ -474,7 +474,8 @@ Controls for starting/stopping recording. Shows live status.
 - Live elapsed time counter
 - Audio level visualizer (waveform or VU meter) using logarithmic dB-scaled levels
 - The top bar also shows a small pulsing red dot when recording is active (visible from any page)
-- Recording status is delivered via HTTP polling at 5 Hz (200ms interval). Polling stops automatically when the pipeline completes.
+- Recording and pipeline status updates are delivered in real time via WebSocket push (replaced HTTP polling). Each pipeline job is tracked with step/progress/error and auto-cleans up after 60 seconds.
+- **Auto-detect capture device**: On page load, calls `GET /api/auto-detect-device` which prefers MeetingCapture aggregate devices, tests each candidate by opening a brief stream to verify it is online, and skips offline devices. Shows an "auto-detected" indicator next to the device name.
 - Audio device selection uses native sample rate detection (queries device for its default rate)
 - PortAudio re-scan (`sd._terminate()` + `sd._initialize()`) is used to detect newly connected audio devices without restarting
 
@@ -550,6 +551,7 @@ Each setting has a label, description, and appropriate input control (dropdown, 
 | `standup` | Green | `#22C55E` |
 | `one_on_one` | Sky | `#0EA5E9` |
 | `customer_meeting` | Purple | `#A855F7` |
+| `team_meeting` | Indigo | `#6366F1` |
 | `decision_meeting` | Amber | `#F59E0B` |
 | `brainstorm` | Pink | `#EC4899` |
 | `retrospective` | Orange | `#F97316` |
@@ -604,6 +606,7 @@ PATCH  /api/config                           # Update config
        { "recording": { "audio_device": "MeetingCapture" } }
 
 GET    /api/audio-devices                    # List available audio devices
+GET    /api/auto-detect-device               # Auto-select best capture device
 
 POST   /api/meetings/:id/regenerate          # Re-run minutes generation
 POST   /api/meetings/:id/export              # Export (body: { format: "pdf" | "md" })

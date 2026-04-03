@@ -11,7 +11,7 @@ Record Audio ──► Transcribe ──► Generate Minutes ──► Store & S
 
 **System 1 — Recording & Transcription**: Captures audio from virtual and physical meetings via system audio loopback (BlackHole on macOS), transcribes with Whisper, identifies speakers with pyannote.audio, and enriches with calendar metadata.
 
-**System 2 — Minutes Generation**: Routes transcripts to meeting-type-specific prompt templates, generates structured minutes via LLM (Anthropic Claude `claude-sonnet-4-6` by default) using tool_use for guaranteed JSON output (with text+regex fallback), extracts action items and decisions, and runs quality checks.
+**System 2 — Minutes Generation**: Auto-detects meeting type using an LLM classifier (Claude Haiku), routes transcripts to meeting-type-specific prompt templates, generates structured minutes via LLM (Anthropic Claude `claude-sonnet-4-6` by default) using tool_use for guaranteed JSON output (with text+regex fallback), extracts action items and decisions, and runs quality checks.
 
 **System 3 — Storage & Search**: Stores everything in SQLite with full-text search (FTS5), provides a CLI for searching, browsing, and managing meetings and action items.
 
@@ -25,6 +25,7 @@ Record Audio ──► Transcribe ──► Generate Minutes ──► Store & S
 | `decision_meeting` | Options, pros/cons, decision, rationale |
 | `brainstorm` | Ideas generated, themes, top ideas |
 | `retrospective` | Went well, didn't go well, improvements |
+| `team_meeting` | Decisions, financial review, blockers, strategic updates |
 | `planning` | Goals, tasks, estimates, risks |
 | `general` | Summary, discussion points, decisions, actions |
 
@@ -66,7 +67,7 @@ OPENAI_API_KEY=sk-...
 Set up BlackHole with two virtual devices (see [User Guide](docs/USER_GUIDE.md#3-audio-setup-macos) for step-by-step instructions):
 
 - Set your system output to **Meeting Output** (Multi-Output Device that sends audio to speakers + BlackHole)
-- In the Meeting Minutes app, select **Meeting Capture** (Aggregate Device combining mic + BlackHole) as input
+- In the Meeting Minutes app, select **Meeting Capture** (Aggregate Device combining mic + BlackHole) as input, or use auto-detect which prefers MeetingCapture aggregate devices automatically
 
 ```yaml
 # config/config.yaml
@@ -128,7 +129,7 @@ open http://localhost:8080
 
 **Pages**: Meetings (calendar view with day list + inline detail), Meeting Detail, Action Items, Decisions, People, Stats (charts), Record (live waveform + concurrent pipeline status), Templates (view/edit/create prompt templates), Settings.
 
-**Features**: Dark mode, full-text search with `Cmd+K`, keyboard navigation, responsive layout, meeting type color coding, WebSocket-based real-time updates, concurrent pipeline processing (record a new meeting while the previous one processes in background).
+**Features**: Dark mode, full-text search with `Cmd+K`, keyboard navigation, responsive layout, meeting type color coding, WebSocket-based real-time updates, concurrent pipeline processing (record a new meeting while the previous one processes in background), auto-detect capture device, auto-save recovery every 5 minutes during recording.
 
 **Development** (with hot reload):
 ```bash
@@ -190,7 +191,7 @@ MeetingMinutesTaker/
 │   │   └── output.py          #   TranscriptJSONWriter
 │   ├── system2/               # Minutes generation
 │   │   ├── ingest.py          #   TranscriptIngester (validation, speaker mapping)
-│   │   ├── router.py          #   PromptRouter (type-based template selection)
+│   │   ├── router.py          #   PromptRouter (LLM classifier + template selection)
 │   │   ├── prompts.py         #   PromptTemplateEngine (Jinja2)
 │   │   ├── llm_client.py      #   LLMClient (Anthropic/OpenAI, retry, fallback)
 │   │   ├── schema.py          #   StructuredMinutesResponse (tool_use JSON schema)

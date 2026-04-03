@@ -172,7 +172,7 @@ Query specific metadata fields with filters.
 | Filter | Example | Description |
 |--------|---------|-------------|
 | Date range | `2026-Q1` | Meetings in a time period |
-| Meeting type | `standup`, `decision_meeting` | By classification |
+| Meeting type | `standup`, `team_meeting`, `decision_meeting` | By classification |
 | Attendee | `alice@company.com` | Meetings a person attended |
 | Action item status | `open` | Meetings with open action items |
 | Tag | `engineering`, `client` | By user-assigned tag |

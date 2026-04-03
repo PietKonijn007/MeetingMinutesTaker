@@ -123,13 +123,19 @@ Remote participants (Zoom/Teams/etc.)
 
 ### 1.4 Audio Capture Engine
 
+- **Auto-detect capture device**: The `auto_select_capture_device()` function prefers MeetingCapture aggregate devices, tests each candidate by opening a brief stream to verify it is online, and skips offline devices (e.g., disconnected AirPods). Available via API endpoint `GET /api/auto-detect-device`. The record page auto-selects the best device on load with an "auto-detected" indicator.
 - **Native sample rate detection**: The capture engine queries the selected audio device for its native/default sample rate and uses that rate for recording. This avoids resampling artifacts and PortAudio errors from unsupported rates.
 - Real-time audio capture using the device's native sample rate
-- Circular buffer to prevent data loss during processing spikes
+- Circular buffer to prevent data loss during processing spikes, protected by `_frames_lock` against concurrent access
 - **Logarithmic audio level calculation**: Audio levels are computed using RMS with logarithmic (dB) scaling, normalized to a 0.0-1.0 range for display in the web UI.
 - VAD (Voice Activity Detection) to detect when speech starts/stops
 - Continuous recording with configurable silence-based auto-stop (e.g., stop after 5 minutes of silence)
-- **PortAudio device re-scan**: When a device is not found or becomes unavailable, the engine re-scans audio devices by calling `sd._terminate()` followed by `sd._initialize()` to detect newly connected devices without restarting the application.
+- **Auto-save**: Audio is saved every 5 minutes during recording as a recovery file, protecting against crashes or unexpected shutdowns.
+- **Multi-channel capture**: Opens all channels on aggregate devices and mixes to mono for transcription.
+- **Device fallback**: On macOS audio errors (e.g., device disconnected), retries with the default system device.
+- **Explicit blocksize**: Uses `blocksize=1024` for predictable callback timing.
+- **Safe shutdown**: Uses `stream.stop()` instead of `stream.abort()` for safe audio stream shutdown.
+- **PortAudio device re-scan**: When a device is not found or becomes unavailable, the engine re-scans audio devices by calling `sd._terminate()` followed by `sd._initialize()` to detect newly connected devices without restarting the application. Re-scan only runs when not actively recording.
 
 ### 1.5 Recording Controls
 
@@ -230,7 +236,7 @@ Remote participants (Zoom/Teams/etc.)
   - `one_on_one_direct_report` (1:1 with an employee / direct report)
   - `one_on_one_leader` (1:1 with your boss / leader)
   - `standup` / `daily_sync`
-  - `team_meeting`
+  - `team_meeting` (decisions, financial review, blockers, strategic updates)
   - `interview`
   - `brainstorm`
   - `decision_meeting`
