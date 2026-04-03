@@ -187,7 +187,6 @@ class PipelineOrchestrator:
         ingester = TranscriptIngester()
         transcript_data = ingester.ingest(transcript_path)
         tj = transcript_data.transcript_json
-        _console(f"    Meeting type: {tj.meeting_type} (confidence: {tj.meeting_type_confidence:.2f})")
         _console(f"    Speakers: {len(tj.speakers)} | Transcript length: {len(transcript_data.full_text):,} chars")
 
         # Route to template
@@ -197,6 +196,33 @@ class PipelineOrchestrator:
             templates_dir = Path(__file__).parent.parent.parent / gen_config.templates_dir
 
         router = PromptRouter(gen_config, templates_dir)
+
+        # Classify meeting type using LLM if confidence is low
+        if tj.meeting_type_confidence < router.CONFIDENCE_THRESHOLD:
+            _console(f"  Classifying meeting type with LLM (was: {tj.meeting_type}, confidence: {tj.meeting_type_confidence:.2f})...")
+            try:
+                # Extract calendar title if available
+                calendar_title = ""
+                if hasattr(tj, "calendar") and tj.calendar:
+                    calendar_title = getattr(tj.calendar, "title", "") or ""
+
+                classified_type, classified_conf, reasoning = await router.classify_with_llm(
+                    transcript_excerpt=transcript_data.full_text[:4000],
+                    num_speakers=len(tj.speakers),
+                    calendar_title=calendar_title,
+                    num_attendees=len(tj.speakers),
+                )
+                _console(f"  ✓ LLM classified: {classified_type} (confidence: {classified_conf:.2f})")
+                _console(f"    Reasoning: {reasoning}", "dim")
+
+                # Use the LLM classification
+                tj.meeting_type = classified_type
+                tj.meeting_type_confidence = classified_conf
+            except Exception as e:
+                _console(f"  ⚠ LLM classification failed: {e}", "yellow")
+
+        _console(f"    Meeting type: {tj.meeting_type} (confidence: {tj.meeting_type_confidence:.2f})")
+
         template = router.select_template(
             tj.meeting_type,
             tj.meeting_type_confidence,
