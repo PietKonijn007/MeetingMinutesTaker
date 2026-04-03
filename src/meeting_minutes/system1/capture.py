@@ -134,21 +134,34 @@ class AudioCaptureEngine:
                     else self._config.audio_device
                 )
 
-                # Query native sample rate — some macOS devices reject non-native rates
+                # Query native sample rate and channel count
                 try:
                     device_info = sd.query_devices(device, kind="input")
                     native_rate = int(device_info["default_samplerate"])
-                    use_rate = native_rate  # always use native rate for compatibility
+                    max_channels = int(device_info["max_input_channels"])
+                    use_rate = native_rate
+                    # Use all input channels for aggregate devices (mic + BlackHole)
+                    # then mix down to mono in the callback
+                    use_channels = max_channels if max_channels > 0 else 1
                     self._actual_sample_rate = use_rate
                     import sys
-                    print(f"  [audio] Device: {device_info['name']}, native rate: {native_rate}Hz, using: {use_rate}Hz", file=sys.stderr)
+                    print(f"  [audio] Device: {device_info['name']}, rate: {native_rate}Hz, channels: {use_channels}", file=sys.stderr)
                 except Exception:
                     use_rate = self._config.sample_rate
+                    use_channels = 1
                     self._actual_sample_rate = use_rate
+
+                # Wrap the callback to mix multi-channel to mono
+                if use_channels > 1:
+                    orig_callback = _callback
+                    def _callback(indata, frames, time, status):
+                        # Mix all channels to mono by averaging
+                        mono = indata.mean(axis=1, keepdims=True)
+                        orig_callback(mono, frames, time, status)
 
                 self._stream = sd.InputStream(
                     samplerate=use_rate,
-                    channels=1,
+                    channels=use_channels,
                     dtype="float32",
                     device=device,
                     callback=_callback,
