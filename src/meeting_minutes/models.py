@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 class MeetingType(str, Enum):
     STANDUP = "standup"
     ONE_ON_ONE = "one_on_one"
+    TEAM_MEETING = "team_meeting"
     DECISION_MEETING = "decision_meeting"
     CUSTOMER_MEETING = "customer_meeting"
     BRAINSTORM = "brainstorm"

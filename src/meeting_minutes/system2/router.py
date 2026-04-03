@@ -13,6 +13,7 @@ KNOWN_TYPES = {e.value for e in MeetingType}
 TEMPLATE_FILENAME_MAP: dict[str, str] = {
     "standup": "standup.md.j2",
     "one_on_one": "one_on_one.md.j2",
+    "team_meeting": "team_meeting.md.j2",
     "decision_meeting": "decision_meeting.md.j2",
     "customer_meeting": "customer_meeting.md.j2",
     "brainstorm": "brainstorm.md.j2",
