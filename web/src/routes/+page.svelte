@@ -5,6 +5,7 @@
   import DayMeetingList from '$lib/components/DayMeetingList.svelte';
   import MeetingDetail from '$lib/components/MeetingDetail.svelte';
   import Skeleton from '$lib/components/Skeleton.svelte';
+  import UploadModal from '$lib/components/UploadModal.svelte';
 
   // Calendar state
   let currentYear = $state(new Date().getFullYear());
@@ -15,6 +16,10 @@
   // Data
   let meetingsForMonth = $state([]);
   let loading = $state(true);
+
+  // Upload modal
+  let showUploadModal = $state(false);
+  let uploadToastMsg = $state('');
 
   // Derived: group meetings by date string
   const meetingsByDate = $derived(groupByDate(meetingsForMonth));
@@ -92,6 +97,23 @@
     selectedMeetingId = null;
   }
 
+  function handleUploadClick() {
+    showUploadModal = true;
+  }
+
+  function handleUploadClose() {
+    showUploadModal = false;
+  }
+
+  function handleUploaded(meetingId) {
+    showUploadModal = false;
+    uploadToastMsg = 'Transcript uploaded! Processing...';
+    // Reload to show the new meeting once pipeline finishes
+    loadMonth();
+    // Clear toast after a few seconds
+    setTimeout(() => { uploadToastMsg = ''; }, 4000);
+  }
+
   function handlePrevMonth() {
     if (currentMonth === 0) {
       currentYear--;
@@ -142,6 +164,7 @@
           meetings={meetingsForDay}
           {selectedMeetingId}
           onSelectMeeting={handleSelectMeeting}
+          onUpload={handleUploadClick}
         />
       </div>
     {/if}
@@ -161,3 +184,16 @@
     {/if}
   </div>
 </div>
+
+<UploadModal
+  bind:open={showUploadModal}
+  date={selectedDate}
+  onClose={handleUploadClose}
+  onUploaded={handleUploaded}
+/>
+
+{#if uploadToastMsg}
+  <div class="fixed bottom-4 right-4 z-40 px-4 py-2 rounded-lg bg-[var(--accent)] text-white text-sm shadow-lg">
+    {uploadToastMsg}
+  </div>
+{/if}

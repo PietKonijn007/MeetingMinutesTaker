@@ -60,6 +60,7 @@ from meeting_minutes.api.routes.recording import router as recording_router  # n
 from meeting_minutes.api.routes.search import router as search_router  # noqa: E402
 from meeting_minutes.api.routes.stats import router as stats_router  # noqa: E402
 from meeting_minutes.api.routes.templates import router as templates_router  # noqa: E402
+from meeting_minutes.api.routes.upload import router as upload_router  # noqa: E402
 from meeting_minutes.api.ws import router as ws_router  # noqa: E402
 
 app.include_router(meetings_router)
@@ -71,6 +72,7 @@ app.include_router(stats_router)
 app.include_router(recording_router)
 app.include_router(config_router)
 app.include_router(templates_router)
+app.include_router(upload_router)
 app.include_router(ws_router)
 
 # ── Static files (Svelte SPA) ────────────────────────────────────────────

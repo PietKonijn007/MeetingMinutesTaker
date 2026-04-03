@@ -7,7 +7,7 @@
    *   selectedMeetingId: string|null,
    *   onSelectMeeting: (id: string) => void
    * }} */
-  let { date = '', meetings = [], selectedMeetingId = null, onSelectMeeting } = $props();
+  let { date = '', meetings = [], selectedMeetingId = null, onSelectMeeting, onUpload } = $props();
 
   const formattedDate = $derived(formatDate(date));
 
@@ -34,9 +34,22 @@
 <div class="px-4 pb-4">
   <!-- Date header -->
   <div class="py-3 border-b border-[var(--border-subtle)] mb-2">
-    <h3 class="text-xs font-medium text-[var(--text-muted)] uppercase tracking-wider">
-      Meetings
-    </h3>
+    <div class="flex items-center justify-between">
+      <h3 class="text-xs font-medium text-[var(--text-muted)] uppercase tracking-wider">
+        Meetings
+      </h3>
+      {#if onUpload}
+        <button
+          onclick={() => onUpload(date)}
+          class="p-1 rounded-md text-[var(--text-muted)] hover:text-[var(--accent)] hover:bg-[var(--bg-surface-hover)] transition-colors duration-150"
+          title="Upload transcript"
+        >
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+          </svg>
+        </button>
+      {/if}
+    </div>
     <p class="text-sm font-semibold text-[var(--text-primary)] mt-0.5">
       {formattedDate}
     </p>

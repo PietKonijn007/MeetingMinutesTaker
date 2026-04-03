@@ -74,6 +74,12 @@ export const api = {
   getConfig: () => request('/config'),
   updateConfig: (data) => request('/config', { method: 'PATCH', body: JSON.stringify({ config: data }) }),
 
+  // Upload
+  uploadTranscript: (formData) => fetch('/api/upload-transcript', { method: 'POST', body: formData }).then(res => {
+    if (!res.ok) return res.json().then(err => { throw new Error(err.detail || res.statusText); });
+    return res.json();
+  }),
+
   // Templates
   getTemplates: () => request('/templates'),
   getTemplate: (type) => request(`/templates/${type}`),
