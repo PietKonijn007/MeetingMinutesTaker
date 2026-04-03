@@ -127,6 +127,7 @@ class AudioCaptureEngine:
         else:
             try:
                 import sounddevice as sd  # lazy import
+                import sys
 
                 device = (
                     None
@@ -140,11 +141,8 @@ class AudioCaptureEngine:
                     native_rate = int(device_info["default_samplerate"])
                     max_channels = int(device_info["max_input_channels"])
                     use_rate = native_rate
-                    # Use all input channels for aggregate devices (mic + BlackHole)
-                    # then mix down to mono in the callback
                     use_channels = max_channels if max_channels > 0 else 1
                     self._actual_sample_rate = use_rate
-                    import sys
                     print(f"  [audio] Device: {device_info['name']}, rate: {native_rate}Hz, channels: {use_channels}", file=sys.stderr)
                 except Exception:
                     use_rate = self._config.sample_rate
@@ -155,18 +153,53 @@ class AudioCaptureEngine:
                 if use_channels > 1:
                     orig_callback = _callback
                     def _callback(indata, frames, time, status):
-                        # Mix all channels to mono by averaging
                         mono = indata.mean(axis=1, keepdims=True)
                         orig_callback(mono, frames, time, status)
 
-                self._stream = sd.InputStream(
-                    samplerate=use_rate,
-                    channels=use_channels,
-                    dtype="float32",
-                    device=device,
-                    callback=_callback,
-                )
-                self._stream.start()
+                # Try opening the stream with device fallback on macOS errors
+                try:
+                    self._stream = sd.InputStream(
+                        samplerate=use_rate,
+                        channels=use_channels,
+                        dtype="float32",
+                        device=device,
+                        callback=_callback,
+                        blocksize=1024,
+                    )
+                    self._stream.start()
+                except Exception as stream_exc:
+                    # Fallback: try default device if specified device fails
+                    exc_str = str(stream_exc)
+                    if device is not None and ("Invalid" in exc_str or "!obj" in exc_str or "PortAudio" in exc_str):
+                        print(f"  [audio] Device error: {stream_exc}. Trying default device...", file=sys.stderr)
+                        try:
+                            default_info = sd.query_devices(None, kind="input")
+                            use_rate = int(default_info["default_samplerate"])
+                            use_channels = int(default_info["max_input_channels"])
+                            self._actual_sample_rate = use_rate
+                            print(f"  [audio] Fallback: {default_info['name']}, rate: {use_rate}Hz, channels: {use_channels}", file=sys.stderr)
+                        except Exception:
+                            use_rate = self._config.sample_rate
+                            use_channels = 1
+                            self._actual_sample_rate = use_rate
+
+                        # Re-create mono mix callback for new channel count
+                        if use_channels > 1:
+                            base_cb = orig_callback if 'orig_callback' in dir() else _callback
+                            def _callback(indata, frames, time, status):
+                                mono = indata.mean(axis=1, keepdims=True)
+                                base_cb(mono, frames, time, status)
+
+                        self._stream = sd.InputStream(
+                            samplerate=use_rate,
+                            channels=use_channels,
+                            dtype="float32",
+                            callback=_callback,
+                            blocksize=1024,
+                        )
+                        self._stream.start()
+                    else:
+                        raise
             except Exception as exc:
                 self._recording = False
                 raise RuntimeError(f"Failed to open audio stream: {exc}") from exc
