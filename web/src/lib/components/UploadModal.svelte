@@ -116,7 +116,7 @@
       formData.append('file', file);
       formData.append('title', title || file.name.replace(/\.[^.]+$/, ''));
       formData.append('date', date);
-      formData.append('time', timeValue);
+      formData.append('meeting_time', timeValue);
       formData.append('attendees', attendees);
       formData.append('meeting_type', meetingType);
       formData.append('language', language);

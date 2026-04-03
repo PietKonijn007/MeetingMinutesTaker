@@ -27,7 +27,7 @@ async def upload_transcript(
     file: UploadFile = File(...),
     title: str = Form("Uploaded Meeting"),
     date: str = Form(...),  # YYYY-MM-DD
-    time: str = Form(""),   # HH:MM (optional)
+    meeting_time: str = Form(""),   # HH:MM (optional)
     attendees: str = Form(""),  # comma-separated
     meeting_type: str = Form(""),  # empty = auto-detect
     language: str = Form("en"),
@@ -66,7 +66,7 @@ async def upload_transcript(
             filename=file.filename or "transcript.txt",
             title=title,
             date=date,
-            time_str=time,
+            time_str=meeting_time,
             attendees=attendee_list,
             meeting_type=meeting_type or "other",
             language=language,
