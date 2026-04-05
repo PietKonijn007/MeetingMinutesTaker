@@ -207,6 +207,7 @@ All prompts include these universal instructions:
 | Backend | Models | Use Case |
 |---------|--------|----------|
 | Anthropic API | Claude Sonnet 4.6, Claude Opus 4.6 | Primary recommended backend |
+| OpenRouter | 200+ models (Claude, Gemini, GPT, Llama, DeepSeek, Mistral, etc.) | Multi-provider access via unified API |
 | OpenAI API | GPT-4o, GPT-4.1 | Alternative backend |
 | Local LLM | Llama 3, Mistral (via Ollama/vLLM) | Privacy-first / offline mode |
 | AWS Bedrock | Claude, Llama via Bedrock | Enterprise / AWS-integrated environments |
@@ -215,8 +216,8 @@ All prompts include these universal instructions:
 
 ```yaml
 llm:
-  primary_provider: "anthropic"
-  model: "claude-sonnet-4-6-20250514"
+  primary_provider: "anthropic"        # anthropic | openai | openrouter | ollama
+  model: "claude-sonnet-4-6-20250514"  # Model ID (for openrouter, use prefixed IDs like "anthropic/claude-sonnet-4")
   fallback_provider: "openai"
   fallback_model: "gpt-4o"
   temperature: 0.2                    # low temperature for factual extraction
@@ -284,7 +285,7 @@ The tool definition includes these fields:
 
 ### 4A.4 Fallback to Text + Regex
 
-When structured output fails (e.g., non-Anthropic provider, API error, schema validation failure), the system falls back to the original text-based generation with regex parsing via `MinutesParser`.
+When structured output fails (e.g., non-Anthropic provider such as OpenRouter or OpenAI, API error, schema validation failure), the system falls back to the original text-based generation with regex parsing via `MinutesParser`.
 
 ---
 
@@ -508,7 +509,7 @@ cost_optimization:
 | Component | Technology |
 |-----------|-----------|
 | Orchestration | Python with `asyncio` |
-| LLM clients | `anthropic` SDK, `openai` SDK, `ollama` |
+| LLM clients | `anthropic` SDK, `openai` SDK (also used for OpenRouter), `ollama` |
 | Prompt management | Jinja2 templates + YAML config |
 | Markdown processing | `markdown-it-py` |
 | PDF export | `weasyprint` or `reportlab` |

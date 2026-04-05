@@ -250,10 +250,13 @@ diarization:
 generation:
   templates_dir: templates                # Directory containing .md.j2 template files
   llm:
-    primary_provider: anthropic           # anthropic | openai
+    primary_provider: anthropic           # anthropic | openai | openrouter | ollama
     model: claude-sonnet-4-6-20250514       # Model for minutes generation
     fallback_provider: null                # Fallback provider (null = disabled, or "openai")
     fallback_model: gpt-4o                # Fallback model (used when fallback_provider is set)
+    # OpenRouter models use provider-prefixed IDs, e.g.:
+    #   anthropic/claude-sonnet-4, google/gemini-2.5-pro-preview,
+    #   openai/gpt-4o, meta-llama/llama-4-maverick, deepseek/deepseek-r1
     temperature: 0.2                      # Low = more factual, less creative
     max_output_tokens: 4096               # Max length of generated minutes
     retry_attempts: 3                     # Retries on API failure
@@ -306,7 +309,7 @@ transcription:
 
 ## 5. API Keys
 
-### 5.1 Anthropic (required for minutes generation)
+### 5.1 Anthropic (default provider for minutes generation)
 
 Get your API key from [console.anthropic.com](https://console.anthropic.com/).
 
@@ -316,7 +319,40 @@ export ANTHROPIC_API_KEY="sk-ant-..."
 
 Add this to your shell profile (`~/.zshrc` or `~/.bashrc`) to persist it.
 
-### 5.2 OpenAI (optional fallback)
+### 5.2 OpenRouter (optional — access 200+ models)
+
+OpenRouter provides a unified API to access models from Anthropic, Google, OpenAI, Meta, DeepSeek, Mistral, and many more. Get your API key from [openrouter.ai/keys](https://openrouter.ai/keys).
+
+```bash
+export OPENROUTER_API_KEY="sk-or-..."
+```
+
+To use OpenRouter as your primary provider, set it in the config:
+
+```yaml
+generation:
+  llm:
+    primary_provider: openrouter
+    model: anthropic/claude-sonnet-4       # or google/gemini-2.5-pro-preview, etc.
+```
+
+Popular OpenRouter models:
+
+| Model ID | Provider | Notes |
+|----------|----------|-------|
+| `anthropic/claude-sonnet-4` | Anthropic | Strong general-purpose |
+| `anthropic/claude-haiku-4` | Anthropic | Fast and cheap |
+| `google/gemini-2.5-pro-preview` | Google | Large context window |
+| `google/gemini-2.5-flash-preview` | Google | Fast and cheap |
+| `openai/gpt-4o` | OpenAI | Strong general-purpose |
+| `openai/gpt-4o-mini` | OpenAI | Fast and cheap |
+| `meta-llama/llama-4-maverick` | Meta | Open-source |
+| `deepseek/deepseek-r1` | DeepSeek | Reasoning-focused |
+| `mistralai/mistral-medium-3` | Mistral | European alternative |
+
+See [openrouter.ai/models](https://openrouter.ai/models) for all available models. You can also enter any model ID directly in the Settings UI — custom models are saved to the dropdown after successful use.
+
+### 5.3 OpenAI (optional fallback)
 
 If you configure an OpenAI fallback:
 
@@ -324,7 +360,7 @@ If you configure an OpenAI fallback:
 export OPENAI_API_KEY="sk-..."
 ```
 
-### 5.3 HuggingFace (required for speaker diarization)
+### 5.4 HuggingFace (required for speaker diarization)
 
 The `pyannote.audio` models are gated. You need to:
 
@@ -342,7 +378,7 @@ export HF_TOKEN="hf_..."
 
 If you don't want diarization, set `diarization.enabled: false` in the config and skip this step.
 
-### 5.4 Using a `.env` file
+### 5.5 Using a `.env` file
 
 Instead of setting environment variables in your shell, you can create a `.env` file at the project root. Values in `.env` take priority over variables set in the shell environment.
 
@@ -351,6 +387,7 @@ Instead of setting environment variables in your shell, you can create a `.env` 
 ANTHROPIC_API_KEY=sk-ant-...
 HF_TOKEN=hf_...
 OPENAI_API_KEY=sk-...
+OPENROUTER_API_KEY=sk-or-...
 ```
 
 The file is loaded automatically at startup via `env.py`. You do not need to source or export it.
@@ -565,7 +602,7 @@ A visual editor for `config/config.yaml`. Organized into sections:
 | **Recording** | Audio device (dropdown of detected devices), sample rate, auto-stop silence threshold |
 | **Transcription** | Whisper model (with size/accuracy descriptions, including Distil-Whisper), language |
 | **Speaker ID** | Enable/disable diarization |
-| **Minutes Generation** | LLM provider, model, temperature, max tokens |
+| **Minutes Generation** | LLM provider (Anthropic, OpenAI, OpenRouter, Ollama), model (dropdown with built-in + previously used custom models, text input for custom model IDs), temperature, max tokens |
 | **Pipeline** | Mode (automatic / semi-automatic / manual) |
 | **Storage** | Database path, data directory |
 | **Security** | Encryption at rest toggle, encryption key path, generate key button |
@@ -936,7 +973,8 @@ Or view the status in the web UI Settings > Retention section.
 
 | Problem | Solution |
 |---------|----------|
-| **"ANTHROPIC_API_KEY not set"** | Set the env var: `export ANTHROPIC_API_KEY="sk-ant-..."` |
+| **"ANTHROPIC_API_KEY not set"** | Set the env var: `export ANTHROPIC_API_KEY="sk-ant-..."` (or use OpenRouter/OpenAI as your provider instead) |
+| **"OPENROUTER_API_KEY not set"** | Set the env var: `export OPENROUTER_API_KEY="sk-or-..."` (only needed if using OpenRouter as provider) |
 | **API timeout** | Increase `timeout_seconds` in the config. Long meetings may need 180-240 seconds. |
 | **Minutes look wrong for meeting type** | Override the type: `mm generate <id> --type standup`. Or edit the template in `templates/`. |
 | **Missing action items** | The LLM may miss implicit tasks. Review the transcript and add them manually, or adjust the template to emphasize action item extraction. |

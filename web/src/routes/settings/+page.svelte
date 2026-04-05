@@ -50,6 +50,10 @@
   let obsidian_vault_path = $state('');
   let testing_obsidian = $state(false);
 
+  // Custom models (successfully used, loaded from API)
+  let custom_models = $state({ anthropic: [], openai: [], openrouter: [], ollama: [] });
+  let llm_custom_model = $state('');  // text input for typing a custom model
+
   async function loadConfig() {
     loading = true;
     try {
@@ -102,6 +106,13 @@
         retention_transcript_days = ret.transcript_days ?? -1;
         retention_minutes_days = ret.minutes_days ?? -1;
         retention_backup_days = ret.backup_days ?? 30;
+      }
+
+      // Load custom models
+      try {
+        custom_models = await api.getCustomModels();
+      } catch (_) {
+        custom_models = { anthropic: [], openai: [], openrouter: [], ollama: [] };
       }
 
       // Load backup list
@@ -324,24 +335,153 @@
             <label class="block text-sm font-medium text-[var(--text-primary)] mb-1">LLM Provider</label>
             <select
               bind:value={llm_provider}
+              onchange={() => {
+                const defaults = {
+                  anthropic: 'claude-sonnet-4-6-20250514',
+                  openai: 'gpt-4o',
+                  openrouter: 'anthropic/claude-sonnet-4',
+                  ollama: 'llama3'
+                };
+                llm_model = defaults[llm_provider] || '';
+                llm_custom_model = '';
+              }}
               class="w-full px-3 py-2 bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg text-sm text-[var(--text-primary)]
                      focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
             >
-              <option value="ollama">Ollama (local)</option>
-              <option value="openai">OpenAI</option>
               <option value="anthropic">Anthropic</option>
+              <option value="openai">OpenAI</option>
+              <option value="openrouter">OpenRouter</option>
+              <option value="ollama">Ollama (local)</option>
             </select>
+            {#if llm_provider === 'openrouter'}
+              <p class="text-xs text-[var(--text-muted)] mt-1">Access 200+ models from multiple providers via OpenRouter.</p>
+            {/if}
           </div>
 
           <div>
             <label class="block text-sm font-medium text-[var(--text-primary)] mb-1">Model</label>
-            <input
-              type="text"
-              bind:value={llm_model}
-              placeholder="e.g., llama3, gpt-4o, claude-sonnet-4-20250514"
-              class="w-full px-3 py-2 bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg text-sm text-[var(--text-primary)]
-                     focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
-            />
+            {#if llm_provider === 'openrouter'}
+              <select
+                bind:value={llm_model}
+                class="w-full px-3 py-2 bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg text-sm text-[var(--text-primary)]
+                       focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
+              >
+                <optgroup label="Anthropic">
+                  <option value="anthropic/claude-sonnet-4">Claude Sonnet 4</option>
+                  <option value="anthropic/claude-haiku-4">Claude Haiku 4</option>
+                </optgroup>
+                <optgroup label="Google">
+                  <option value="google/gemini-2.5-pro-preview">Gemini 2.5 Pro</option>
+                  <option value="google/gemini-2.5-flash-preview">Gemini 2.5 Flash</option>
+                </optgroup>
+                <optgroup label="OpenAI">
+                  <option value="openai/gpt-4o">GPT-4o</option>
+                  <option value="openai/gpt-4o-mini">GPT-4o Mini</option>
+                </optgroup>
+                <optgroup label="Meta">
+                  <option value="meta-llama/llama-4-maverick">Llama 4 Maverick</option>
+                </optgroup>
+                <optgroup label="DeepSeek">
+                  <option value="deepseek/deepseek-r1">DeepSeek R1</option>
+                </optgroup>
+                <optgroup label="Mistral">
+                  <option value="mistralai/mistral-medium-3">Mistral Medium 3</option>
+                </optgroup>
+                {#if custom_models.openrouter?.length > 0}
+                  <optgroup label="Previously used">
+                    {#each custom_models.openrouter as m}
+                      <option value={m}>{m}</option>
+                    {/each}
+                  </optgroup>
+                {/if}
+              </select>
+            {:else if llm_provider === 'anthropic'}
+              <select
+                bind:value={llm_model}
+                class="w-full px-3 py-2 bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg text-sm text-[var(--text-primary)]
+                       focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
+              >
+                <option value="claude-sonnet-4-6-20250514">Claude Sonnet 4.6</option>
+                <option value="claude-3-5-sonnet-20241022">Claude 3.5 Sonnet</option>
+                <option value="claude-3-haiku-20240307">Claude 3 Haiku</option>
+                {#if custom_models.anthropic?.length > 0}
+                  <optgroup label="Previously used">
+                    {#each custom_models.anthropic as m}
+                      <option value={m}>{m}</option>
+                    {/each}
+                  </optgroup>
+                {/if}
+              </select>
+            {:else if llm_provider === 'openai'}
+              <select
+                bind:value={llm_model}
+                class="w-full px-3 py-2 bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg text-sm text-[var(--text-primary)]
+                       focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
+              >
+                <option value="gpt-4o">GPT-4o</option>
+                <option value="gpt-4o-mini">GPT-4o Mini</option>
+                {#if custom_models.openai?.length > 0}
+                  <optgroup label="Previously used">
+                    {#each custom_models.openai as m}
+                      <option value={m}>{m}</option>
+                    {/each}
+                  </optgroup>
+                {/if}
+              </select>
+            {:else}
+              <select
+                bind:value={llm_model}
+                class="w-full px-3 py-2 bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg text-sm text-[var(--text-primary)]
+                       focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
+              >
+                {#if custom_models.ollama?.length > 0}
+                  {#each custom_models.ollama as m}
+                    <option value={m}>{m}</option>
+                  {/each}
+                {:else}
+                  <option value="" disabled>No models used yet — enter one below</option>
+                {/if}
+              </select>
+            {/if}
+
+            <!-- Custom model input for all providers -->
+            <div class="mt-2">
+              <div class="flex gap-2">
+                <input
+                  type="text"
+                  bind:value={llm_custom_model}
+                  placeholder={llm_provider === 'openrouter' ? 'e.g., anthropic/claude-opus-4' : llm_provider === 'ollama' ? 'e.g., llama3' : `Enter a custom ${llm_provider} model ID`}
+                  class="flex-1 px-3 py-2 bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg text-sm text-[var(--text-primary)] font-mono
+                         focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
+                />
+                <button
+                  onclick={() => {
+                    if (llm_custom_model.trim()) {
+                      llm_model = llm_custom_model.trim();
+                      llm_custom_model = '';
+                    }
+                  }}
+                  disabled={!llm_custom_model.trim()}
+                  class="px-4 py-2 bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg text-sm font-medium text-[var(--text-primary)]
+                         hover:bg-[var(--bg-hover)] disabled:opacity-50 transition-colors duration-150 whitespace-nowrap"
+                >
+                  Use
+                </button>
+              </div>
+              <p class="text-xs text-[var(--text-muted)] mt-1">
+                {#if llm_provider === 'openrouter'}
+                  Enter any model from <a href="https://openrouter.ai/models" target="_blank" class="text-[var(--accent)] hover:underline">openrouter.ai/models</a>. It will be added to the list after successful use.
+                {:else}
+                  Type a custom model ID and click Use. It will be saved to the dropdown after a successful generation.
+                {/if}
+              </p>
+            </div>
+
+            {#if llm_model}
+              <p class="text-xs text-[var(--text-secondary)] mt-2 font-mono">
+                Active model: {llm_model}
+              </p>
+            {/if}
           </div>
 
           <div>

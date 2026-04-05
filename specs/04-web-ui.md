@@ -513,7 +513,7 @@ Visual config editor. Changes write to `config/config.yaml`.
 | **Recording** | Audio device (dropdown of system devices), sample rate, auto-stop silence threshold |
 | **Transcription** | Whisper model (dropdown with size/accuracy descriptions), language |
 | **Speaker ID** | Enable/disable diarization, HuggingFace token status |
-| **Minutes Generation** | LLM provider, model, temperature slider, max tokens |
+| **Minutes Generation** | LLM provider (Anthropic, OpenAI, OpenRouter, Ollama), model (dropdown with built-in + previously used custom models, plus text input for custom model IDs), temperature slider, max tokens |
 | **Pipeline** | Mode selector (automatic / semi-automatic / manual) |
 | **Storage** | Database path, data directory |
 | **Appearance** | Dark mode toggle, accent color (optional) |

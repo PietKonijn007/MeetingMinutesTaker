@@ -24,6 +24,19 @@ COST_PER_1K_TOKENS: dict[str, dict[str, float]] = {
         "gpt-4o-mini": 0.00015,
         "default": 0.005,
     },
+    "openrouter": {
+        # Pricing varies per model; these are rough estimates per 1K tokens
+        "anthropic/claude-sonnet-4": 0.003,
+        "anthropic/claude-haiku-4": 0.0008,
+        "google/gemini-2.5-pro-preview": 0.0025,
+        "google/gemini-2.5-flash-preview": 0.0003,
+        "openai/gpt-4o": 0.005,
+        "openai/gpt-4o-mini": 0.00015,
+        "meta-llama/llama-4-maverick": 0.0005,
+        "deepseek/deepseek-r1": 0.0008,
+        "mistralai/mistral-medium-3": 0.002,
+        "default": 0.003,
+    },
 }
 
 
@@ -85,6 +98,10 @@ class LLMClient:
             )
         elif provider == "openai":
             text, input_tokens, output_tokens = await self._call_openai(
+                prompt, system_prompt, model
+            )
+        elif provider == "openrouter":
+            text, input_tokens, output_tokens = await self._call_openrouter(
                 prompt, system_prompt, model
             )
         else:
@@ -240,5 +257,40 @@ class LLMClient:
         text = response.choices[0].message.content or ""
         input_tokens = response.usage.prompt_tokens
         output_tokens = response.usage.completion_tokens
+
+        return text, input_tokens, output_tokens
+
+    async def _call_openrouter(
+        self, prompt: str, system_prompt: str, model: str
+    ) -> tuple[str, int, int]:
+        api_key = os.environ.get("OPENROUTER_API_KEY")
+        if not api_key:
+            raise RuntimeError("OPENROUTER_API_KEY environment variable not set")
+
+        try:
+            from openai import AsyncOpenAI  # OpenRouter uses OpenAI-compatible API
+        except ImportError as exc:
+            raise RuntimeError("openai package not installed (needed for OpenRouter)") from exc
+
+        client = AsyncOpenAI(
+            api_key=api_key,
+            base_url="https://openrouter.ai/api/v1",
+        )
+
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
+
+        response = await client.chat.completions.create(
+            model=model,
+            max_tokens=self._config.max_output_tokens,
+            temperature=self._config.temperature,
+            messages=messages,
+        )
+
+        text = response.choices[0].message.content or ""
+        input_tokens = response.usage.prompt_tokens if response.usage else 0
+        output_tokens = response.usage.completion_tokens if response.usage else 0
 
         return text, input_tokens, output_tokens

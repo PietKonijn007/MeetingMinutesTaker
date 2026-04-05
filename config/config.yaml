@@ -17,11 +17,11 @@ diarization:
   engine: pyannote
 generation:
   llm:
-    primary_provider: anthropic
-    model: claude-sonnet-4-6
+    primary_provider: openrouter
+    model: mistralai/mistral-medium-3
     fallback_provider: null
     fallback_model: null
-    temperature: 0.5
+    temperature: 0.2
     max_output_tokens: 4096
     retry_attempts: 3
     timeout_seconds: 120
@@ -35,7 +35,7 @@ backup:
   interval_hours: 1
 obsidian:
   enabled: true
-  vault_path: /Users/jurgenhofkens/Documents/NetApp/Meeting Minutes
+  vault_path: /Users/jurgenhofkens/Documents/NetApp
 api:
   host: 127.0.0.1
   port: 8080
@@ -51,4 +51,4 @@ retention:
   backup_days: 30
 security:
   encryption_enabled: false
-  encryption_key: ""
+  encryption_key: ''

@@ -73,6 +73,7 @@ export const api = {
   // Config
   getConfig: () => request('/config'),
   updateConfig: (data) => request('/config', { method: 'PATCH', body: JSON.stringify({ config: data }) }),
+  getCustomModels: () => request('/config/custom-models'),
 
   // Upload
   uploadTranscript: (formData) => fetch('/api/upload-transcript', { method: 'POST', body: formData }).then(res => {

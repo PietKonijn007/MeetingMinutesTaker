@@ -21,6 +21,44 @@ def _console(msg: str, style: str = "") -> None:
         print(msg)
 
 
+CUSTOM_MODELS_PATH = Path(__file__).parent.parent.parent / "config" / "custom_models.json"
+
+# Built-in models that don't need to be tracked as custom
+_BUILTIN_MODELS: dict[str, set[str]] = {
+    "anthropic": {"claude-sonnet-4-6-20250514", "claude-3-5-sonnet-20241022", "claude-3-haiku-20240307"},
+    "openai": {"gpt-4o", "gpt-4o-mini"},
+    "openrouter": {
+        "anthropic/claude-sonnet-4", "anthropic/claude-haiku-4",
+        "google/gemini-2.5-pro-preview", "google/gemini-2.5-flash-preview",
+        "openai/gpt-4o", "openai/gpt-4o-mini",
+        "meta-llama/llama-4-maverick", "deepseek/deepseek-r1",
+        "mistralai/mistral-medium-3",
+    },
+    "ollama": set(),
+}
+
+
+def _record_successful_model(provider: str, model: str) -> None:
+    """Record a successfully used model to config/custom_models.json if it's not built-in."""
+    import json as _json
+
+    if model in _BUILTIN_MODELS.get(provider, set()):
+        return
+
+    try:
+        data: dict[str, list[str]] = {}
+        if CUSTOM_MODELS_PATH.exists():
+            data = _json.loads(CUSTOM_MODELS_PATH.read_text())
+
+        provider_models = data.setdefault(provider, [])
+        if model not in provider_models:
+            provider_models.append(model)
+            CUSTOM_MODELS_PATH.parent.mkdir(parents=True, exist_ok=True)
+            CUSTOM_MODELS_PATH.write_text(_json.dumps(data, indent=2) + "\n")
+    except Exception:
+        pass  # Non-critical — don't break pipeline for model tracking
+
+
 class PipelineOrchestrator:
     """Coordinate recording → transcription → generation → ingestion."""
 
@@ -487,6 +525,9 @@ class PipelineOrchestrator:
 
         _console(f"  ✓ Minutes saved: {json_path.name}", "green")
         _console(f"  ✓ Markdown saved: {md_path.name}", "green")
+
+        # Record successful model usage for custom model persistence
+        _record_successful_model(llm_response.provider, llm_response.model)
 
         # Encrypt minutes files if configured
         if self._config.security.encryption_enabled and self._config.security.encryption_key:

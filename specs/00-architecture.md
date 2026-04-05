@@ -14,6 +14,9 @@ The Meeting Minutes Taker is a three-system pipeline that captures meeting audio
 │  • Audio capture    │               │  • Type routing     │               │  • Database         │
 │  • Transcription    │               │  • Prompt selection │               │  • Full-text search │
 │  • Diarization      │               │  • LLM generation   │               │  • REST API (:8080) │
+│                     │               │    (Anthropic /     │               │                     │
+│                     │               │     OpenRouter /    │               │                     │
+│                     │               │     OpenAI)         │               │                     │
 │  • Metadata         │               │  • Quality checks   │               │  • Svelte Web UI    │
 │                     │               │                     │               │  • Analytics        │
 └─────────────────────┘               └─────────────────────┘               └─────────────────────┘
@@ -79,9 +82,10 @@ Meeting Occurs
     │
     ├── 3. Construct prompt (system + template + context + transcript)
     │
-    ├── 4. Send to LLM (Claude / GPT / local model)
+    ├── 4. Send to LLM (Claude / GPT / OpenRouter / local model)
     │      Primary: structured JSON output via Anthropic tool_use
     │      Fallback: text response + regex parsing
+    │      OpenRouter: 200+ models via unified API (OpenAI-compatible)
     │
     ├── 5. Parse response, extract action items & decisions
     │
@@ -214,6 +218,7 @@ Post-processing hooks fire
 ```
 ~/MeetingMinutesTaker/
 ├── .env                         # API keys (optional, takes priority over env vars)
+│                                #   ANTHROPIC_API_KEY, OPENROUTER_API_KEY, OPENAI_API_KEY, HF_TOKEN
 ├── config/
 │   ├── config.yaml              # Main configuration
 │   └── vocabulary.txt           # Custom vocabulary for transcription
@@ -292,10 +297,11 @@ diarization:
 generation:
   templates_dir: templates         # Jinja2 prompt templates directory
   llm:
-    primary_provider: anthropic
+    primary_provider: anthropic    # anthropic | openai | openrouter | ollama
     model: claude-sonnet-4-6-20250514
     fallback_provider: null        # null = disabled, or "openai"
     fallback_model: gpt-4o
+    # For OpenRouter, use prefixed model IDs: anthropic/claude-sonnet-4, google/gemini-2.5-pro-preview, etc.
     temperature: 0.2
     max_output_tokens: 4096
     retry_attempts: 3
@@ -388,7 +394,7 @@ storage:
 | **Audio** | `sounddevice`, BlackHole (macOS), WASAPI (Windows) |
 | **Transcription** | `faster-whisper` |
 | **Diarization** | `pyannote.audio` |
-| **LLM** | `anthropic` SDK (primary), `openai` SDK (fallback) |
+| **LLM** | `anthropic` SDK (primary), `openai` SDK (fallback + OpenRouter via OpenAI-compatible API) |
 | **Database** | SQLite + SQLAlchemy |
 | **Search** | SQLite FTS5 |
 | **API** | FastAPI + uvicorn |

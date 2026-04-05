@@ -11,7 +11,7 @@ Record Audio ──► Transcribe ──► Generate Minutes ──► Store & S
 
 **System 1 — Recording & Transcription**: Captures audio from virtual and physical meetings via system audio loopback (BlackHole on macOS), transcribes with Whisper (including Distil-Whisper models with Metal acceleration on Apple Silicon), identifies speakers with pyannote.audio, enriches with calendar metadata, and supports live note-taking (speaker names, notes, custom LLM instructions) during recording.
 
-**System 2 — Minutes Generation**: Auto-detects meeting type using an LLM classifier (Claude Haiku) with meeting type refinement, routes transcripts to meeting-type-specific prompt templates, generates structured minutes via LLM (Anthropic Claude `claude-sonnet-4-6` by default) using tool_use for guaranteed JSON output (with text+regex fallback), extracts action items and decisions with per-speaker sentiment analysis and meeting effectiveness scoring, and runs quality checks. Supports custom LLM instructions provided during recording.
+**System 2 — Minutes Generation**: Auto-detects meeting type using an LLM classifier (Claude Haiku) with meeting type refinement, routes transcripts to meeting-type-specific prompt templates, generates structured minutes via LLM (Anthropic Claude `claude-sonnet-4-6` by default, with OpenRouter and OpenAI as alternatives) using tool_use for guaranteed JSON output (with text+regex fallback), extracts action items and decisions with per-speaker sentiment analysis and meeting effectiveness scoring, and runs quality checks. Supports custom LLM instructions provided during recording. OpenRouter support provides access to 200+ models from multiple providers (Anthropic, Google, OpenAI, Meta, DeepSeek, Mistral, and more).
 
 **System 3 — Storage & Search**: Stores everything in SQLite with full-text search (FTS5), provides a CLI for searching, browsing, and managing meetings and action items. Supports encryption at rest, configurable retention policies, and in-calendar search with filters.
 
@@ -84,9 +84,10 @@ mm init
 ### Set API keys
 
 ```bash
-export ANTHROPIC_API_KEY="sk-ant-..."    # Required for minutes generation
+export ANTHROPIC_API_KEY="sk-ant-..."    # Required for minutes generation (Anthropic provider)
 export HF_TOKEN="hf_..."                 # Required for speaker diarization
-export OPENAI_API_KEY="sk-..."           # Optional fallback
+export OPENAI_API_KEY="sk-..."           # Optional (OpenAI provider or fallback)
+export OPENROUTER_API_KEY="sk-or-..."    # Optional (OpenRouter provider — access 200+ models)
 ```
 
 Or create a `.env` file at the project root (takes priority over environment variables):
@@ -95,6 +96,7 @@ Or create a `.env` file at the project root (takes priority over environment var
 ANTHROPIC_API_KEY=sk-ant-...
 HF_TOKEN=hf_...
 OPENAI_API_KEY=sk-...
+OPENROUTER_API_KEY=sk-or-...
 ```
 
 ### Configure audio
@@ -170,7 +172,7 @@ mm serve
 open http://localhost:8080
 ```
 
-**Pages**: Meetings (calendar view with day list + inline detail + search with filters), Meeting Detail, Action Items, Decisions, People, Stats (charts), Record (live waveform + concurrent pipeline status + live note-taking), Templates (view/edit/create prompt templates), Settings (including Security, Retention, and CORS config).
+**Pages**: Meetings (calendar view with day list + inline detail + search with filters), Meeting Detail, Action Items, Decisions, People, Stats (charts), Record (live waveform + concurrent pipeline status + live note-taking), Templates (view/edit/create prompt templates), Settings (LLM provider/model selection with custom model support, Security, Retention, and CORS config).
 
 **Features**: Dark mode, full-text search with `Cmd+K`, in-calendar search with type filter chips, keyboard navigation, responsive layout, meeting type color coding, WebSocket-based real-time updates, concurrent pipeline processing (record a new meeting while the previous one processes in background), auto-detect capture device, auto-save recovery every 5 minutes during recording, live note-taking during recording (speaker names, notes, custom LLM instructions), encryption at rest, retention policies with automatic cleanup.
 
@@ -207,8 +209,8 @@ diarization:
 
 generation:
   llm:
-    primary_provider: anthropic
-    model: claude-sonnet-4-6-20250514
+    primary_provider: anthropic       # anthropic | openai | openrouter | ollama
+    model: claude-sonnet-4-6-20250514 # Model ID (provider-specific)
     temperature: 0.2
 
 storage:
@@ -253,7 +255,7 @@ MeetingMinutesTaker/
 │   │   ├── ingest.py          #   TranscriptIngester (validation, speaker mapping)
 │   │   ├── router.py          #   PromptRouter (LLM classifier + template selection)
 │   │   ├── prompts.py         #   PromptTemplateEngine (Jinja2)
-│   │   ├── llm_client.py      #   LLMClient (Anthropic/OpenAI, retry, fallback)
+│   │   ├── llm_client.py      #   LLMClient (Anthropic/OpenAI/OpenRouter, retry, fallback)
 │   │   ├── schema.py          #   StructuredMinutesResponse (tool_use JSON schema)
 │   │   ├── parser.py          #   MinutesParser (extract sections, actions, decisions)
 │   │   ├── quality.py         #   QualityChecker (coverage, hallucination, length)
@@ -300,7 +302,7 @@ MeetingMinutesTaker/
 | Audio capture | `sounddevice` + BlackHole (macOS) |
 | Transcription | `faster-whisper` (Whisper, Metal accelerated) |
 | Speaker diarization | `pyannote.audio` |
-| LLM | Anthropic Claude (primary), OpenAI (fallback) |
+| LLM | Anthropic Claude (primary), OpenRouter (200+ models), OpenAI (fallback) |
 | Database | SQLite + SQLAlchemy |
 | Full-text search | SQLite FTS5 with BM25 ranking |
 | CLI | `typer` + `rich` |

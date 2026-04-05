@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Annotated
 
@@ -75,3 +76,15 @@ def update_config(
         yaml.dump(merged, f, default_flow_style=False, sort_keys=False)
 
     return ConfigResponse(config=new_config.model_dump())
+
+
+@router.get("/custom-models")
+def get_custom_models():
+    """Return custom models that have been successfully used, keyed by provider."""
+    custom_models_path = Path(__file__).parent.parent.parent.parent.parent / "config" / "custom_models.json"
+    if custom_models_path.exists():
+        try:
+            return json.loads(custom_models_path.read_text())
+        except Exception:
+            pass
+    return {"anthropic": [], "openai": [], "openrouter": [], "ollama": []}
