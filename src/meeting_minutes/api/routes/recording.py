@@ -207,23 +207,37 @@ async def _run_pipeline(meeting_id: str, config: AppConfig):
 
         orchestrator = PipelineOrchestrator(config)
 
-        # Step 1: Transcription
-        job["step"] = "transcribing"
-        job["progress"] = 0.0
-        await orchestrator.run_transcription(meeting_id)
-        job["progress"] = 1.0
+        # Hook into pipeline steps for progress tracking
+        _orig_transcribe = orchestrator.run_transcription
+        _orig_generate = orchestrator.run_generation
+        _orig_ingest = orchestrator.run_ingestion
 
-        # Step 2: Generation
-        job["step"] = "generating"
-        job["progress"] = 0.0
-        await orchestrator.run_generation(meeting_id)
-        job["progress"] = 1.0
+        async def _tracked_transcribe(mid):
+            job["step"] = "transcribing"
+            job["progress"] = 0.0
+            result = await _orig_transcribe(mid)
+            job["progress"] = 1.0
+            return result
 
-        # Step 3: Ingestion
-        job["step"] = "indexing"
-        job["progress"] = 0.0
-        await orchestrator.run_ingestion(meeting_id)
-        job["progress"] = 1.0
+        async def _tracked_generate(mid):
+            job["step"] = "generating"
+            job["progress"] = 0.0
+            result = await _orig_generate(mid)
+            job["progress"] = 1.0
+            return result
+
+        async def _tracked_ingest(mid):
+            job["step"] = "indexing"
+            job["progress"] = 0.0
+            await _orig_ingest(mid)
+            job["progress"] = 1.0
+
+        orchestrator.run_transcription = _tracked_transcribe
+        orchestrator.run_generation = _tracked_generate
+        orchestrator.run_ingestion = _tracked_ingest
+
+        # Run the FULL pipeline (includes backup, Obsidian export, retention)
+        await orchestrator.run_full_pipeline(meeting_id)
 
         # Done
         job["step"] = "done"
