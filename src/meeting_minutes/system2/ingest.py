@@ -20,8 +20,18 @@ class TranscriptIngester:
         if not transcript_path.exists():
             raise FileNotFoundError(f"Transcript not found: {transcript_path}")
 
-        with open(transcript_path, "r", encoding="utf-8") as f:
-            raw = json.load(f)
+        # Decrypt if the file is encrypted
+        from meeting_minutes.encryption import is_encrypted, decrypt_file_text
+
+        if is_encrypted(transcript_path):
+            from meeting_minutes.config import ConfigLoader
+
+            config = ConfigLoader.load_default()
+            text = decrypt_file_text(transcript_path, config.security.encryption_key)
+            raw = json.loads(text)
+        else:
+            with open(transcript_path, "r", encoding="utf-8") as f:
+                raw = json.load(f)
 
         # Validate schema
         try:

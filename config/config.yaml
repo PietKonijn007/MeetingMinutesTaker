@@ -49,3 +49,6 @@ retention:
   transcript_days: -1
   minutes_days: -1
   backup_days: 30
+security:
+  encryption_enabled: false
+  encryption_key: ""

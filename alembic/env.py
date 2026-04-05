@@ -38,6 +38,21 @@ def run_migrations_offline() -> None:
 
 def run_migrations_online() -> None:
     """Run migrations in 'online' mode."""
+    # Auto-backup before migration
+    from pathlib import Path
+
+    db_url = config.get_main_option("sqlalchemy.url")
+    if db_url and db_url.startswith("sqlite:///"):
+        db_path = Path(db_url.replace("sqlite:///", ""))
+        if db_path.exists():
+            try:
+                from meeting_minutes.backup import backup_database
+
+                backup_file = backup_database(db_path, "backups", prefix="pre_migration")
+                print(f"  Auto-backed up database before migration: {backup_file.name}")
+            except Exception as e:
+                print(f"  Warning: Could not backup database: {e}")
+
     connectable = engine_from_config(
         config.get_section(config.config_ini_section, {}),
         prefix="sqlalchemy.",

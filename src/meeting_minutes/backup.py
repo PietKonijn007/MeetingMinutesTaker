@@ -8,7 +8,7 @@ from datetime import datetime
 from pathlib import Path
 
 
-def backup_database(db_path: str | Path, backup_dir: str | Path = "backups") -> Path:
+def backup_database(db_path: str | Path, backup_dir: str | Path = "backups", prefix: str = "meetings") -> Path:
     """Create a timestamped backup of the SQLite database.
 
     Uses SQLite's backup API for a consistent snapshot even while
@@ -19,7 +19,7 @@ def backup_database(db_path: str | Path, backup_dir: str | Path = "backups") -> 
     backup_dir.mkdir(parents=True, exist_ok=True)
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    backup_file = backup_dir / f"meetings_{timestamp}.db"
+    backup_file = backup_dir / f"{prefix}_{timestamp}.db"
 
     # Use SQLite backup API for consistency
     source = sqlite3.connect(str(db_path))

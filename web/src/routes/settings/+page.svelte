@@ -40,6 +40,11 @@
   let retention_status = $state(null);
   let cleaning_up = $state(false);
 
+  // Security settings
+  let security_encryption_enabled = $state(false);
+  let security_encryption_key = $state('');
+  let generating_key = $state(false);
+
   // Obsidian settings
   let obsidian_enabled = $state(false);
   let obsidian_vault_path = $state('');
@@ -83,6 +88,10 @@
         backup_enabled = bk.enabled !== false;
         backup_dir = bk.backup_dir || 'backups';
         backup_interval = bk.interval_hours || 1;
+
+        const sec = c.security || {};
+        security_encryption_enabled = sec.encryption_enabled === true;
+        security_encryption_key = sec.encryption_key || '';
 
         const ob = c.obsidian || {};
         obsidian_enabled = ob.enabled === true;
@@ -158,6 +167,10 @@
         obsidian: {
           enabled: obsidian_enabled,
           vault_path: obsidian_vault_path
+        },
+        security: {
+          encryption_enabled: security_encryption_enabled,
+          encryption_key: security_encryption_key
         },
         retention: {
           audio_days: retention_audio_days,
@@ -605,6 +618,71 @@
               {cleaning_up ? 'Cleaning up...' : 'Run Cleanup Now'}
             </button>
           </div>
+        </div>
+      </section>
+
+      <!-- Security -->
+      <section>
+        <h2 class="text-lg font-semibold text-[var(--text-primary)] mb-1">Security</h2>
+        <p class="text-sm text-[var(--text-muted)] mb-4">Encrypt transcripts and minutes at rest using Fernet symmetric encryption.</p>
+
+        <div class="space-y-4">
+          <label class="flex items-center gap-3 cursor-pointer">
+            <input
+              type="checkbox"
+              bind:checked={security_encryption_enabled}
+              class="w-4 h-4 rounded border-[var(--border-subtle)] text-[var(--accent)]
+                     focus:ring-[var(--accent)] focus:ring-2"
+            />
+            <div>
+              <span class="text-sm font-medium text-[var(--text-primary)]">Enable encryption at rest</span>
+              <p class="text-xs text-[var(--text-muted)]">Encrypt transcript and minutes files after they are written.</p>
+            </div>
+          </label>
+
+          <div>
+            <label class="block text-sm font-medium text-[var(--text-primary)] mb-1">Encryption Key</label>
+            <div class="flex gap-2">
+              <input
+                type="password"
+                bind:value={security_encryption_key}
+                placeholder="Fernet encryption key"
+                class="flex-1 px-3 py-2 bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg text-sm text-[var(--text-primary)] font-mono
+                       focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
+              />
+              <button
+                onclick={async () => {
+                  generating_key = true;
+                  try {
+                    const result = await api.generateEncryptionKey();
+                    security_encryption_key = result.key;
+                    addToast('Encryption key generated. Save settings to apply.', 'success');
+                  } catch (e) {
+                    addToast(`Key generation failed: ${e.message}`, 'error');
+                  } finally {
+                    generating_key = false;
+                  }
+                }}
+                disabled={generating_key}
+                class="px-4 py-2 bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg text-sm font-medium text-[var(--text-primary)]
+                       hover:bg-[var(--bg-hover)] disabled:opacity-50 transition-colors duration-150 whitespace-nowrap"
+              >
+                {generating_key ? 'Generating...' : 'Generate Key'}
+              </button>
+            </div>
+            <p class="text-xs text-[var(--text-muted)] mt-1">
+              A Fernet symmetric encryption key. Use the Generate button or run: <code>mm generate-key</code>
+            </p>
+          </div>
+
+          {#if security_encryption_enabled}
+            <div class="p-3 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg">
+              <p class="text-sm text-yellow-800 dark:text-yellow-200 font-medium">Warning</p>
+              <p class="text-xs text-yellow-700 dark:text-yellow-300 mt-1">
+                Losing the encryption key means losing access to all encrypted data. Store the key securely and keep a backup.
+              </p>
+            </div>
+          {/if}
         </div>
       </section>
 

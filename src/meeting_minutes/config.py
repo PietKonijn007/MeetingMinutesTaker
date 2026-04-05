@@ -63,6 +63,11 @@ class ObsidianConfig(BaseModel):
     vault_path: str = ""  # e.g., "~/Documents/Obsidian Vault"
 
 
+class SecurityConfig(BaseModel):
+    encryption_enabled: bool = False
+    encryption_key: str = ""  # Fernet key — generate with: mm generate-key
+
+
 class APIConfig(BaseModel):
     host: str = "127.0.0.1"
     port: int = 8080
@@ -94,6 +99,7 @@ class AppConfig(BaseModel):
     obsidian: ObsidianConfig = ObsidianConfig()
     api: APIConfig = APIConfig()
     retention: RetentionConfig = RetentionConfig()
+    security: SecurityConfig = SecurityConfig()
 
 
 class ConfigLoader:

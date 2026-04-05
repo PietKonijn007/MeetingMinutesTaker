@@ -22,8 +22,18 @@ class MinutesIngester:
         if not minutes_path.exists():
             raise FileNotFoundError(f"Minutes file not found: {minutes_path}")
 
-        with open(minutes_path, "r", encoding="utf-8") as f:
-            raw = json.load(f)
+        # Decrypt if the file is encrypted
+        from meeting_minutes.encryption import is_encrypted, decrypt_file_text
+
+        if is_encrypted(minutes_path):
+            from meeting_minutes.config import ConfigLoader
+
+            config = ConfigLoader.load_default()
+            text = decrypt_file_text(minutes_path, config.security.encryption_key)
+            raw = json.loads(text)
+        else:
+            with open(minutes_path, "r", encoding="utf-8") as f:
+                raw = json.load(f)
 
         try:
             minutes_json = MinutesJSON(**raw)
@@ -36,8 +46,15 @@ class MinutesIngester:
         transcript_path = transcript_dir / f"{minutes_json.meeting_id}.json"
         if transcript_path.exists():
             try:
-                with open(transcript_path, "r", encoding="utf-8") as tf:
-                    transcript_json = TranscriptJSON(**json.load(tf))
+                if is_encrypted(transcript_path):
+                    t_text = decrypt_file_text(
+                        transcript_path,
+                        ConfigLoader.load_default().security.encryption_key,
+                    )
+                    transcript_json = TranscriptJSON(**json.loads(t_text))
+                else:
+                    with open(transcript_path, "r", encoding="utf-8") as tf:
+                        transcript_json = TranscriptJSON(**json.load(tf))
             except Exception:
                 pass  # Non-fatal — minutes work without transcript
 

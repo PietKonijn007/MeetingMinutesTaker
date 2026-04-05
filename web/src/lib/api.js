@@ -85,6 +85,9 @@ export const api = {
   createBackup: () => request('/backups', { method: 'POST' }),
   testObsidian: () => request('/backups/obsidian-test', { method: 'POST' }),
 
+  // Security
+  generateEncryptionKey: () => request('/security/generate-key', { method: 'POST' }),
+
   // Retention
   getRetentionStatus: () => request('/retention/status'),
   runRetentionCleanup: () => request('/retention/cleanup', { method: 'POST' }),

@@ -33,6 +33,26 @@ class PipelineOrchestrator:
         self._minutes_dir = self._data_dir / "minutes"
 
     # -----------------------------------------------------------------------
+    # Retry helper
+    # -----------------------------------------------------------------------
+
+    async def _retry_async(self, func, *args, max_retries=2, base_delay=5, step_name=""):
+        """Retry an async function with exponential backoff."""
+        for attempt in range(max_retries + 1):
+            try:
+                return await func(*args)
+            except Exception as exc:
+                if attempt < max_retries:
+                    delay = base_delay * (2 ** attempt)
+                    self._logger.warning("Step '%s' failed (attempt %d/%d): %s — retrying in %ds",
+                                         step_name, attempt + 1, max_retries + 1, exc, delay)
+                    _console(f"  ⚠ {step_name} failed (attempt {attempt + 1}): {exc} — retrying in {delay}s", "yellow")
+                    await asyncio.sleep(delay)
+                else:
+                    self._logger.error("Step '%s' failed after %d attempts: %s", step_name, max_retries + 1, exc)
+                    raise
+
+    # -----------------------------------------------------------------------
     # Public API
     # -----------------------------------------------------------------------
 
@@ -49,15 +69,24 @@ class PipelineOrchestrator:
 
         _console("[1/3] Transcription...", "bold cyan")
         self._logger.info("[1/3] Transcription for %s", meeting_id)
-        transcript_path = await self.run_transcription(meeting_id)
+        transcript_path = await self._retry_async(
+            self.run_transcription, meeting_id,
+            max_retries=2, base_delay=5, step_name="Transcription",
+        )
 
         _console("\n[2/3] Minutes generation...", "bold cyan")
         self._logger.info("[2/3] Minutes generation for %s", meeting_id)
-        minutes_path = await self.run_generation(meeting_id)
+        minutes_path = await self._retry_async(
+            self.run_generation, meeting_id,
+            max_retries=3, base_delay=3, step_name="Generation",
+        )
 
         _console("\n[3/3] Database ingestion...", "bold cyan")
         self._logger.info("[3/3] Database ingestion for %s", meeting_id)
-        await self.run_ingestion(meeting_id)
+        await self._retry_async(
+            self.run_ingestion, meeting_id,
+            max_retries=1, base_delay=2, step_name="Ingestion",
+        )
 
         # Post-processing: backup and Obsidian export
         self._maybe_backup()
@@ -176,6 +205,13 @@ class PipelineOrchestrator:
         )
 
         _console(f"  ✓ Transcript saved: {transcript_path.name}", "green")
+
+        # Encrypt transcript if configured
+        if self._config.security.encryption_enabled and self._config.security.encryption_key:
+            from meeting_minutes.encryption import encrypt_file
+            encrypt_file(transcript_path, self._config.security.encryption_key)
+            _console(f"  🔒 Transcript encrypted", "dim")
+
         return transcript_path
 
     async def run_generation(self, meeting_id: str) -> Path:
@@ -436,6 +472,14 @@ class PipelineOrchestrator:
 
         _console(f"  ✓ Minutes saved: {json_path.name}", "green")
         _console(f"  ✓ Markdown saved: {md_path.name}", "green")
+
+        # Encrypt minutes files if configured
+        if self._config.security.encryption_enabled and self._config.security.encryption_key:
+            from meeting_minutes.encryption import encrypt_file
+            encrypt_file(json_path, self._config.security.encryption_key)
+            encrypt_file(md_path, self._config.security.encryption_key)
+            _console(f"  🔒 Minutes encrypted", "dim")
+
         return json_path
 
     async def run_ingestion(self, meeting_id: str) -> None:

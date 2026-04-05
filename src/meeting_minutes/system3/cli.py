@@ -427,6 +427,17 @@ def init_cmd():
     db_path = Path(config.storage.sqlite_path).expanduser()
     db_path.parent.mkdir(parents=True, exist_ok=True)
 
+    # Auto-backup existing database before initialization
+    if db_path.exists():
+        try:
+            from meeting_minutes.backup import backup_database
+
+            backup_dir = Path(config.backup.backup_dir)
+            backup_file = backup_database(db_path, backup_dir, prefix="pre_init")
+            console.print(f"[dim]Backed up existing database before initialization: {backup_file.name}[/dim]")
+        except Exception as exc:
+            console.print(f"[yellow]Warning: Could not backup database: {exc}[/yellow]")
+
     from meeting_minutes.system3.db import get_session_factory
 
     get_session_factory(f"sqlite:///{db_path}")
@@ -555,6 +566,29 @@ def cleanup_cmd():
         console.print(f"[green]Cleaned up {total} files: {deleted}[/green]")
     else:
         console.print("[dim]No files to clean up.[/dim]")
+
+
+# ---------------------------------------------------------------------------
+# mm generate-key
+# ---------------------------------------------------------------------------
+
+
+@app.command("generate-key")
+def generate_key_cmd():
+    """Generate a new encryption key for at-rest encryption."""
+    try:
+        from cryptography.fernet import Fernet
+    except ImportError:
+        err_console.print("[red]cryptography package not installed. Run: pip install cryptography[/red]")
+        raise typer.Exit(code=1)
+
+    key = Fernet.generate_key().decode()
+    console.print(f"[green]Generated encryption key:[/green]")
+    console.print(f"[bold]{key}[/bold]")
+    console.print(f"\n[dim]Add this to config.yaml:[/dim]")
+    console.print(f"[dim]security:[/dim]")
+    console.print(f"[dim]  encryption_enabled: true[/dim]")
+    console.print(f'[dim]  encryption_key: "{key}"[/dim]')
 
 
 if __name__ == "__main__":
