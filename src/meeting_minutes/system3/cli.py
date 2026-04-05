@@ -803,5 +803,97 @@ def service_logs(
                 console.print(result.stdout)
 
 
+# ---------------------------------------------------------------------------
+# mm upgrade
+# ---------------------------------------------------------------------------
+
+
+@app.command("upgrade")
+def upgrade_cmd(
+    restart: bool = typer.Option(True, "--restart/--no-restart", help="Restart the service after upgrading"),
+):
+    """Pull latest code from GitHub and rebuild everything."""
+    import subprocess
+
+    project_root = _get_project_root()
+
+    # 1. Check for uncommitted changes
+    console.print("[bold][1/5] Checking for local changes...[/bold]")
+    result = subprocess.run(
+        ["git", "status", "--porcelain"],
+        capture_output=True, text=True, cwd=project_root,
+    )
+    if result.stdout.strip():
+        console.print("[yellow]Warning: You have uncommitted local changes.[/yellow]")
+        console.print(result.stdout)
+        if not typer.confirm("Continue anyway? Local changes will be preserved (git pull may fail if there are conflicts)."):
+            raise typer.Exit(code=0)
+
+    # 2. Git pull
+    console.print("[bold][2/5] Pulling latest code...[/bold]")
+    result = subprocess.run(
+        ["git", "pull", "--ff-only"],
+        capture_output=True, text=True, cwd=project_root,
+    )
+    if result.returncode != 0:
+        if "not possible to fast-forward" in result.stderr.lower() or "divergent" in result.stderr.lower():
+            err_console.print("[red]Cannot fast-forward. You have local commits that diverge from upstream.[/red]")
+            err_console.print("[dim]Resolve manually with: git pull --rebase[/dim]")
+        else:
+            err_console.print(f"[red]git pull failed: {result.stderr}[/red]")
+        raise typer.Exit(code=1)
+    console.print(f"  {result.stdout.strip()}")
+
+    # 3. Install Python dependencies
+    console.print("[bold][3/5] Updating Python dependencies...[/bold]")
+    venv_pip = project_root / ".venv" / "bin" / "pip"
+    if not venv_pip.exists():
+        err_console.print("[red]Virtual environment not found. Run install.sh first.[/red]")
+        raise typer.Exit(code=1)
+    result = subprocess.run(
+        [str(venv_pip), "install", "--quiet", "-e", ".[dev]"],
+        capture_output=True, text=True, cwd=project_root,
+    )
+    if result.returncode != 0:
+        err_console.print(f"[red]pip install failed: {result.stderr}[/red]")
+        raise typer.Exit(code=1)
+    console.print("  [green]✓[/green] Python dependencies updated")
+
+    # 4. Rebuild frontend
+    console.print("[bold][4/5] Rebuilding web frontend...[/bold]")
+    web_dir = project_root / "web"
+    npm_path = "npm"
+
+    # Install node_modules if needed
+    if not (web_dir / "node_modules").exists():
+        subprocess.run(
+            [npm_path, "install", "--silent"],
+            capture_output=True, text=True, cwd=web_dir,
+        )
+
+    result = subprocess.run(
+        [npm_path, "run", "build"],
+        capture_output=True, text=True, cwd=web_dir,
+    )
+    if result.returncode != 0:
+        err_console.print(f"[red]Frontend build failed: {result.stderr}[/red]")
+        raise typer.Exit(code=1)
+    console.print("  [green]✓[/green] Frontend rebuilt")
+
+    # 5. Restart service if running
+    console.print("[bold][5/5] Restarting service...[/bold]")
+    if restart and PLIST_PATH.exists():
+        subprocess.run(["launchctl", "unload", str(PLIST_PATH)], capture_output=True)
+        result = subprocess.run(["launchctl", "load", str(PLIST_PATH)], capture_output=True, text=True)
+        if result.returncode == 0 or "already" in result.stderr.lower():
+            console.print("  [green]✓[/green] Service restarted")
+        else:
+            err_console.print(f"  [yellow]Could not restart service: {result.stderr}[/yellow]")
+    else:
+        console.print("  [dim]Skipped (no service installed or --no-restart)[/dim]")
+
+    console.print("\n[green bold]Upgrade complete![/green bold]")
+
+
 if __name__ == "__main__":
     app()
