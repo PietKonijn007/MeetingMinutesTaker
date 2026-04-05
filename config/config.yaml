@@ -17,8 +17,8 @@ diarization:
   engine: pyannote
 generation:
   llm:
-    primary_provider: openrouter
-    model: mistralai/mistral-medium-3
+    primary_provider: anthropic
+    model: claude-sonnet-4-6-20250514
     fallback_provider: null
     fallback_model: null
     temperature: 0.2

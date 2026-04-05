@@ -184,6 +184,32 @@ class ActionVelocityWeek(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Talk-Time Analytics
+# ---------------------------------------------------------------------------
+
+
+class MonologueResponse(BaseModel):
+    start: float
+    end: float
+    duration_seconds: float
+
+
+class SpeakerAnalyticsResponse(BaseModel):
+    speaker: str
+    talk_time_seconds: float
+    talk_time_percentage: float
+    segment_count: int
+    question_count: int
+    monologues: list[MonologueResponse] = []
+
+
+class TalkTimeAnalyticsResponse(BaseModel):
+    total_duration_seconds: float
+    speakers: list[SpeakerAnalyticsResponse]
+    has_diarization: bool
+
+
+# ---------------------------------------------------------------------------
 # Recording
 # ---------------------------------------------------------------------------
 

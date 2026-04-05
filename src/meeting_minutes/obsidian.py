@@ -42,7 +42,7 @@ def export_to_obsidian(
     year_month = date_obj.strftime("%Y-%m")
     date_str = date_obj.strftime("%Y-%m-%d")
 
-    folder = vault_path / "Meeting Minutes" / year / year_month
+    folder = vault_path / year / year_month
     folder.mkdir(parents=True, exist_ok=True)
 
     # Clean title for filename

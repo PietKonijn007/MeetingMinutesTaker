@@ -23,6 +23,7 @@ from meeting_minutes.api.schemas import (
     MinutesResponse,
     PaginatedResponse,
     PersonResponse,
+    TalkTimeAnalyticsResponse,
     TranscriptResponse,
 )
 from meeting_minutes.config import AppConfig
@@ -297,6 +298,43 @@ def get_transcript(
         full_text=m.transcript.full_text,
         language=m.transcript.language,
         audio_file_path=m.transcript.audio_file_path,
+    )
+
+
+@router.get("/{meeting_id}/analytics", response_model=TalkTimeAnalyticsResponse)
+def get_meeting_analytics(
+    meeting_id: str,
+    config: Annotated[AppConfig, Depends(get_config)],
+    storage: Annotated[StorageEngine, Depends(get_storage)],
+):
+    """Get talk-time analytics for a meeting."""
+    from meeting_minutes.analytics import compute_talk_time_analytics
+
+    m = storage.get_meeting(meeting_id)
+    if m is None:
+        raise HTTPException(status_code=404, detail=f"No meeting with ID {meeting_id}")
+
+    data_dir = Path(config.data_dir).expanduser()
+    transcript_path = data_dir / "transcripts" / f"{meeting_id}.json"
+
+    analytics = compute_talk_time_analytics(transcript_path)
+    if analytics is None:
+        raise HTTPException(status_code=404, detail="No transcript data available for analytics")
+
+    return TalkTimeAnalyticsResponse(
+        total_duration_seconds=analytics.total_duration_seconds,
+        speakers=[
+            {
+                "speaker": sa.speaker,
+                "talk_time_seconds": sa.talk_time_seconds,
+                "talk_time_percentage": sa.talk_time_percentage,
+                "segment_count": sa.segment_count,
+                "question_count": sa.question_count,
+                "monologues": sa.monologues,
+            }
+            for sa in analytics.speakers
+        ],
+        has_diarization=analytics.has_diarization,
     )
 
 

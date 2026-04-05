@@ -65,14 +65,14 @@
 
     // Meetings over time (area chart)
     if (meetingsCanvas && meetingsOverTime) {
-      const data = meetingsOverTime.items || meetingsOverTime || [];
+      const data = meetingsOverTime.series || [];
       meetingsChart = new Chart(meetingsCanvas, {
         type: 'line',
         data: {
-          labels: data.map((d) => d.label || d.week),
+          labels: data.map((d) => d.week),
           datasets: [{
             label: 'Meetings',
-            data: data.map((d) => d.count || d.value),
+            data: data.map((d) => d.count),
             borderColor: colors.accent,
             backgroundColor: colors.accentBg,
             fill: true,
@@ -95,7 +95,7 @@
 
     // By type (donut)
     if (typeCanvas && byType) {
-      const data = byType.items || byType || [];
+      const data = byType.distribution || [];
       const typeColors = {
         standup: '#22C55E', one_on_one: '#0EA5E9', customer_meeting: '#A855F7',
         decision_meeting: '#F59E0B', brainstorm: '#EC4899', retrospective: '#F97316',
@@ -104,10 +104,10 @@
       typeChart = new Chart(typeCanvas, {
         type: 'doughnut',
         data: {
-          labels: data.map((d) => d.type || d.label),
+          labels: data.map((d) => d.meeting_type),
           datasets: [{
-            data: data.map((d) => d.count || d.value),
-            backgroundColor: data.map((d) => typeColors[d.type || d.label] || '#6B7280'),
+            data: data.map((d) => d.count),
+            backgroundColor: data.map((d) => typeColors[d.meeting_type] || '#6B7280'),
             borderWidth: 0
           }]
         },
@@ -124,11 +124,11 @@
 
     // Action velocity (line)
     if (velocityCanvas && actionVelocity) {
-      const data = actionVelocity.items || actionVelocity || [];
+      const data = actionVelocity.series || [];
       velocityChart = new Chart(velocityCanvas, {
         type: 'line',
         data: {
-          labels: data.map((d) => d.label || d.week),
+          labels: data.map((d) => d.week),
           datasets: [
             {
               label: 'Created',
@@ -193,7 +193,7 @@
         <div class="text-xs text-[var(--text-muted)] mt-1">Total Meetings</div>
       </div>
       <div class="bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg p-5 text-center">
-        <div class="text-3xl font-bold text-[var(--text-primary)]">{stats?.this_week ?? 0}</div>
+        <div class="text-3xl font-bold text-[var(--text-primary)]">{stats?.meetings_this_week ?? 0}</div>
         <div class="text-xs text-[var(--text-muted)] mt-1">This Week</div>
       </div>
       <div class="bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg p-5 text-center">
@@ -201,7 +201,7 @@
         <div class="text-xs text-[var(--text-muted)] mt-1">Open Actions</div>
       </div>
       <div class="bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg p-5 text-center">
-        <div class="text-3xl font-bold text-[var(--text-primary)]">{stats?.avg_duration ?? 0} min</div>
+        <div class="text-3xl font-bold text-[var(--text-primary)]">{stats?.avg_duration_minutes ?? 0} min</div>
         <div class="text-xs text-[var(--text-muted)] mt-1">Avg Duration</div>
       </div>
     </div>

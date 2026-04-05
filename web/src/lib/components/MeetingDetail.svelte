@@ -17,6 +17,7 @@
 
   let meeting = $state(null);
   let transcript = $state(null);
+  let analytics = $state(null);
   let loading = $state(true);
   let activeTab = $state('minutes');
   let showDeleteModal = $state(false);
@@ -29,7 +30,8 @@
     { key: 'minutes', label: 'Minutes' },
     { key: 'transcript', label: 'Transcript' },
     { key: 'actions', label: `Actions${meeting?.actions?.length ? ` (${meeting.actions.length})` : ''}` },
-    { key: 'decisions', label: `Decisions${meeting?.decisions?.length ? ` (${meeting.decisions.length})` : ''}` }
+    { key: 'decisions', label: `Decisions${meeting?.decisions?.length ? ` (${meeting.decisions.length})` : ''}` },
+    { key: 'analytics', label: 'Analytics' }
   ]);
 
   function formatDate(dateStr) {
@@ -100,6 +102,14 @@
     }
   }
 
+  async function loadAnalytics(id) {
+    try {
+      analytics = await api.getAnalytics(id);
+    } catch (e) {
+      analytics = null;
+    }
+  }
+
   async function handleRegenerate() {
     regenerating = true;
     try {
@@ -158,6 +168,7 @@
     if (id) {
       loadMeeting(id);
       loadTranscript(id);
+      loadAnalytics(id);
     }
   });
 </script>
@@ -319,6 +330,98 @@
           </div>
         {:else}
           <p class="text-sm text-[var(--text-muted)] italic">No decisions from this meeting.</p>
+        {/if}
+
+      {:else if activeTab === 'analytics'}
+        {#if analytics}
+          <!-- Talk-Time Distribution -->
+          <div class="bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg p-5 mb-4">
+            <h3 class="text-sm font-semibold text-[var(--text-primary)] mb-4">Talk-Time Distribution</h3>
+            {#if !analytics.has_diarization}
+              <p class="text-xs text-[var(--text-muted)] mb-3">Speaker diarization was not available for this meeting. All talk time is attributed to a single speaker.</p>
+            {/if}
+            <div class="space-y-3">
+              {#each analytics.speakers as speaker}
+                {@const barColors = ['#6366F1', '#0EA5E9', '#22C55E', '#F59E0B', '#EC4899', '#F97316', '#14B8A6', '#A855F7']}
+                {@const colorIndex = analytics.speakers.indexOf(speaker) % barColors.length}
+                <div>
+                  <div class="flex items-center justify-between mb-1">
+                    <span class="text-sm font-medium text-[var(--text-primary)]">{speaker.speaker}</span>
+                    <span class="text-xs text-[var(--text-muted)]">
+                      {speaker.talk_time_percentage}% &middot; {Math.round(speaker.talk_time_seconds)}s &middot; {speaker.segment_count} segments
+                    </span>
+                  </div>
+                  <div class="w-full h-3 bg-[var(--bg-surface-hover)] rounded-full overflow-hidden">
+                    <div
+                      class="h-full rounded-full transition-all duration-500"
+                      style="width: {speaker.talk_time_percentage}%; background-color: {barColors[colorIndex]}"
+                    ></div>
+                  </div>
+                </div>
+              {/each}
+            </div>
+          </div>
+
+          <!-- Question Frequency -->
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+            <div class="bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg p-5">
+              <h3 class="text-sm font-semibold text-[var(--text-primary)] mb-3">Questions Asked</h3>
+              <div class="space-y-2">
+                {#each analytics.speakers.filter(s => s.question_count > 0) as speaker}
+                  <div class="flex items-center justify-between">
+                    <span class="text-sm text-[var(--text-secondary)]">{speaker.speaker}</span>
+                    <span class="inline-flex items-center px-2 py-0.5 bg-[var(--bg-surface-hover)] rounded-full text-xs font-medium text-[var(--text-primary)]">
+                      {speaker.question_count} question{speaker.question_count !== 1 ? 's' : ''}
+                    </span>
+                  </div>
+                {/each}
+                {#if analytics.speakers.every(s => s.question_count === 0)}
+                  <p class="text-sm text-[var(--text-muted)] italic">No questions detected.</p>
+                {/if}
+              </div>
+            </div>
+
+            <!-- Monologues -->
+            <div class="bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg p-5">
+              <h3 class="text-sm font-semibold text-[var(--text-primary)] mb-3">Monologues (&gt;3 min)</h3>
+              <div class="space-y-2">
+                {#each analytics.speakers.filter(s => s.monologues.length > 0) as speaker}
+                  {#each speaker.monologues as mono}
+                    <div class="flex items-center justify-between">
+                      <span class="text-sm text-[var(--text-secondary)]">{speaker.speaker}</span>
+                      <span class="text-xs text-[var(--text-muted)]">
+                        {Math.round(mono.duration_seconds / 60)}m {Math.round(mono.duration_seconds % 60)}s
+                        at {Math.floor(mono.start / 60)}:{Math.floor(mono.start % 60).toString().padStart(2, '0')}
+                      </span>
+                    </div>
+                  {/each}
+                {/each}
+                {#if analytics.speakers.every(s => s.monologues.length === 0)}
+                  <p class="text-sm text-[var(--text-muted)] italic">No monologues detected.</p>
+                {/if}
+              </div>
+            </div>
+          </div>
+
+          <!-- Summary stats -->
+          <div class="bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg p-5">
+            <div class="grid grid-cols-3 gap-4 text-center">
+              <div>
+                <div class="text-2xl font-bold text-[var(--text-primary)]">{Math.round(analytics.total_duration_seconds / 60)}</div>
+                <div class="text-xs text-[var(--text-muted)]">Minutes</div>
+              </div>
+              <div>
+                <div class="text-2xl font-bold text-[var(--text-primary)]">{analytics.speakers.length}</div>
+                <div class="text-xs text-[var(--text-muted)]">Speakers</div>
+              </div>
+              <div>
+                <div class="text-2xl font-bold text-[var(--text-primary)]">{analytics.speakers.reduce((sum, s) => sum + s.question_count, 0)}</div>
+                <div class="text-xs text-[var(--text-muted)]">Questions</div>
+              </div>
+            </div>
+          </div>
+        {:else}
+          <p class="text-sm text-[var(--text-muted)] italic">No analytics available for this meeting.</p>
         {/if}
       {/if}
     </div>
