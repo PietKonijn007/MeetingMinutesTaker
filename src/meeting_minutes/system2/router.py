@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
-import sys
 from pathlib import Path
 
 from meeting_minutes.config import GenerationConfig
 from meeting_minutes.models import MeetingType, PromptTemplate
+
+logger = logging.getLogger(__name__)
 
 
 KNOWN_TYPES = {e.value for e in MeetingType}
@@ -193,7 +195,7 @@ Transcript excerpt (first ~10 minutes):
 
             api_key = os.environ.get("ANTHROPIC_API_KEY")
             if not api_key:
-                print("  [classify] No ANTHROPIC_API_KEY, falling back to keyword classification", file=sys.stderr)
+                logger.info("No ANTHROPIC_API_KEY, falling back to keyword classification")
                 return self.classify_meeting_type(transcript_excerpt, {})
 
             client = anthropic.AsyncAnthropic(api_key=api_key)
@@ -222,15 +224,15 @@ Transcript excerpt (first ~10 minutes):
                         meeting_type = "other"
                         confidence = max(confidence - 0.3, 0.1)
 
-                    print(f"  [classify] LLM: {meeting_type} (confidence={confidence:.2f}) — {reasoning}", file=sys.stderr)
+                    logger.info("LLM classify: %s (confidence=%.2f) — %s", meeting_type, confidence, reasoning)
                     return meeting_type, confidence, reasoning
 
             # No tool_use block — shouldn't happen with tool_choice forced
-            print("  [classify] LLM did not return tool_use block, falling back", file=sys.stderr)
+            logger.warning("LLM did not return tool_use block, falling back to keyword classification")
             return self.classify_meeting_type(transcript_excerpt, {})
 
         except Exception as e:
-            print(f"  [classify] LLM classification failed: {e}, falling back to keywords", file=sys.stderr)
+            logger.warning("LLM classification failed: %s, falling back to keywords", e)
             mt, conf = self.classify_meeting_type(transcript_excerpt, {})
             return mt, conf, "keyword fallback"
 

@@ -42,24 +42,33 @@ class PipelineOrchestrator:
             meeting_id = str(uuid.uuid4())
 
         pipeline_start = time.time()
+        self._logger.info("Pipeline start — meeting %s", meeting_id)
         _console(f"\n{'='*60}", "bold")
         _console(f"  PIPELINE START — Meeting {meeting_id[:12]}...", "bold green")
         _console(f"{'='*60}\n")
 
         _console("[1/3] Transcription...", "bold cyan")
+        self._logger.info("[1/3] Transcription for %s", meeting_id)
         transcript_path = await self.run_transcription(meeting_id)
 
         _console("\n[2/3] Minutes generation...", "bold cyan")
+        self._logger.info("[2/3] Minutes generation for %s", meeting_id)
         minutes_path = await self.run_generation(meeting_id)
 
         _console("\n[3/3] Database ingestion...", "bold cyan")
+        self._logger.info("[3/3] Database ingestion for %s", meeting_id)
         await self.run_ingestion(meeting_id)
 
         # Post-processing: backup and Obsidian export
         self._maybe_backup()
         self._export_to_obsidian_from_file(meeting_id)
 
+        # Retention cleanup
+        from meeting_minutes.retention import enforce_retention
+        enforce_retention(self._config)
+
         elapsed = time.time() - pipeline_start
+        self._logger.info("Pipeline complete — %s — %.1fs total", meeting_id, elapsed)
         _console(f"\n{'='*60}", "bold")
         _console(f"  PIPELINE COMPLETE — {elapsed:.1f}s total", "bold green")
         _console(f"  Meeting ID: {meeting_id}", "dim")
@@ -115,6 +124,7 @@ class PipelineOrchestrator:
         num_segments = len(result.segments)
         duration = result.segments[-1].end if result.segments else 0.0
         total_words = sum(len(s.text.split()) for s in result.segments)
+        self._logger.info("Transcription done in %.1fs — segments=%d words=%d duration=%.0fs", t_transcribe, num_segments, total_words, duration)
         _console(f"  ✓ Transcription done in {t_transcribe:.1f}s", "green")
         _console(f"    Segments: {num_segments} | Words: {total_words} | Audio duration: {duration:.0f}s")
         _console(f"    Language detected: {result.language}")
@@ -137,6 +147,7 @@ class PipelineOrchestrator:
                 n_speakers = len(set(s.speaker for s in diarization_result.segments))
                 _console(f"  ✓ Diarization done in {t_diarize:.1f}s — {n_speakers} speaker(s) detected", "green")
             except Exception as exc:
+                self._logger.warning("Diarization failed: %s — continuing without", exc)
                 _console(f"  ⚠ Diarization failed: {exc} — continuing without", "yellow")
         else:
             _console(f"  Diarization: disabled", "dim")
@@ -262,6 +273,9 @@ class PipelineOrchestrator:
             llm_response = await llm_client.generate_structured(user_prompt, system_prompt)
             t_llm = time.time() - t0
 
+            self._logger.info("LLM structured response in %.1fs — provider=%s model=%s tokens_in=%d tokens_out=%d cost=$%.4f",
+                              t_llm, llm_response.provider, llm_response.model,
+                              llm_response.input_tokens, llm_response.output_tokens, llm_response.cost_usd)
             _console(f"  ✓ LLM response received in {t_llm:.1f}s", "green")
             _console(f"    Provider: {llm_response.provider} | Model: {llm_response.model}")
             _console(f"    Tokens: {llm_response.input_tokens:,} in + {llm_response.output_tokens:,} out")
@@ -290,6 +304,7 @@ class PipelineOrchestrator:
             _console(f"    Parking lot: {len(parsed_minutes.parking_lot)}")
 
         except Exception as structured_exc:
+            self._logger.warning("Structured generation failed: %s — falling back to text+regex", structured_exc)
             _console(f"  ⚠ Structured generation failed: {structured_exc}", "yellow")
             _console(f"  Falling back to text+regex path...", "yellow")
 
@@ -397,6 +412,7 @@ class PipelineOrchestrator:
         ingester.ingest(minutes_path)
         t_ingest = time.time() - t0
 
+        self._logger.info("Ingested into database in %.1fs — db=%s", t_ingest, db_path)
         _console(f"  ✓ Ingested into database in {t_ingest:.1f}s", "green")
         _console(f"    DB: {db_path}")
         _console(f"    Full-text search index updated")

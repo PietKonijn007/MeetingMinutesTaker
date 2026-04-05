@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from pathlib import Path
 
 from meeting_minutes.config import DiarizationConfig
 from meeting_minutes.models import DiarizationResult, DiarizationSegment
+
+logger = logging.getLogger(__name__)
 
 
 class DiarizationEngine:
@@ -67,6 +70,7 @@ class DiarizationEngine:
             # Graceful failure — return empty result
             import warnings
 
+            logger.warning("Diarization failed, continuing without speaker labels: %s", exc)
             warnings.warn(
                 f"Diarization failed, continuing without speaker labels: {exc}"
             )

@@ -34,17 +34,11 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# ── CORS ──────────────────────────────────────────────────────────────────
+# ── CORS (origins from config) ────────────────────────────────────────────
+_boot_config = ConfigLoader.load_default()
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://localhost:5173",
-        "http://localhost:8080",
-        "http://127.0.0.1:3000",
-        "http://127.0.0.1:5173",
-        "http://127.0.0.1:8080",
-    ],
+    allow_origins=_boot_config.api.cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -62,6 +56,7 @@ from meeting_minutes.api.routes.stats import router as stats_router  # noqa: E40
 from meeting_minutes.api.routes.templates import router as templates_router  # noqa: E402
 from meeting_minutes.api.routes.upload import router as upload_router  # noqa: E402
 from meeting_minutes.api.routes.backup import router as backup_router  # noqa: E402
+from meeting_minutes.api.routes.retention import router as retention_router  # noqa: E402
 from meeting_minutes.api.ws import router as ws_router  # noqa: E402
 
 app.include_router(meetings_router)
@@ -75,6 +70,7 @@ app.include_router(config_router)
 app.include_router(templates_router)
 app.include_router(upload_router)
 app.include_router(backup_router)
+app.include_router(retention_router)
 app.include_router(ws_router)
 
 # ── Static files (Svelte SPA) ────────────────────────────────────────────

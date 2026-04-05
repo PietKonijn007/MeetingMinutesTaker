@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import threading
 import time
 from pathlib import Path
@@ -20,6 +21,8 @@ from meeting_minutes.api.schemas import (
     RecordingStatusResponse,
 )
 from meeting_minutes.config import AppConfig
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["recording"])
 
@@ -55,8 +58,6 @@ def start_recording(
     body: RecordingStartRequest = RecordingStartRequest(),
 ):
     """Start recording audio. Optionally override audio device and language."""
-    import traceback as tb
-
     try:
         # Only check if we're currently recording — don't care about pipeline jobs
         if _current_recording["state"] == "recording":
@@ -77,7 +78,7 @@ def start_recording(
         recordings_dir = data_dir / "recordings"
         recordings_dir.mkdir(parents=True, exist_ok=True)
 
-        print(f"\n  Starting recording — device: {rec_config.audio_device}")
+        logger.info("Starting recording — device: %s", rec_config.audio_device)
 
         engine = AudioCaptureEngine(rec_config, output_dir=recordings_dir)
         meeting_id = engine.start()
@@ -92,17 +93,13 @@ def start_recording(
         state_file = Path("/tmp/mm_recording_state.json")
         state_file.write_text(json.dumps({"meeting_id": meeting_id}))
 
-        print(f"  Recording started — meeting: {meeting_id}")
+        logger.info("Recording started — meeting: %s", meeting_id)
         return RecordingStartResponse(meeting_id=meeting_id, status="recording")
 
     except HTTPException:
         raise
     except Exception as exc:
-        print(f"\n{'='*60}")
-        print(f"  RECORDING START ERROR")
-        print(f"  {type(exc).__name__}: {exc}")
-        print(f"{'='*60}")
-        tb.print_exc()
+        logger.error("Recording start error: %s: %s", type(exc).__name__, exc, exc_info=True)
         raise HTTPException(status_code=500, detail=str(exc))
 
 
@@ -217,12 +214,7 @@ async def _run_pipeline(meeting_id: str, config: AppConfig):
     except Exception as exc:
         job["step"] = "error"
         job["error"] = str(exc)
-        import traceback
-        print(f"\n{'='*60}")
-        print(f"  PIPELINE ERROR for meeting {meeting_id}")
-        print(f"  {type(exc).__name__}: {exc}")
-        print(f"{'='*60}")
-        traceback.print_exc()
+        logger.error("Pipeline error for meeting %s: %s: %s", meeting_id, type(exc).__name__, exc, exc_info=True)
 
     # Clean up after 60 seconds so UI can see completion
     try:
@@ -360,6 +352,7 @@ def list_audio_devices():
                 )
             )
         return result
-    except Exception:
+    except Exception as exc:
         # sounddevice may not be available in all environments
+        logger.warning("Failed to list audio devices: %s", exc)
         return []

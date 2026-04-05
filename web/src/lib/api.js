@@ -85,6 +85,10 @@ export const api = {
   createBackup: () => request('/backups', { method: 'POST' }),
   testObsidian: () => request('/backups/obsidian-test', { method: 'POST' }),
 
+  // Retention
+  getRetentionStatus: () => request('/retention/status'),
+  runRetentionCleanup: () => request('/retention/cleanup', { method: 'POST' }),
+
   // Templates
   getTemplates: () => request('/templates'),
   getTemplate: (type) => request(`/templates/${type}`),

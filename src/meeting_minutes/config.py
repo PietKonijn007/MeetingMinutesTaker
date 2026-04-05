@@ -63,6 +63,24 @@ class ObsidianConfig(BaseModel):
     vault_path: str = ""  # e.g., "~/Documents/Obsidian Vault"
 
 
+class APIConfig(BaseModel):
+    host: str = "127.0.0.1"
+    port: int = 8080
+    cors_origins: list[str] = [
+        "http://localhost:8080",
+        "http://127.0.0.1:8080",
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ]
+
+
+class RetentionConfig(BaseModel):
+    audio_days: int = 90          # -1 = keep forever
+    transcript_days: int = -1     # -1 = keep forever
+    minutes_days: int = -1        # -1 = keep forever
+    backup_days: int = 30         # -1 = keep forever
+
+
 class AppConfig(BaseModel):
     data_dir: str = "~/MeetingMinutesTaker/data"
     log_level: str = "INFO"
@@ -74,6 +92,8 @@ class AppConfig(BaseModel):
     storage: StorageConfig = StorageConfig()
     backup: BackupConfig = BackupConfig()
     obsidian: ObsidianConfig = ObsidianConfig()
+    api: APIConfig = APIConfig()
+    retention: RetentionConfig = RetentionConfig()
 
 
 class ConfigLoader:

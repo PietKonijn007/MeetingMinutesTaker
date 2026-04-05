@@ -32,6 +32,14 @@
   let backups = $state([]);
   let backing_up = $state(false);
 
+  // Retention settings
+  let retention_audio_days = $state(90);
+  let retention_transcript_days = $state(-1);
+  let retention_minutes_days = $state(-1);
+  let retention_backup_days = $state(30);
+  let retention_status = $state(null);
+  let cleaning_up = $state(false);
+
   // Obsidian settings
   let obsidian_enabled = $state(false);
   let obsidian_vault_path = $state('');
@@ -79,6 +87,12 @@
         const ob = c.obsidian || {};
         obsidian_enabled = ob.enabled === true;
         obsidian_vault_path = ob.vault_path || '';
+
+        const ret = c.retention || {};
+        retention_audio_days = ret.audio_days ?? 90;
+        retention_transcript_days = ret.transcript_days ?? -1;
+        retention_minutes_days = ret.minutes_days ?? -1;
+        retention_backup_days = ret.backup_days ?? 30;
       }
 
       // Load backup list
@@ -86,6 +100,13 @@
         backups = await api.getBackups();
       } catch (_) {
         backups = [];
+      }
+
+      // Load retention status
+      try {
+        retention_status = await api.getRetentionStatus();
+      } catch (_) {
+        retention_status = null;
       }
 
       if (devices.status === 'fulfilled') {
@@ -137,6 +158,12 @@
         obsidian: {
           enabled: obsidian_enabled,
           vault_path: obsidian_vault_path
+        },
+        retention: {
+          audio_days: retention_audio_days,
+          transcript_days: retention_transcript_days,
+          minutes_days: retention_minutes_days,
+          backup_days: retention_backup_days
         }
       });
       addToast('Settings saved', 'success');
@@ -461,6 +488,113 @@
               {/if}
             </div>
           {/if}
+        </div>
+      </section>
+
+      <!-- Data Retention -->
+      <section>
+        <h2 class="text-lg font-semibold text-[var(--text-primary)] mb-1">Data Retention</h2>
+        <p class="text-sm text-[var(--text-muted)] mb-4">Automatically delete old files. Set to -1 to keep forever.</p>
+
+        <div class="space-y-4">
+          <div>
+            <label class="block text-sm font-medium text-[var(--text-primary)] mb-1">
+              Audio recordings: {retention_audio_days === -1 ? 'Keep forever' : `${retention_audio_days} days`}
+            </label>
+            <input
+              type="range"
+              bind:value={retention_audio_days}
+              min="-1" max="365" step="1"
+              class="w-full accent-[var(--accent)]"
+            />
+            {#if retention_status?.audio}
+              <p class="text-xs text-[var(--text-muted)] mt-1">
+                {retention_status.audio.count} file{retention_status.audio.count !== 1 ? 's' : ''}
+                {retention_status.audio.oldest_days != null ? ` (oldest: ${retention_status.audio.oldest_days} days)` : ''}
+              </p>
+            {/if}
+          </div>
+
+          <div>
+            <label class="block text-sm font-medium text-[var(--text-primary)] mb-1">
+              Transcripts: {retention_transcript_days === -1 ? 'Keep forever' : `${retention_transcript_days} days`}
+            </label>
+            <input
+              type="range"
+              bind:value={retention_transcript_days}
+              min="-1" max="365" step="1"
+              class="w-full accent-[var(--accent)]"
+            />
+            {#if retention_status?.transcripts}
+              <p class="text-xs text-[var(--text-muted)] mt-1">
+                {retention_status.transcripts.count} file{retention_status.transcripts.count !== 1 ? 's' : ''}
+                {retention_status.transcripts.oldest_days != null ? ` (oldest: ${retention_status.transcripts.oldest_days} days)` : ''}
+              </p>
+            {/if}
+          </div>
+
+          <div>
+            <label class="block text-sm font-medium text-[var(--text-primary)] mb-1">
+              Minutes: {retention_minutes_days === -1 ? 'Keep forever' : `${retention_minutes_days} days`}
+            </label>
+            <input
+              type="range"
+              bind:value={retention_minutes_days}
+              min="-1" max="365" step="1"
+              class="w-full accent-[var(--accent)]"
+            />
+            {#if retention_status?.minutes}
+              <p class="text-xs text-[var(--text-muted)] mt-1">
+                {retention_status.minutes.count} file{retention_status.minutes.count !== 1 ? 's' : ''}
+                {retention_status.minutes.oldest_days != null ? ` (oldest: ${retention_status.minutes.oldest_days} days)` : ''}
+              </p>
+            {/if}
+          </div>
+
+          <div>
+            <label class="block text-sm font-medium text-[var(--text-primary)] mb-1">
+              Backups: {retention_backup_days === -1 ? 'Keep forever' : `${retention_backup_days} days`}
+            </label>
+            <input
+              type="range"
+              bind:value={retention_backup_days}
+              min="-1" max="365" step="1"
+              class="w-full accent-[var(--accent)]"
+            />
+            {#if retention_status?.backups}
+              <p class="text-xs text-[var(--text-muted)] mt-1">
+                {retention_status.backups.count} file{retention_status.backups.count !== 1 ? 's' : ''}
+                {retention_status.backups.oldest_days != null ? ` (oldest: ${retention_status.backups.oldest_days} days)` : ''}
+              </p>
+            {/if}
+          </div>
+
+          <div class="flex items-center gap-3">
+            <button
+              onclick={async () => {
+                cleaning_up = true;
+                try {
+                  await saveConfig();
+                  const result = await api.runRetentionCleanup();
+                  if (result.total > 0) {
+                    addToast(`Cleaned up ${result.total} files`, 'success');
+                  } else {
+                    addToast('No files to clean up', 'info');
+                  }
+                  retention_status = await api.getRetentionStatus();
+                } catch (e) {
+                  addToast(`Cleanup failed: ${e.message}`, 'error');
+                } finally {
+                  cleaning_up = false;
+                }
+              }}
+              disabled={cleaning_up}
+              class="px-4 py-2 bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg text-sm font-medium text-[var(--text-primary)]
+                     hover:bg-[var(--bg-hover)] disabled:opacity-50 transition-colors duration-150"
+            >
+              {cleaning_up ? 'Cleaning up...' : 'Run Cleanup Now'}
+            </button>
+          </div>
         </div>
       </section>
 

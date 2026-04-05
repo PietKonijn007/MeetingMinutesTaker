@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import time
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["websocket"])
 
@@ -66,11 +69,12 @@ async def ws_recording(websocket: WebSocket):
             await asyncio.sleep(0.2 if state == "recording" else 1.0)
     except WebSocketDisconnect:
         pass
-    except Exception:
+    except Exception as exc:
+        logger.warning("WebSocket /ws/recording error: %s", exc)
         try:
             await websocket.close()
-        except Exception:
-            pass
+        except Exception as close_exc:
+            logger.warning("Failed to close WebSocket /ws/recording: %s", close_exc)
 
 
 @router.websocket("/ws/pipeline/{meeting_id}")
@@ -105,8 +109,9 @@ async def ws_pipeline(websocket: WebSocket, meeting_id: str):
             await asyncio.sleep(2.0)
     except WebSocketDisconnect:
         pass
-    except Exception:
+    except Exception as exc:
+        logger.warning("WebSocket /ws/pipeline/%s error: %s", meeting_id, exc)
         try:
             await websocket.close()
-        except Exception:
-            pass
+        except Exception as close_exc:
+            logger.warning("Failed to close WebSocket /ws/pipeline/%s: %s", meeting_id, close_exc)

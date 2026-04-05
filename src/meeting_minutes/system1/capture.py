@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import threading
 import uuid
 from collections import deque
@@ -11,6 +12,8 @@ from typing import Callable
 
 from meeting_minutes.config import RecordingConfig
 from meeting_minutes.models import AudioRecordingResult
+
+logger = logging.getLogger(__name__)
 
 
 class CircularAudioBuffer:
@@ -72,8 +75,6 @@ def auto_select_capture_device() -> str | None:
 
     Returns the device name, or None if no suitable device found.
     """
-    import sys
-
     try:
         import sounddevice as sd
 
@@ -128,19 +129,20 @@ def auto_select_capture_device() -> str | None:
         if candidates:
             best_score, best_name, best_idx = candidates[0]
             if best_score > 0:
-                print(f"  [audio] Auto-selected: {best_name} (score={best_score})", file=sys.stderr)
+                logger.info("Audio auto-selected: %s (score=%d)", best_name, best_score)
                 return best_name
 
         # Fallback: system default
         try:
             default_info = sd.query_devices(None, kind="input")
-            print(f"  [audio] Auto-selected default: {default_info['name']}", file=sys.stderr)
+            logger.info("Audio auto-selected default: %s", default_info['name'])
             return default_info["name"]
-        except Exception:
+        except Exception as exc:
+            logger.warning("Failed to query default audio device: %s", exc)
             return None
 
     except Exception as e:
-        print(f"  [audio] Auto-detect failed: {e}", file=sys.stderr)
+        logger.warning("Audio auto-detect failed: %s", e)
         return None
 
 
@@ -193,8 +195,7 @@ class AudioCaptureEngine:
 
         def _callback(indata, frames, time, status):
             if status:
-                import sys
-                print(f"  [audio] {status}", file=sys.stderr)
+                logger.warning("Audio stream status: %s", status)
             if self._recording:
                 data = indata.copy()
                 buf = self._buffer
@@ -213,7 +214,6 @@ class AudioCaptureEngine:
         else:
             try:
                 import sounddevice as sd  # lazy import
-                import sys
 
                 if self._config.audio_device == "auto":
                     # Auto-detect the best capture device
@@ -230,7 +230,7 @@ class AudioCaptureEngine:
                     use_rate = native_rate
                     use_channels = max_channels if max_channels > 0 else 1
                     self._actual_sample_rate = use_rate
-                    print(f"  [audio] Device: {device_info['name']}, rate: {native_rate}Hz, channels: {use_channels}", file=sys.stderr)
+                    logger.info("Audio device: %s, rate: %dHz, channels: %d", device_info['name'], native_rate, use_channels)
                 except Exception:
                     use_rate = self._config.sample_rate
                     use_channels = 1
@@ -258,13 +258,13 @@ class AudioCaptureEngine:
                     # Fallback: try default device if specified device fails
                     exc_str = str(stream_exc)
                     if device is not None and ("Invalid" in exc_str or "!obj" in exc_str or "PortAudio" in exc_str):
-                        print(f"  [audio] Device error: {stream_exc}. Trying default device...", file=sys.stderr)
+                        logger.warning("Audio device error: %s. Trying default device...", stream_exc)
                         try:
                             default_info = sd.query_devices(None, kind="input")
                             use_rate = int(default_info["default_samplerate"])
                             use_channels = int(default_info["max_input_channels"])
                             self._actual_sample_rate = use_rate
-                            print(f"  [audio] Fallback: {default_info['name']}, rate: {use_rate}Hz, channels: {use_channels}", file=sys.stderr)
+                            logger.info("Audio fallback: %s, rate: %dHz, channels: %d", default_info['name'], use_rate, use_channels)
                         except Exception:
                             use_rate = self._config.sample_rate
                             use_channels = 1
@@ -314,7 +314,6 @@ class AudioCaptureEngine:
 
     def _do_autosave(self) -> None:
         """Save current audio data to a temporary recovery file."""
-        import sys
         try:
             import numpy as np
             import soundfile as sf
@@ -328,13 +327,12 @@ class AudioCaptureEngine:
             autosave_file = self._output_dir / f"{self._meeting_id}_autosave.flac"
             sf.write(str(autosave_file), audio_data, sample_rate)
             duration = len(audio_data) / sample_rate
-            print(f"  [audio] Auto-saved {duration:.0f}s to {autosave_file.name}", file=sys.stderr)
+            logger.info("Audio auto-saved %.0fs to %s", duration, autosave_file.name)
         except Exception as e:
-            print(f"  [audio] Auto-save failed: {e}", file=sys.stderr)
+            logger.warning("Audio auto-save failed: %s", e)
 
     def stop(self) -> AudioRecordingResult:
         """Stop recording. Write FLAC file. Return metadata."""
-        import sys
         import time as _time
 
         with self._lock:
@@ -344,7 +342,7 @@ class AudioCaptureEngine:
 
         self._stop_autosave()
         end_time = datetime.now(timezone.utc)
-        print(f"  [audio] Stopping stream...", file=sys.stderr)
+        logger.info("Stopping audio stream...")
 
         # 1. Stop the stream using stop() (not abort()) to let the callback
         #    finish its current invocation, then close. This is safer than
@@ -355,8 +353,8 @@ class AudioCaptureEngine:
                     self._stream.stop()
                 if hasattr(self._stream, "close"):
                     self._stream.close()
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("Error closing audio stream: %s", exc)
             self._stream = None
 
         # 2. Small delay to ensure the callback thread has fully exited.
@@ -365,7 +363,7 @@ class AudioCaptureEngine:
         if not self._stream_factory:
             _time.sleep(0.05)
 
-        print(f"  [audio] Stream closed. Writing audio file...", file=sys.stderr)
+        logger.info("Audio stream closed. Writing audio file...")
 
         # 3. Now safe to access _frames_list — callback is stopped.
         #    Take the lock to be absolutely sure no straggler callback runs.
@@ -383,7 +381,7 @@ class AudioCaptureEngine:
 
         self._buffer = None
 
-        print(f"  [audio] Audio: {len(audio_data)} samples, {len(audio_data)/sample_rate:.1f}s at {sample_rate}Hz", file=sys.stderr)
+        logger.info("Audio: %d samples, %.1fs at %dHz", len(audio_data), len(audio_data)/sample_rate, sample_rate)
 
         audio_file = self._output_dir / f"{self._meeting_id}.flac"
         try:
@@ -393,7 +391,7 @@ class AudioCaptureEngine:
         except Exception as exc:
             raise RuntimeError(f"Failed to write audio file: {exc}") from exc
 
-        print(f"  [audio] Saved: {audio_file.name} ({audio_file.stat().st_size / 1024:.0f} KB)", file=sys.stderr)
+        logger.info("Audio saved: %s (%.0f KB)", audio_file.name, audio_file.stat().st_size / 1024)
 
         # Clean up autosave file now that the real file is saved
         autosave_file = self._output_dir / f"{self._meeting_id}_autosave.flac"

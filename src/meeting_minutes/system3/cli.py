@@ -538,5 +538,24 @@ def backup_restore(
     console.print(f"[dim]Previous database saved as {db_path}.pre_restore[/dim]")
 
 
+# ---------------------------------------------------------------------------
+# mm cleanup
+# ---------------------------------------------------------------------------
+
+
+@app.command("cleanup")
+def cleanup_cmd():
+    """Enforce retention policies — delete old files."""
+    from meeting_minutes.retention import enforce_retention
+
+    config = _load_config()
+    deleted = enforce_retention(config)
+    total = sum(deleted.values())
+    if total:
+        console.print(f"[green]Cleaned up {total} files: {deleted}[/green]")
+    else:
+        console.print("[dim]No files to clean up.[/dim]")
+
+
 if __name__ == "__main__":
     app()
