@@ -298,7 +298,7 @@ generation:
   templates_dir: templates         # Jinja2 prompt templates directory
   llm:
     primary_provider: anthropic    # anthropic | openai | openrouter | ollama
-    model: claude-sonnet-4-6-20250514
+    model: claude-sonnet-4-6
     fallback_provider: null        # null = disabled, or "openai"
     fallback_model: gpt-4o
     # For OpenRouter, use prefixed model IDs: anthropic/claude-sonnet-4, google/gemini-2.5-pro-preview, etc.

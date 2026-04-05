@@ -18,7 +18,7 @@
   let transcription_language = $state('auto');
   let diarization_enabled = $state(true);
   let llm_provider = $state('anthropic');
-  let llm_model = $state('claude-sonnet-4-6-20250514');
+  let llm_model = $state('claude-sonnet-4-6');
   let llm_temperature = $state(0.2);
   let llm_max_tokens = $state(4096);
   let pipeline_mode = $state('automatic');
@@ -54,6 +54,67 @@
   let custom_models = $state({ anthropic: [], openai: [], openrouter: [], ollama: [] });
   let llm_custom_model = $state('');  // text input for typing a custom model
 
+  // Dynamic model list from provider APIs
+  let provider_models = $state([]);
+  let models_loading = $state(false);
+  let models_source = $state('');      // 'api', 'cache', 'fallback'
+  let models_warning = $state('');
+  let models_fetch_id = $state(0);     // race condition guard
+
+  function formatModelLabel(m) {
+    let label = m.name || m.id;
+    if (m.pricing) {
+      label += `  —  $${m.pricing.prompt} / $${m.pricing.completion} per 1M tokens`;
+    }
+    if (m.context_length) {
+      const ctx = m.context_length >= 1000000
+        ? `${(m.context_length / 1000000).toFixed(1)}M`
+        : m.context_length >= 1000
+          ? `${Math.round(m.context_length / 1000)}K`
+          : `${m.context_length}`;
+      label += `  —  ${ctx} context`;
+    }
+    return label;
+  }
+
+  function groupModelsByProvider(models) {
+    const groups = {};
+    for (const m of models) {
+      const slash = m.id.indexOf('/');
+      const group = slash > 0 ? m.id.substring(0, slash) : 'Other';
+      if (!groups[group]) groups[group] = [];
+      groups[group].push(m);
+    }
+    return Object.entries(groups).sort(([a], [b]) => a.localeCompare(b));
+  }
+
+  async function loadProviderModels(provider, refresh = false) {
+    if (provider === 'ollama') {
+      provider_models = [];
+      return;
+    }
+    const fetchId = ++models_fetch_id;
+    models_loading = true;
+    models_warning = '';
+    try {
+      const result = await api.getProviderModels(provider, refresh);
+      // Guard against race condition if provider changed during fetch
+      if (fetchId !== models_fetch_id) return;
+      provider_models = result.models || [];
+      models_source = result.source || '';
+      models_warning = result.warning || '';
+    } catch (e) {
+      if (fetchId !== models_fetch_id) return;
+      provider_models = [];
+      models_source = 'error';
+      models_warning = e.message;
+    } finally {
+      if (fetchId === models_fetch_id) {
+        models_loading = false;
+      }
+    }
+  }
+
   async function loadConfig() {
     loading = true;
     try {
@@ -81,7 +142,7 @@
         transcription_language = t.language || 'auto';
         diarization_enabled = d.enabled !== false;
         llm_provider = llm.primary_provider || 'anthropic';
-        llm_model = llm.model || 'claude-sonnet-4-6-20250514';
+        llm_model = llm.model || 'claude-sonnet-4-6';
         llm_temperature = llm.temperature ?? 0.2;
         llm_max_tokens = llm.max_output_tokens || 4096;
         pipeline_mode = p.mode || 'automatic';
@@ -114,6 +175,9 @@
       } catch (_) {
         custom_models = { anthropic: [], openai: [], openrouter: [], ollama: [] };
       }
+
+      // Load dynamic model list for current provider
+      loadProviderModels(llm_provider);
 
       // Load backup list
       try {
@@ -337,13 +401,14 @@
               bind:value={llm_provider}
               onchange={() => {
                 const defaults = {
-                  anthropic: 'claude-sonnet-4-6-20250514',
+                  anthropic: 'claude-sonnet-4-6',
                   openai: 'gpt-4o',
                   openrouter: 'anthropic/claude-sonnet-4',
                   ollama: 'llama3'
                 };
                 llm_model = defaults[llm_provider] || '';
                 llm_custom_model = '';
+                loadProviderModels(llm_provider);
               }}
               class="w-full px-3 py-2 bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg text-sm text-[var(--text-primary)]
                      focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
@@ -359,76 +424,34 @@
           </div>
 
           <div>
-            <label class="block text-sm font-medium text-[var(--text-primary)] mb-1">Model</label>
-            {#if llm_provider === 'openrouter'}
+            <div class="flex items-center justify-between mb-1">
+              <label class="block text-sm font-medium text-[var(--text-primary)]">Model</label>
+              {#if llm_provider !== 'ollama'}
+                <button
+                  onclick={() => loadProviderModels(llm_provider, true)}
+                  disabled={models_loading}
+                  class="flex items-center gap-1 px-2 py-1 text-xs text-[var(--text-muted)] hover:text-[var(--text-primary)]
+                         transition-colors duration-150 disabled:opacity-50"
+                  title="Refresh model list from provider API"
+                >
+                  <svg class="w-3.5 h-3.5 {models_loading ? 'animate-spin' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                  </svg>
+                  {models_loading ? 'Loading...' : 'Refresh'}
+                </button>
+              {/if}
+            </div>
+
+            {#if models_loading}
               <select
-                bind:value={llm_model}
-                class="w-full px-3 py-2 bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg text-sm text-[var(--text-primary)]
-                       focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
+                disabled
+                class="w-full px-3 py-2 bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg text-sm text-[var(--text-muted)]
+                       focus:outline-none opacity-60"
               >
-                <optgroup label="Anthropic">
-                  <option value="anthropic/claude-sonnet-4">Claude Sonnet 4</option>
-                  <option value="anthropic/claude-haiku-4">Claude Haiku 4</option>
-                </optgroup>
-                <optgroup label="Google">
-                  <option value="google/gemini-2.5-pro-preview">Gemini 2.5 Pro</option>
-                  <option value="google/gemini-2.5-flash-preview">Gemini 2.5 Flash</option>
-                </optgroup>
-                <optgroup label="OpenAI">
-                  <option value="openai/gpt-4o">GPT-4o</option>
-                  <option value="openai/gpt-4o-mini">GPT-4o Mini</option>
-                </optgroup>
-                <optgroup label="Meta">
-                  <option value="meta-llama/llama-4-maverick">Llama 4 Maverick</option>
-                </optgroup>
-                <optgroup label="DeepSeek">
-                  <option value="deepseek/deepseek-r1">DeepSeek R1</option>
-                </optgroup>
-                <optgroup label="Mistral">
-                  <option value="mistralai/mistral-medium-3">Mistral Medium 3</option>
-                </optgroup>
-                {#if custom_models.openrouter?.length > 0}
-                  <optgroup label="Previously used">
-                    {#each custom_models.openrouter as m}
-                      <option value={m}>{m}</option>
-                    {/each}
-                  </optgroup>
-                {/if}
+                <option>Loading models from {llm_provider}...</option>
               </select>
-            {:else if llm_provider === 'anthropic'}
-              <select
-                bind:value={llm_model}
-                class="w-full px-3 py-2 bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg text-sm text-[var(--text-primary)]
-                       focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
-              >
-                <option value="claude-sonnet-4-6-20250514">Claude Sonnet 4.6</option>
-                <option value="claude-3-5-sonnet-20241022">Claude 3.5 Sonnet</option>
-                <option value="claude-3-haiku-20240307">Claude 3 Haiku</option>
-                {#if custom_models.anthropic?.length > 0}
-                  <optgroup label="Previously used">
-                    {#each custom_models.anthropic as m}
-                      <option value={m}>{m}</option>
-                    {/each}
-                  </optgroup>
-                {/if}
-              </select>
-            {:else if llm_provider === 'openai'}
-              <select
-                bind:value={llm_model}
-                class="w-full px-3 py-2 bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg text-sm text-[var(--text-primary)]
-                       focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
-              >
-                <option value="gpt-4o">GPT-4o</option>
-                <option value="gpt-4o-mini">GPT-4o Mini</option>
-                {#if custom_models.openai?.length > 0}
-                  <optgroup label="Previously used">
-                    {#each custom_models.openai as m}
-                      <option value={m}>{m}</option>
-                    {/each}
-                  </optgroup>
-                {/if}
-              </select>
-            {:else}
+            {:else if llm_provider === 'ollama'}
+              <!-- Ollama: text input only -->
               <select
                 bind:value={llm_model}
                 class="w-full px-3 py-2 bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg text-sm text-[var(--text-primary)]
@@ -442,6 +465,69 @@
                   <option value="" disabled>No models used yet — enter one below</option>
                 {/if}
               </select>
+            {:else if provider_models.length > 0 && llm_provider === 'openrouter'}
+              <!-- OpenRouter: grouped by provider with pricing -->
+              <select
+                bind:value={llm_model}
+                class="w-full px-3 py-2 bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg text-sm text-[var(--text-primary)]
+                       focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
+              >
+                {#each groupModelsByProvider(provider_models) as [group, models]}
+                  <optgroup label={group}>
+                    {#each models as m}
+                      <option value={m.id}>{formatModelLabel(m)}</option>
+                    {/each}
+                  </optgroup>
+                {/each}
+                {#if custom_models.openrouter?.length > 0}
+                  <optgroup label="Previously used (custom)">
+                    {#each custom_models.openrouter as m}
+                      {#if !provider_models.some(pm => pm.id === m)}
+                        <option value={m}>{m}</option>
+                      {/if}
+                    {/each}
+                  </optgroup>
+                {/if}
+              </select>
+            {:else if provider_models.length > 0}
+              <!-- Anthropic / OpenAI: flat list from API -->
+              <select
+                bind:value={llm_model}
+                class="w-full px-3 py-2 bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg text-sm text-[var(--text-primary)]
+                       focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
+              >
+                {#each provider_models as m}
+                  <option value={m.id}>{formatModelLabel(m)}</option>
+                {/each}
+                {#if custom_models[llm_provider]?.length > 0}
+                  <optgroup label="Previously used (custom)">
+                    {#each custom_models[llm_provider] as m}
+                      {#if !provider_models.some(pm => pm.id === m)}
+                        <option value={m}>{m}</option>
+                      {/if}
+                    {/each}
+                  </optgroup>
+                {/if}
+              </select>
+            {:else}
+              <!-- Fallback: empty state -->
+              <select
+                bind:value={llm_model}
+                class="w-full px-3 py-2 bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg text-sm text-[var(--text-primary)]
+                       focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
+              >
+                {#if llm_model}
+                  <option value={llm_model}>{llm_model}</option>
+                {/if}
+                <option value="" disabled>Could not load models — enter one below</option>
+              </select>
+            {/if}
+
+            {#if models_warning}
+              <p class="text-xs text-yellow-600 dark:text-yellow-400 mt-1">{models_warning}</p>
+            {/if}
+            {#if models_source === 'cache' || models_source === 'stale_cache'}
+              <p class="text-xs text-[var(--text-muted)] mt-1">Showing cached models. Click Refresh to update.</p>
             {/if}
 
             <!-- Custom model input for all providers -->
@@ -469,11 +555,7 @@
                 </button>
               </div>
               <p class="text-xs text-[var(--text-muted)] mt-1">
-                {#if llm_provider === 'openrouter'}
-                  Enter any model from <a href="https://openrouter.ai/models" target="_blank" class="text-[var(--accent)] hover:underline">openrouter.ai/models</a>. It will be added to the list after successful use.
-                {:else}
-                  Type a custom model ID and click Use. It will be saved to the dropdown after a successful generation.
-                {/if}
+                Type a custom model ID and click Use. It will be saved to the dropdown after a successful generation.
               </p>
             </div>
 

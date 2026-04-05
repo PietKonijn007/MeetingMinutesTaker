@@ -88,3 +88,24 @@ def get_custom_models():
         except Exception:
             pass
     return {"anthropic": [], "openai": [], "openrouter": [], "ollama": []}
+
+
+@router.get("/provider-models")
+async def get_provider_models_endpoint(
+    provider: str,
+    refresh: bool = False,
+):
+    """Fetch available models for a provider from its API. Cached for 24h."""
+    valid_providers = ("anthropic", "openai", "openrouter", "ollama")
+    if provider not in valid_providers:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown provider: {provider}. Must be one of: {', '.join(valid_providers)}",
+        )
+
+    if provider == "ollama":
+        return {"provider": "ollama", "models": [], "cached": False, "source": "none"}
+
+    from meeting_minutes.api.model_fetcher import get_provider_models
+
+    return await get_provider_models(provider, force_refresh=refresh)

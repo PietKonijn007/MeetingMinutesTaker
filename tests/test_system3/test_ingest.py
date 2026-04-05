@@ -35,7 +35,7 @@ def _write_minutes_json(path: Path, meeting_id: str | None = None) -> MinutesJSO
         minutes_markdown="# Test Standup\n\nA test standup meeting.",
         llm=LLMUsage(
             provider="anthropic",
-            model="claude-sonnet-4-6-20250514",
+            model="claude-sonnet-4-6",
             tokens_used={"input": 100, "output": 50},
             cost_usd=0.001,
             processing_time_seconds=1.0,
@@ -129,7 +129,7 @@ def test_ingest_makes_meeting_searchable(db_session, tmp_path):
         minutes_markdown=f"# Meeting\n\nThis meeting discussed {unique}.",
         llm=LLMUsage(
             provider="anthropic",
-            model="claude-sonnet-4-6-20250514",
+            model="claude-sonnet-4-6",
             tokens_used={"input": 100, "output": 50},
             cost_usd=0.001,
             processing_time_seconds=1.0,

@@ -75,6 +75,8 @@ export const api = {
   getConfig: () => request('/config'),
   updateConfig: (data) => request('/config', { method: 'PATCH', body: JSON.stringify({ config: data }) }),
   getCustomModels: () => request('/config/custom-models'),
+  getProviderModels: (provider, refresh = false) =>
+    request(`/config/provider-models?provider=${provider}&refresh=${refresh}`),
 
   // Upload
   uploadTranscript: (formData) => fetch('/api/upload-transcript', { method: 'POST', body: formData }).then(res => {

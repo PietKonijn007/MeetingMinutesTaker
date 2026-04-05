@@ -251,7 +251,7 @@ generation:
   templates_dir: templates                # Directory containing .md.j2 template files
   llm:
     primary_provider: anthropic           # anthropic | openai | openrouter | ollama
-    model: claude-sonnet-4-6-20250514       # Model for minutes generation
+    model: claude-sonnet-4-6       # Model for minutes generation
     fallback_provider: null                # Fallback provider (null = disabled, or "openai")
     fallback_model: gpt-4o                # Fallback model (used when fallback_provider is set)
     # OpenRouter models use provider-prefixed IDs, e.g.:
@@ -279,7 +279,7 @@ recording:
 generation:
   llm:
     primary_provider: anthropic
-    model: claude-sonnet-4-6-20250514
+    model: claude-sonnet-4-6
 ```
 
 Everything else uses sensible defaults.

@@ -298,7 +298,7 @@ def minutes_json_strategy():
             minutes_markdown=draw(safe_text),
             llm=LLMUsage(
                 provider=draw(st.sampled_from(["anthropic", "openai"])),
-                model=draw(st.sampled_from(["claude-sonnet-4-6-20250514", "gpt-4o"])),
+                model=draw(st.sampled_from(["claude-sonnet-4-6", "gpt-4o"])),
                 tokens_used={"input": draw(st.integers(min_value=100, max_value=10000)), "output": draw(st.integers(min_value=50, max_value=4096))},
                 cost_usd=draw(st.floats(min_value=0.0, max_value=1.0, allow_nan=False, allow_infinity=False)),
                 processing_time_seconds=draw(st.floats(min_value=0.1, max_value=60.0, allow_nan=False, allow_infinity=False)),

@@ -18,7 +18,7 @@ diarization:
 generation:
   llm:
     primary_provider: anthropic
-    model: claude-sonnet-4-6-20250514
+    model: claude-sonnet-4-6
     fallback_provider: null
     fallback_model: null
     temperature: 0.2

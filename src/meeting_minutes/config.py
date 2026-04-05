@@ -29,7 +29,7 @@ class DiarizationConfig(BaseModel):
 
 class LLMConfig(BaseModel):
     primary_provider: str = "anthropic"
-    model: str = "claude-sonnet-4-6-20250514"
+    model: str = "claude-sonnet-4-6"
     fallback_provider: str | None = "openai"
     fallback_model: str | None = "gpt-4o"
     temperature: float = 0.2

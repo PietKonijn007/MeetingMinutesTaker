@@ -145,7 +145,7 @@ def sample_llm_response():
     return LLMResponse(
         text="## Summary\nTest meeting summary.\n\n## Action Items\n- [ ] Test action — Owner: Alice\n\n## Decisions\n- Test decision",
         provider="anthropic",
-        model="claude-sonnet-4-6-20250514",
+        model="claude-sonnet-4-6",
         input_tokens=1000,
         output_tokens=500,
         cost_usd=0.005,
@@ -191,7 +191,7 @@ def sample_minutes_json(sample_meeting_id):
         minutes_markdown="# Daily Standup\n\nBrief standup...",
         llm=LLMUsage(
             provider="anthropic",
-            model="claude-sonnet-4-6-20250514",
+            model="claude-sonnet-4-6",
             tokens_used={"input": 1000, "output": 500},
             cost_usd=0.005,
             processing_time_seconds=2.5,

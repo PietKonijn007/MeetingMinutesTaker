@@ -210,7 +210,7 @@ diarization:
 generation:
   llm:
     primary_provider: anthropic       # anthropic | openai | openrouter | ollama
-    model: claude-sonnet-4-6-20250514 # Model ID (provider-specific)
+    model: claude-sonnet-4-6 # Model ID (provider-specific)
     temperature: 0.2
 
 storage:

@@ -217,7 +217,7 @@ All prompts include these universal instructions:
 ```yaml
 llm:
   primary_provider: "anthropic"        # anthropic | openai | openrouter | ollama
-  model: "claude-sonnet-4-6-20250514"  # Model ID (for openrouter, use prefixed IDs like "anthropic/claude-sonnet-4")
+  model: "claude-sonnet-4-6"  # Model ID (for openrouter, use prefixed IDs like "anthropic/claude-sonnet-4")
   fallback_provider: "openai"
   fallback_model: "gpt-4o"
   temperature: 0.2                    # low temperature for factual extraction
@@ -385,7 +385,7 @@ When structured output fails (e.g., non-Anthropic provider such as OpenRouter or
   "minutes_markdown": "# Meeting Minutes: Daily Standup\n...",
   "llm": {
     "provider": "anthropic",
-    "model": "claude-sonnet-4-6-20250514",
+    "model": "claude-sonnet-4-6",
     "tokens_used": { "input": 15000, "output": 2000 },
     "cost_usd": 0.057,
     "processing_time_seconds": 12
@@ -493,11 +493,11 @@ custom_templates:
 cost_optimization:
   model_by_type:
     standup: "claude-haiku-4-5-20251001"
-    one_on_one_direct_report: "claude-sonnet-4-6-20250514"
-    one_on_one_leader: "claude-sonnet-4-6-20250514"
-    customer_meeting: "claude-opus-4-6-20250514"
-    decision_meeting: "claude-opus-4-6-20250514"
-    default: "claude-sonnet-4-6-20250514"
+    one_on_one_direct_report: "claude-sonnet-4-6"
+    one_on_one_leader: "claude-sonnet-4-6"
+    customer_meeting: "claude-opus-4-6"
+    decision_meeting: "claude-opus-4-6"
+    default: "claude-sonnet-4-6"
   monthly_budget_usd: 50.00
   alert_threshold_percent: 80
 ```

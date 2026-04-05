@@ -46,7 +46,7 @@ def _store_meeting(
             minutes_markdown=minutes_text or f"# {title}\n",
             llm=LLMUsage(
                 provider="anthropic",
-                model="claude-sonnet-4-6-20250514",
+                model="claude-sonnet-4-6",
                 tokens_used={"input": 100, "output": 50},
                 cost_usd=0.001,
                 processing_time_seconds=1.0,

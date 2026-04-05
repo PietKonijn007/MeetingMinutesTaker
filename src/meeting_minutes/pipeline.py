@@ -25,7 +25,7 @@ CUSTOM_MODELS_PATH = Path(__file__).parent.parent.parent / "config" / "custom_mo
 
 # Built-in models that don't need to be tracked as custom
 _BUILTIN_MODELS: dict[str, set[str]] = {
-    "anthropic": {"claude-sonnet-4-6-20250514", "claude-3-5-sonnet-20241022", "claude-3-haiku-20240307"},
+    "anthropic": {"claude-opus-4-6", "claude-sonnet-4-6", "claude-haiku-4-5-20251001"},
     "openai": {"gpt-4o", "gpt-4o-mini"},
     "openrouter": {
         "anthropic/claude-sonnet-4", "anthropic/claude-haiku-4",

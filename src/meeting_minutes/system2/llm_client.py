@@ -14,9 +14,9 @@ from meeting_minutes.models import LLMResponse
 # Cost per 1K tokens (approximate, as of early 2025)
 COST_PER_1K_TOKENS: dict[str, dict[str, float]] = {
     "anthropic": {
-        "claude-sonnet-4-6-20250514": 0.003,
-        "claude-3-5-sonnet-20241022": 0.003,
-        "claude-3-haiku-20240307": 0.00025,
+        "claude-opus-4-6": 0.015,
+        "claude-sonnet-4-6": 0.003,
+        "claude-haiku-4-5-20251001": 0.0008,
         "default": 0.003,
     },
     "openai": {

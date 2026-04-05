@@ -52,7 +52,7 @@ def _make_minutes_data(
             minutes_markdown="# Test Meeting\n",
             llm=LLMUsage(
                 provider="anthropic",
-                model="claude-sonnet-4-6-20250514",
+                model="claude-sonnet-4-6",
                 tokens_used={"input": 100, "output": 50},
                 cost_usd=0.001,
                 processing_time_seconds=1.0,
