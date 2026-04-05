@@ -144,6 +144,25 @@ Remote participants (Zoom/Teams/etc.)
 - **Auto-start**: Option to automatically begin recording when a supported meeting app becomes active (detect via process monitoring or calendar integration)
 - **Auto-stop**: End recording when meeting app closes or audio silence exceeds threshold
 
+### 1.6 Live Note-Taking
+
+During an active recording, users can provide additional context via the web UI:
+
+- **Speaker names**: Comma-separated list of participant names to assist with diarization speaker mapping
+- **Notes**: Free-form text notes taken during the meeting, included as context for minutes generation
+- **Custom LLM instructions**: Specific instructions for the LLM when generating minutes (e.g., "focus on budget discussions", "use bullet points only")
+
+Notes are saved to `data/notes/{meeting_id}.json` and automatically loaded by the pipeline during minutes generation. The notes file contains:
+
+```json
+{
+  "meeting_id": "uuid",
+  "speaker_names": ["Alice", "Bob"],
+  "notes": "Discussed Q3 budget...",
+  "custom_instructions": "Focus on action items for the engineering team"
+}
+```
+
 ---
 
 ## 2. Transcription Engine
@@ -154,11 +173,12 @@ Remote participants (Zoom/Teams/etc.)
 
 - **Model**: OpenAI Whisper (via `faster-whisper` or `whisper.cpp` for performance)
 - **Model sizes**: tiny, base, small, medium, large-v3 (user-configurable, default: medium for balance of speed/accuracy)
+- **Distil-Whisper models**: `distil-medium.en`, `distil-large-v3` — faster variants optimized for English, providing significant speedups with minimal accuracy loss
 - **Language**: Auto-detect or user-specified; support for multilingual meetings
 - **Processing**:
   - Real-time streaming transcription using chunked audio (30-second segments with 5-second overlap)
   - Post-meeting batch transcription for higher accuracy (re-process full audio with large model)
-- **Hardware acceleration**: CUDA (NVIDIA), Metal (Apple Silicon), CPU fallback
+- **Hardware acceleration**: CUDA (NVIDIA), Metal (Apple Silicon with automatic detection and fallback to CPU), CPU fallback
 
 #### Option B: Cloud Transcription (Amazon Transcribe)
 

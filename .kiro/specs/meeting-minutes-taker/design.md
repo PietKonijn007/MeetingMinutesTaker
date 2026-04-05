@@ -62,8 +62,10 @@ meeting-minutes-taker/
 │   └── meeting_minutes/
 │       ├── __init__.py
 │       ├── config.py                # Configuration loading & validation
+│       ├── encryption.py            # Fernet encryption at rest
 │       ├── models.py                # Shared data models (Pydantic)
 │       ├── logging.py               # Structured JSON logging
+│       ├── retention.py             # Data retention policy engine
 │       ├── system1/
 │       │   ├── __init__.py
 │       │   ├── capture.py           # Audio capture engine
@@ -103,7 +105,9 @@ meeting-minutes-taker/
 │               ├── people.py
 │               ├── stats.py
 │               ├── recording.py
-│               └── config.py
+│               ├── config.py
+│               ├── security.py          # Encryption key generation
+│               └── retention.py         # Retention status & cleanup
 ├── templates/
 │   ├── general.md.j2
 │   ├── standup.md.j2
@@ -437,9 +441,12 @@ sequenceDiagram
       async def run_generation(self, meeting_id: str) -> Path: ...
       async def run_ingestion(self, meeting_id: str) -> None: ...
       async def reprocess(self, meeting_id: str) -> None: ...
+      async def _retry_async(self, func, *args, max_retries=2, base_delay=5, step_name=""):
+          """Retry a pipeline step with exponential backoff on failure."""
   ```
 - **Modes**: automatic (chain all), semi_automatic (S1 auto, S2+S3 manual), manual (each separate)
 - **Events**: Uses `watchdog` filesystem watcher in automatic mode
+- **Retry**: Each pipeline step (transcribe, generate, ingest) is wrapped in `_retry_async` for automatic retry with exponential backoff
 
 ## Data Models
 
@@ -789,6 +796,21 @@ class StorageConfig(BaseModel):
     database: str = "sqlite"
     sqlite_path: str = "db/meetings.db"
 
+class SecurityConfig(BaseModel):
+    encryption_enabled: bool = False
+    encryption_key_path: str | None = None
+
+class APIConfig(BaseModel):
+    cors_origins: list[str] = ["*"]
+    host: str = "127.0.0.1"
+    port: int = 8080
+
+class RetentionConfig(BaseModel):
+    enabled: bool = False
+    audio_retention_days: int | None = None
+    transcript_retention_days: int | None = None
+    minutes_retention_days: int | None = None
+
 class PipelineConfig(BaseModel):
     mode: str = "automatic"  # automatic | semi_automatic | manual
 
@@ -801,6 +823,9 @@ class AppConfig(BaseModel):
     diarization: DiarizationConfig = DiarizationConfig()
     generation: GenerationConfig = GenerationConfig()
     storage: StorageConfig = StorageConfig()
+    security: SecurityConfig = SecurityConfig()
+    api: APIConfig = APIConfig()
+    retention: RetentionConfig = RetentionConfig()
 ```
 
 ## Correctness Properties

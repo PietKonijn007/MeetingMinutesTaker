@@ -4,6 +4,7 @@
   import CalendarMonth from '$lib/components/CalendarMonth.svelte';
   import DayMeetingList from '$lib/components/DayMeetingList.svelte';
   import MeetingDetail from '$lib/components/MeetingDetail.svelte';
+  import MeetingTypeBadge from '$lib/components/MeetingTypeBadge.svelte';
   import Skeleton from '$lib/components/Skeleton.svelte';
   import UploadModal from '$lib/components/UploadModal.svelte';
 
@@ -20,6 +21,13 @@
   // Upload modal
   let showUploadModal = $state(false);
   let uploadToastMsg = $state('');
+
+  // Search state
+  let searchQuery = $state('');
+  let searchResults = $state([]);
+  let isSearching = $state(false);
+  let searchActive = $state(false);
+  let searchTimer = null;
 
   // Derived: group meetings by date string
   const meetingsByDate = $derived(groupByDate(meetingsForMonth));
@@ -135,14 +143,80 @@
     loadMonth();
   }
 
+  // Search functions
+  async function handleSearch() {
+    if (!searchQuery.trim()) {
+      searchActive = false;
+      searchResults = [];
+      return;
+    }
+    isSearching = true;
+    searchActive = true;
+    try {
+      const data = await api.search({ q: searchQuery, limit: '50' });
+      searchResults = (data.items || []).map(r => ({
+        id: r.meeting_id,
+        title: r.title,
+        date: r.date,
+        type: r.meeting_type,
+        snippet: r.snippet || '',
+      }));
+    } catch (e) {
+      searchResults = [];
+    } finally {
+      isSearching = false;
+    }
+  }
+
+  function clearSearch() {
+    searchQuery = '';
+    searchActive = false;
+    searchResults = [];
+    if (searchTimer) clearTimeout(searchTimer);
+  }
+
+  function onSearchInput() {
+    if (searchTimer) clearTimeout(searchTimer);
+    searchTimer = setTimeout(handleSearch, 300);
+  }
+
+  function formatSearchDate(dateStr) {
+    if (!dateStr) return '';
+    const d = new Date(dateStr.length === 10 ? dateStr + 'T12:00:00' : dateStr);
+    if (isNaN(d.getTime())) return dateStr;
+    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  }
+
   onMount(() => {
     loadMonth();
   });
 </script>
 
 <div class="flex h-[calc(100vh-3.5rem)] -m-6">
-  <!-- Left panel: Calendar + Day meeting list -->
+  <!-- Left panel: Search + Calendar + Day meeting list -->
   <div class="w-80 shrink-0 border-r border-[var(--border-subtle)] overflow-y-auto bg-[var(--bg-surface)]">
+    <!-- Search bar -->
+    <div class="px-4 pt-4 pb-2">
+      <div class="relative">
+        <svg class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--text-muted)]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+        </svg>
+        <input
+          bind:value={searchQuery}
+          oninput={onSearchInput}
+          placeholder="Search all meetings..."
+          class="w-full pl-10 pr-8 py-2 bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg text-sm text-[var(--text-primary)] placeholder-[var(--text-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
+        />
+        {#if searchQuery}
+          <button onclick={clearSearch} class="absolute right-2 top-1/2 -translate-y-1/2 text-[var(--text-muted)] hover:text-[var(--text-primary)]">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+            </svg>
+          </button>
+        {/if}
+      </div>
+    </div>
+
     {#if loading}
       <div class="p-4 space-y-3">
         <Skeleton type="text" lines={3} />
@@ -160,13 +234,51 @@
       />
 
       <div class="border-t border-[var(--border-subtle)]">
-        <DayMeetingList
-          date={selectedDate}
-          meetings={meetingsForDay}
-          {selectedMeetingId}
-          onSelectMeeting={handleSelectMeeting}
-          onUpload={handleUploadClick}
-        />
+        {#if searchActive}
+          <!-- Search results -->
+          <div class="px-4 py-2">
+            <div class="flex items-center justify-between mb-2">
+              <span class="text-xs text-[var(--text-muted)] uppercase tracking-wide">
+                Search Results ({searchResults.length})
+              </span>
+              <button onclick={clearSearch} class="text-xs text-[var(--accent)] hover:underline">Clear</button>
+            </div>
+            {#if isSearching}
+              <p class="text-sm text-[var(--text-muted)] py-4 text-center">Searching...</p>
+            {:else if searchResults.length === 0}
+              <p class="text-sm text-[var(--text-muted)] py-4 text-center">No results found</p>
+            {:else}
+              <div class="space-y-2">
+                {#each searchResults as result (result.id)}
+                  <button
+                    onclick={() => { selectedMeetingId = result.id; }}
+                    class="w-full text-left p-3 rounded-lg border transition-colors duration-150
+                           {selectedMeetingId === result.id
+                               ? 'border-[var(--accent)] bg-[var(--accent)]/5'
+                               : 'border-[var(--border-subtle)] bg-[var(--bg-surface)] hover:bg-[var(--bg-surface-hover)]'}"
+                  >
+                    <div class="text-sm font-medium text-[var(--text-primary)] truncate">{result.title || 'Untitled'}</div>
+                    <div class="flex items-center gap-2 mt-1">
+                      <MeetingTypeBadge type={result.type} />
+                      <span class="text-xs text-[var(--text-muted)]">{formatSearchDate(result.date)}</span>
+                    </div>
+                    {#if result.snippet}
+                      <p class="text-xs text-[var(--text-secondary)] mt-1 line-clamp-2">{result.snippet}</p>
+                    {/if}
+                  </button>
+                {/each}
+              </div>
+            {/if}
+          </div>
+        {:else}
+          <DayMeetingList
+            date={selectedDate}
+            meetings={meetingsForDay}
+            {selectedMeetingId}
+            onSelectMeeting={handleSelectMeeting}
+            onUpload={handleUploadClick}
+          />
+        {/if}
       </div>
     {/if}
   </div>

@@ -248,6 +248,44 @@ Incremental implementation of the three-system meeting minutes pipeline. Each ta
   - [x] 23.7 PortAudio re-scan only when not recording
   - [x] 23.8 Graceful shutdown on Ctrl+C
 
+- [x] 24. Batch 2 — Phase 1: Pipeline robustness
+  - [x] 24.1 Implement `_retry_async` in PipelineOrchestrator with exponential backoff (up to 2 retries, 5s base delay)
+  - [x] 24.2 Implement encryption at rest (`src/meeting_minutes/encryption.py`) using Fernet symmetric encryption
+  - [x] 24.3 Implement retention policy engine (`src/meeting_minutes/retention.py`) with configurable per-type retention periods
+  - [x] 24.4 Add SecurityConfig, RetentionConfig, APIConfig to config models
+  - [x] 24.5 Add security route (`src/meeting_minutes/api/routes/security.py`) with key generation endpoint
+  - [x] 24.6 Add retention route (`src/meeting_minutes/api/routes/retention.py`) with status and cleanup endpoints
+
+- [x] 25. Batch 2 — Phase 2: Transcription improvements
+  - [x] 25.1 Add Distil-Whisper model support (distil-medium.en, distil-large-v3)
+  - [x] 25.2 Add Metal acceleration detection and fallback for Apple Silicon
+
+- [x] 26. Batch 2 — Phase 3: Live note-taking during recording
+  - [x] 26.1 Add speaker names, notes, and custom LLM instructions fields to Record page
+  - [x] 26.2 Save notes to `data/notes/{meeting_id}.json` during recording
+  - [x] 26.3 Load notes during pipeline processing and include in LLM prompt context
+
+- [x] 27. Batch 2 — Phase 4: Analytics enrichment
+  - [x] 27.1 Add per-speaker sentiment to ParticipantInfo in StructuredMinutesResponse
+  - [x] 27.2 Add meeting effectiveness score (1-5 rating) to generated minutes
+  - [x] 27.3 Add meeting type refinement (N11) for borderline classification cases
+
+- [x] 28. Batch 2 — Phase 5: Search with filters in calendar view
+  - [x] 28.1 Add search bar above calendar in the left panel of the Meetings page
+  - [x] 28.2 Implement debounced search (300ms) calling the search API
+  - [x] 28.3 Show search results with title, date, type badge, and snippet
+  - [x] 28.4 Click search result loads meeting detail in right panel
+  - [x] 28.5 Clear search returns to normal calendar/day list view
+
+- [x] 29. Batch 2 — Phase 6: Documentation updates
+  - [x] 29.1 Update README.md with all batch 2 features
+  - [x] 29.2 Update docs/USER_GUIDE.md with encryption, retention, live note-taking, search
+  - [x] 29.3 Update specs/00-architecture.md with encryption, retention, pipeline retry, data/notes/
+  - [x] 29.4 Update specs/01-recording-and-transcription.md with Distil-Whisper, Metal, live notes
+  - [x] 29.5 Update specs/02-minutes-generation.md with custom instructions, sentiment, effectiveness
+  - [x] 29.6 Update .kiro/specs design.md with new files and config models
+  - [x] 29.7 Update .kiro/specs tasks.md with batch 2 tasks
+
 ## Notes
 
 - Tasks marked with `*` are optional and can be skipped for faster MVP

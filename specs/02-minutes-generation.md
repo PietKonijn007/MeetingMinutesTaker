@@ -53,6 +53,8 @@ The keyword-matching classifier has been replaced with an LLM call using Claude 
 
 **Trigger:** Runs automatically when the initial transcript confidence is below 0.7.
 
+**Meeting Type Refinement (N11):** After the initial classification, the system can refine the meeting type based on the full transcript content, improving accuracy for borderline cases.
+
 ### 2.2 Supported Meeting Types & Templates
 
 | Meeting Type | Template Focus | Key Sections |
@@ -105,6 +107,7 @@ Each meeting type has a structured prompt composed of:
   - Meeting metadata (title, date, attendees, organizer)
   - Meeting type
   - Any user-provided context or agenda
+  - Custom LLM instructions from the user (if provided during recording via live note-taking)
 
 [Transcript Block]
   - The full (or chunked) transcript with speaker labels
@@ -114,6 +117,8 @@ Each meeting type has a structured prompt composed of:
   - Language/tone instructions
   - Length constraints
 ```
+
+**Note**: Users can provide custom LLM instructions during recording via the live note-taking feature. These instructions are appended to the context block and allow the user to direct the LLM to focus on specific topics, use particular formatting, or apply domain-specific rules.
 
 ### 3.2 Prompt Templates (Examples)
 
@@ -258,14 +263,14 @@ The tool definition includes these fields:
 
 - `summary` (str): Executive summary of the meeting
 - `sentiment` (str): Overall meeting sentiment (positive, neutral, negative, mixed)
-- `participants` (list[ParticipantInfo]): Participant details with name, role, contribution summary
+- `participants` (list[ParticipantInfo]): Participant details with name, role, contribution summary, and per-speaker sentiment (positive/neutral/negative/mixed)
 - `discussion_points` (list[DiscussionPoint]): Key topics with description, speaker, and outcome
 - `action_items` (list[StructuredActionItem]): With description, owner, due_date, priority (high/medium/low), transcript_segment_ids
 - `decisions` (list[StructuredDecision]): With description, made_by, rationale, confidence (high/medium/low), transcript_segment_ids
 - `risks_and_concerns` (list[RiskConcern]): Identified risks with description, severity, owner
 - `follow_ups` (list[FollowUp]): Items needing follow-up with description, owner, timeline
 - `parking_lot` (list[str]): Topics raised but deferred
-- `meeting_effectiveness` (MeetingEffectiveness): Rating and notes on meeting quality
+- `meeting_effectiveness` (MeetingEffectiveness): Rating (1-5) and notes on meeting quality (A4: meeting effectiveness scoring)
 - `key_topics` (list[str]): Extracted topic keywords
 - `structured_data` (dict): Meeting-type-specific structured data
 - `minutes_markdown` (str): Full rendered markdown of the minutes

@@ -234,6 +234,9 @@ Post-processing hooks fire
 │   │   ├── abc123.json
 │   │   ├── abc123.md
 │   │   └── ...
+│   ├── notes/                   # Live note-taking data (speaker names, notes, LLM instructions)
+│   │   ├── abc123.json
+│   │   └── ...
 │   └── exports/                 # Exported files (PDF, DOCX, etc.)
 │
 ├── db/
@@ -340,6 +343,7 @@ storage:
 | Transcription fails | Retry with fallback engine; save audio for later reprocessing |
 | LLM API unavailable | Queue for retry; fall back to alternative provider |
 | LLM response malformed | Retry with adjusted prompt; fall back to general template |
+| Pipeline step fails | Automatic retry with exponential backoff (up to 2 retries, 5s base delay) via `_retry_async` |
 | Database write fails | Write to local file as fallback; reconcile on recovery |
 | Embedding generation fails | Index without embeddings; retry in background |
 
@@ -367,7 +371,8 @@ storage:
 ### 5.4 Privacy & Security
 
 - **Principle**: Local-first, data stays on user's machine by default
-- **Encryption**: Optional at-rest encryption for audio, transcripts, and database
+- **Encryption at rest**: Optional Fernet symmetric encryption for audio, transcripts, and minutes files. Configured via `security.encryption_enabled` and `security.encryption_key_path`. Key generation via `mm generate-key` CLI command or web UI.
+- **Retention policies**: Configurable automatic deletion of old data based on age. Audio, transcripts, and minutes each have independent retention periods. Cleanup via `mm cleanup` CLI command or web UI.
 - **Cloud data**: When using cloud APIs, data is transmitted over TLS; check provider data retention policies
 - **Access control**: Single-user local deployment; no multi-user access control needed
 - **Consent**: Recording indicator always visible; optional consent prompt before recording

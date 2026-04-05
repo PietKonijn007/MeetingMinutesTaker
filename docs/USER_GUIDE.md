@@ -17,7 +17,9 @@ This guide walks you through installing the system, setting up audio capture, co
 9. [Customizing Templates](#9-customizing-templates)
 10. [Template Manager (Web UI)](#10-template-manager-web-ui)
 11. [Managing Your Data](#11-managing-your-data)
-12. [Troubleshooting](#12-troubleshooting)
+12. [Encryption at Rest](#12-encryption-at-rest)
+13. [Retention Policies](#13-retention-policies)
+14. [Troubleshooting](#14-troubleshooting)
 
 ---
 
@@ -487,12 +489,14 @@ Open [http://localhost:8080](http://localhost:8080) in your browser. The API doc
 
 The default landing page is a calendar-first view with two panels:
 
-- **Left panel**: A month calendar with colored dots on days that have meetings. Below the calendar, a list of meetings for the selected day. Click any day to see its meetings.
-- **Right panel**: Meeting detail rendered inline — clicking a meeting in the day list shows its full minutes, transcript, and actions without navigating away from the page.
+- **Left panel**: A search bar at the top for full-text search across all meetings, followed by a month calendar with colored dots on days that have meetings. Below the calendar, either search results or a list of meetings for the selected day. Click any day to see its meetings.
+- **Right panel**: Meeting detail rendered inline — clicking a meeting in the day list (or a search result) shows its full minutes, transcript, and actions without navigating away from the page.
 
-Filter using the controls at the top:
-- **Search**: Full-text search across all transcripts and minutes.
-- **Type**: Filter by meeting type (standup, decision, etc.) — multi-select.
+Search features in the calendar view:
+- **Search bar**: Type a query above the calendar to search across all meetings. Results replace the day list and show title, date, type badge, and snippet.
+- **Debounced search**: Results update automatically after 300ms of no typing.
+- **Click to view**: Click any search result to load the meeting detail in the right panel.
+- **Clear search**: Click the X button or the "Clear" link to return to the normal calendar view.
 
 ### 7.5 Meeting detail page
 
@@ -545,6 +549,7 @@ Start and stop recordings directly from the browser.
 
 - **Idle state**: Large record button, auto-detected audio device (prefers MeetingCapture aggregate devices, skips offline devices like disconnected AirPods) with an "auto-detected" indicator, recent recordings list. You can also select a device manually.
 - **Recording state**: Pulsing red indicator, elapsed time counter, audio level bars, Pause and Stop buttons. A small red dot also appears in the top bar so you can see recording status from any page. Audio is auto-saved every 5 minutes as a recovery file in case of crashes.
+- **Live note-taking**: While recording, you can enter speaker names (comma-separated), free-form notes, and custom instructions for the LLM. Speaker names help the diarization engine map speakers. Notes are included as context in the minutes generation prompt. Custom instructions let you tell the LLM to focus on specific topics or use a particular format. Notes are saved to `data/notes/{meeting_id}.json` and automatically loaded during pipeline processing.
 - **Processing state**: Below the recording controls, a "Processing" section shows per-meeting pipeline status. Each job displays steps — Transcribe, Generate, Index — with checkmarks as they complete. Pipeline jobs run sequentially (queued) to avoid memory thrashing with Whisper.
 
 You can record a new meeting immediately after stopping the previous one — the previous meeting's pipeline continues processing in the background.
@@ -558,11 +563,14 @@ A visual editor for `config/config.yaml`. Organized into sections:
 | Section | Settings |
 |---------|----------|
 | **Recording** | Audio device (dropdown of detected devices), sample rate, auto-stop silence threshold |
-| **Transcription** | Whisper model (with size/accuracy descriptions), language |
+| **Transcription** | Whisper model (with size/accuracy descriptions, including Distil-Whisper), language |
 | **Speaker ID** | Enable/disable diarization |
 | **Minutes Generation** | LLM provider, model, temperature, max tokens |
 | **Pipeline** | Mode (automatic / semi-automatic / manual) |
 | **Storage** | Database path, data directory |
+| **Security** | Encryption at rest toggle, encryption key path, generate key button |
+| **Retention** | Enable/disable retention policies, audio/transcript/minutes retention days |
+| **API** | CORS origins, host, port |
 | **Appearance** | Dark mode toggle |
 
 Changes are saved when you click the Save button at the bottom.
@@ -820,7 +828,76 @@ Back up both to preserve everything.
 
 ---
 
-## 12. Troubleshooting
+## 12. Encryption at Rest
+
+Meeting Minutes Taker supports optional encryption at rest for audio files, transcripts, and minutes using Fernet symmetric encryption.
+
+### 12.1 Generating an encryption key
+
+Generate a new encryption key via the CLI or web UI:
+
+```bash
+mm generate-key
+```
+
+Or use the "Generate Key" button in the Settings > Security section of the web UI. The key is saved to the path specified in `security.encryption_key_path` in your config.
+
+### 12.2 Enabling encryption
+
+```yaml
+# config/config.yaml
+security:
+  encryption_enabled: true
+  encryption_key_path: config/encryption.key
+```
+
+Once enabled, new files written by the pipeline (audio, transcripts, minutes) are encrypted. Existing files are not retroactively encrypted.
+
+### 12.3 Key management
+
+**Warning**: If you lose your encryption key, encrypted data cannot be recovered. Back up the key file separately from the data it protects.
+
+---
+
+## 13. Retention Policies
+
+Configure automatic cleanup of old data to manage disk space.
+
+### 13.1 Configuration
+
+```yaml
+# config/config.yaml
+retention:
+  enabled: true
+  audio_retention_days: 90        # Delete audio files older than 90 days
+  transcript_retention_days: null  # null = keep forever
+  minutes_retention_days: null     # null = keep forever
+```
+
+### 13.2 Running cleanup
+
+Cleanup runs via the CLI:
+
+```bash
+mm cleanup
+```
+
+Or from the web UI Settings > Retention section using the "Run Cleanup" button. The cleanup process checks file ages against the configured retention periods and deletes expired files.
+
+### 13.3 Retention status
+
+Check what would be cleaned up before running:
+
+```bash
+# Via the API
+curl http://localhost:8080/api/retention/status
+```
+
+Or view the status in the web UI Settings > Retention section.
+
+---
+
+## 14. Troubleshooting
 
 ### Audio issues
 
@@ -843,6 +920,8 @@ Back up both to preserve everything.
 | **Wrong language detected** | Set the language explicitly: `language: en` (or `nl`, `fr`, `de`, etc.) |
 | **Model download stuck** | The first run downloads the Whisper model (~1.5 GB for medium). Ensure you have a stable internet connection. Models are cached in `~/.cache/huggingface/`. |
 | **Out of memory with `large-v3`** | The `large-v3` model requires ~10 GB RAM and a ~3 GB download. On machines with 16 GB RAM, use `medium` instead (the default). You can change the model in the Settings page or `config.yaml`. |
+| **Distil-Whisper models** | Distil-Whisper models (`distil-medium.en`, `distil-large-v3`) are faster but English-only. If you need multilingual support, use the standard Whisper models. |
+| **Metal acceleration not working** | On Apple Silicon Macs, Metal acceleration is used automatically by `faster-whisper`. If it falls back to CPU, check that your `ctranslate2` installation supports Metal: `pip install --upgrade ctranslate2`. |
 | **NumPy compatibility error with pyannote** | If you see errors about NumPy version incompatibility, pin NumPy: `pip install "numpy<2.0"`. The pyannote.audio library may not yet support NumPy 2.x. |
 
 ### Speaker diarization issues

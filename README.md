@@ -9,11 +9,11 @@ Record Audio ──► Transcribe ──► Generate Minutes ──► Store & S
   (System 1)      (Whisper)      (Claude / GPT)       (SQLite + FTS5)
 ```
 
-**System 1 — Recording & Transcription**: Captures audio from virtual and physical meetings via system audio loopback (BlackHole on macOS), transcribes with Whisper, identifies speakers with pyannote.audio, and enriches with calendar metadata.
+**System 1 — Recording & Transcription**: Captures audio from virtual and physical meetings via system audio loopback (BlackHole on macOS), transcribes with Whisper (including Distil-Whisper models with Metal acceleration on Apple Silicon), identifies speakers with pyannote.audio, enriches with calendar metadata, and supports live note-taking (speaker names, notes, custom LLM instructions) during recording.
 
-**System 2 — Minutes Generation**: Auto-detects meeting type using an LLM classifier (Claude Haiku), routes transcripts to meeting-type-specific prompt templates, generates structured minutes via LLM (Anthropic Claude `claude-sonnet-4-6` by default) using tool_use for guaranteed JSON output (with text+regex fallback), extracts action items and decisions, and runs quality checks.
+**System 2 — Minutes Generation**: Auto-detects meeting type using an LLM classifier (Claude Haiku) with meeting type refinement, routes transcripts to meeting-type-specific prompt templates, generates structured minutes via LLM (Anthropic Claude `claude-sonnet-4-6` by default) using tool_use for guaranteed JSON output (with text+regex fallback), extracts action items and decisions with per-speaker sentiment analysis and meeting effectiveness scoring, and runs quality checks. Supports custom LLM instructions provided during recording.
 
-**System 3 — Storage & Search**: Stores everything in SQLite with full-text search (FTS5), provides a CLI for searching, browsing, and managing meetings and action items.
+**System 3 — Storage & Search**: Stores everything in SQLite with full-text search (FTS5), provides a CLI for searching, browsing, and managing meetings and action items. Supports encryption at rest, configurable retention policies, and in-calendar search with filters.
 
 ## Supported Meeting Types
 
@@ -113,6 +113,8 @@ mm actions complete <action_id>                   # Mark done
 | `mm generate <id>` | Generate minutes from transcript |
 | `mm reprocess <id>` | Re-run full pipeline for a meeting |
 | `mm delete <id>` | Delete meeting and all associated data |
+| `mm cleanup` | Run retention policy cleanup (delete expired data) |
+| `mm generate-key` | Generate a new encryption key for at-rest encryption |
 | `mm serve` | Start the web UI + API server (supports `--host`, `--port`) |
 
 ## Web UI
@@ -127,9 +129,9 @@ mm serve
 open http://localhost:8080
 ```
 
-**Pages**: Meetings (calendar view with day list + inline detail), Meeting Detail, Action Items, Decisions, People, Stats (charts), Record (live waveform + concurrent pipeline status), Templates (view/edit/create prompt templates), Settings.
+**Pages**: Meetings (calendar view with day list + inline detail + search with filters), Meeting Detail, Action Items, Decisions, People, Stats (charts), Record (live waveform + concurrent pipeline status + live note-taking), Templates (view/edit/create prompt templates), Settings (including Security, Retention, and CORS config).
 
-**Features**: Dark mode, full-text search with `Cmd+K`, keyboard navigation, responsive layout, meeting type color coding, WebSocket-based real-time updates, concurrent pipeline processing (record a new meeting while the previous one processes in background), auto-detect capture device, auto-save recovery every 5 minutes during recording.
+**Features**: Dark mode, full-text search with `Cmd+K`, in-calendar search with type filter chips, keyboard navigation, responsive layout, meeting type color coding, WebSocket-based real-time updates, concurrent pipeline processing (record a new meeting while the previous one processes in background), auto-detect capture device, auto-save recovery every 5 minutes during recording, live note-taking during recording (speaker names, notes, custom LLM instructions), encryption at rest, retention policies with automatic cleanup.
 
 **Development** (with hot reload):
 ```bash
@@ -170,6 +172,21 @@ generation:
 
 storage:
   sqlite_path: db/meetings.db
+
+security:
+  encryption_enabled: false
+  encryption_key_path: null       # Path to Fernet encryption key file
+
+api:
+  cors_origins: ["*"]
+  host: "127.0.0.1"
+  port: 8080
+
+retention:
+  enabled: false
+  audio_retention_days: 90        # Delete audio files after N days
+  transcript_retention_days: null  # null = keep forever
+  minutes_retention_days: null     # null = keep forever
 ```
 
 See the full [configuration reference](docs/USER_GUIDE.md#4-configuration) in the User Guide.
@@ -181,9 +198,11 @@ MeetingMinutesTaker/
 ├── src/meeting_minutes/
 │   ├── models.py              # Shared Pydantic data models
 │   ├── config.py              # Configuration loading (YAML)
+│   ├── encryption.py          # Fernet encryption at rest
 │   ├── env.py                 # .env file loading (dotenv)
 │   ├── logging.py             # Structured JSON logging
-│   ├── pipeline.py            # Pipeline orchestrator
+│   ├── pipeline.py            # Pipeline orchestrator (with retry)
+│   ├── retention.py           # Data retention policy engine
 │   ├── system1/               # Audio capture & transcription
 │   │   ├── capture.py         #   AudioCaptureEngine (sounddevice, circular buffer)
 │   │   ├── transcribe.py      #   TranscriptionEngine (faster-whisper)
@@ -209,7 +228,9 @@ MeetingMinutesTaker/
 │       ├── deps.py            #   Dependency injection
 │       ├── schemas.py         #   Pydantic response models
 │       ├── ws.py              #   WebSocket (recording status, pipeline progress)
-│       └── routes/            #   Route modules (meetings, search, actions, etc.)
+│       └── routes/            #   Route modules (meetings, search, actions, security, retention, etc.)
+├── data/
+│   └── notes/                 # Live note-taking data (speaker names, notes, instructions)
 ├── web/                       # Svelte frontend (SvelteKit + Tailwind CSS)
 │   └── src/
 │       ├── lib/components/    #   14 reusable components
