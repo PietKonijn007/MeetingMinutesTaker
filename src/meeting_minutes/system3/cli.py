@@ -29,10 +29,12 @@ app = typer.Typer(
 record_app = typer.Typer(help="Recording commands.")
 actions_app = typer.Typer(help="Action item commands.")
 backup_app = typer.Typer(help="Database backup commands.")
+service_app = typer.Typer(help="Manage the auto-start service (macOS).")
 
 app.add_typer(record_app, name="record")
 app.add_typer(actions_app, name="actions")
 app.add_typer(backup_app, name="backup")
+app.add_typer(service_app, name="service")
 
 console = Console()
 err_console = Console(stderr=True)
@@ -589,6 +591,216 @@ def generate_key_cmd():
     console.print(f"[dim]security:[/dim]")
     console.print(f"[dim]  encryption_enabled: true[/dim]")
     console.print(f'[dim]  encryption_key: "{key}"[/dim]')
+
+
+# ---------------------------------------------------------------------------
+# mm service (macOS Launch Agent management)
+# ---------------------------------------------------------------------------
+
+PLIST_NAME = "com.meetingminutes.server"
+PLIST_PATH = Path.home() / "Library" / "LaunchAgents" / f"{PLIST_NAME}.plist"
+
+
+def _get_project_root() -> Path:
+    """Get the project root directory."""
+    return Path(__file__).resolve().parent.parent.parent.parent
+
+
+def _get_mm_binary() -> str:
+    """Get the path to the mm binary."""
+    # Prefer the venv binary
+    venv_mm = _get_project_root() / ".venv" / "bin" / "mm"
+    if venv_mm.exists():
+        return str(venv_mm)
+    # Fallback to whatever mm is in PATH
+    return str(sys.executable).replace("python", "mm")
+
+
+def _generate_plist(project_root: Path, mm_binary: str, port: int = 8080) -> str:
+    """Generate the launchd plist XML."""
+    logs_dir = project_root / "logs"
+    return f"""<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>{PLIST_NAME}</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>{mm_binary}</string>
+        <string>serve</string>
+        <string>--port</string>
+        <string>{port}</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>{project_root}</string>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>{logs_dir / "server.log"}</string>
+    <key>StandardErrorPath</key>
+    <string>{logs_dir / "server.err"}</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
+</dict>
+</plist>
+"""
+
+
+@service_app.command("install")
+def service_install(
+    port: int = typer.Option(8080, "--port", "-p", help="Server port"),
+):
+    """Install the macOS Launch Agent for auto-start on login."""
+    import platform
+
+    if platform.system() != "Darwin":
+        err_console.print("[red]Service management is only supported on macOS.[/red]")
+        raise typer.Exit(code=1)
+
+    project_root = _get_project_root()
+    mm_binary = _get_mm_binary()
+
+    # Create logs directory
+    (project_root / "logs").mkdir(exist_ok=True)
+
+    # Generate and write plist
+    plist_content = _generate_plist(project_root, mm_binary, port)
+    PLIST_PATH.parent.mkdir(parents=True, exist_ok=True)
+    PLIST_PATH.write_text(plist_content)
+
+    console.print(f"[green]Service installed: {PLIST_PATH}[/green]")
+    console.print(f"[dim]Server will auto-start on login (port {port})[/dim]")
+    console.print("[dim]Run 'mm service start' to start now[/dim]")
+
+
+@service_app.command("uninstall")
+def service_uninstall():
+    """Remove the macOS Launch Agent."""
+    if PLIST_PATH.exists():
+        # Stop first if running
+        import subprocess
+
+        subprocess.run(["launchctl", "unload", str(PLIST_PATH)], capture_output=True)
+        PLIST_PATH.unlink()
+        console.print("[green]Service uninstalled.[/green]")
+    else:
+        console.print("[yellow]Service not installed.[/yellow]")
+
+
+@service_app.command("start")
+def service_start():
+    """Start the service now."""
+    if not PLIST_PATH.exists():
+        err_console.print("[red]Service not installed. Run 'mm service install' first.[/red]")
+        raise typer.Exit(code=1)
+
+    import subprocess
+
+    result = subprocess.run(["launchctl", "load", str(PLIST_PATH)], capture_output=True, text=True)
+    if result.returncode == 0:
+        console.print("[green]Service started.[/green]")
+        console.print("[dim]Open http://localhost:8080 in your browser[/dim]")
+    else:
+        # May already be loaded
+        if "already loaded" in result.stderr.lower() or "already bootstrapped" in result.stderr.lower():
+            console.print("[yellow]Service is already running.[/yellow]")
+        else:
+            err_console.print(f"[red]Failed to start: {result.stderr}[/red]")
+
+
+@service_app.command("stop")
+def service_stop():
+    """Stop the service."""
+    if not PLIST_PATH.exists():
+        err_console.print("[red]Service not installed.[/red]")
+        raise typer.Exit(code=1)
+
+    import subprocess
+
+    subprocess.run(["launchctl", "unload", str(PLIST_PATH)], capture_output=True)
+    console.print("[green]Service stopped.[/green]")
+
+
+@service_app.command("status")
+def service_status():
+    """Show service status."""
+    import subprocess
+
+    if not PLIST_PATH.exists():
+        console.print("[yellow]Service not installed.[/yellow]")
+        return
+
+    result = subprocess.run(
+        ["launchctl", "list", PLIST_NAME],
+        capture_output=True,
+        text=True,
+    )
+
+    if result.returncode == 0:
+        # Parse the output for PID and status
+        lines = result.stdout.strip().split("\n")
+        console.print("[green]Service is running.[/green]")
+        for line in lines:
+            console.print(f"  [dim]{line}[/dim]")
+
+        # Check if port is actually responding
+        import urllib.request
+
+        try:
+            urllib.request.urlopen("http://localhost:8080/api/stats", timeout=2)
+            console.print("  [green]API responding at http://localhost:8080[/green]")
+        except Exception:
+            console.print("  [yellow]! API not yet responding (may be starting up)[/yellow]")
+    else:
+        console.print("[yellow]Service is not running.[/yellow]")
+        console.print("[dim]Run 'mm service start' to start it.[/dim]")
+
+
+@service_app.command("logs")
+def service_logs(
+    follow: bool = typer.Option(False, "--follow", "-f", help="Follow log output"),
+    lines: int = typer.Option(50, "--lines", "-n", help="Number of lines to show"),
+):
+    """Show server logs."""
+    import subprocess
+
+    project_root = _get_project_root()
+    log_file = project_root / "logs" / "server.log"
+    err_file = project_root / "logs" / "server.err"
+
+    if not log_file.exists() and not err_file.exists():
+        console.print("[yellow]No log files found. Start the service first.[/yellow]")
+        return
+
+    if follow:
+        # Use tail -f on both log files
+        console.print(f"[dim]Following {log_file.name} and {err_file.name} (Ctrl+C to stop)...[/dim]")
+        try:
+            cmd = ["tail", "-f"]
+            if log_file.exists():
+                cmd.append(str(log_file))
+            if err_file.exists():
+                cmd.append(str(err_file))
+            subprocess.run(cmd)
+        except KeyboardInterrupt:
+            pass
+    else:
+        # Show last N lines
+        for f in [log_file, err_file]:
+            if f.exists():
+                console.print(f"\n[bold]-- {f.name} --[/bold]")
+                result = subprocess.run(
+                    ["tail", f"-{lines}", str(f)],
+                    capture_output=True,
+                    text=True,
+                )
+                console.print(result.stdout)
 
 
 if __name__ == "__main__":

@@ -29,7 +29,42 @@ Record Audio ──► Transcribe ──► Generate Minutes ──► Store & S
 | `planning` | Goals, tasks, estimates, risks |
 | `general` | Summary, discussion points, decisions, actions |
 
-## Quick Start
+## Quick Install
+
+```bash
+git clone https://github.com/PietKonijn007/MeetingMinutesTaker.git
+cd MeetingMinutesTaker
+./install.sh
+```
+
+The install script will:
+- Check Python 3.11+ and Node.js (installs via Homebrew if missing)
+- Install BlackHole 2ch for audio capture
+- Create a Python virtual environment and install all dependencies
+- Build the web frontend
+- Initialize the database
+- Prompt for API keys (Anthropic, HuggingFace)
+- Set up auto-start on login (macOS Launch Agent)
+
+After installation:
+```bash
+mm service start              # Start the server
+open http://localhost:8080     # Open the web UI
+```
+
+### Service Management
+
+```bash
+mm service install    # Install auto-start (runs on login)
+mm service start      # Start now
+mm service stop       # Stop the server
+mm service status     # Check if running
+mm service logs       # View server logs
+mm service logs -f    # Follow logs in real-time
+mm service uninstall  # Remove auto-start
+```
+
+## Quick Start (Manual)
 
 ### Prerequisites
 
@@ -116,6 +151,12 @@ mm actions complete <action_id>                   # Mark done
 | `mm cleanup` | Run retention policy cleanup (delete expired data) |
 | `mm generate-key` | Generate a new encryption key for at-rest encryption |
 | `mm serve` | Start the web UI + API server (supports `--host`, `--port`) |
+| `mm service install` | Install macOS Launch Agent for auto-start on login |
+| `mm service uninstall` | Remove the macOS Launch Agent |
+| `mm service start` | Start the service now |
+| `mm service stop` | Stop the service |
+| `mm service status` | Show service status and API health |
+| `mm service logs` | Show server logs (supports `--follow`, `--lines`) |
 
 ## Web UI
 
