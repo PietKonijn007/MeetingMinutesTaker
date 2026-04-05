@@ -13,6 +13,7 @@
   // Live note-taking during recording
   let speakerNames = $state('');
   let meetingNotes = $state('');
+  let customInstructions = $state('');
   let levelHistory = $state(new Array(24).fill(0));
   let refreshingDevices = $state(false);
   let devicePollTimer = $state(null);
@@ -124,6 +125,7 @@
       const body = {};
       if (meetingNotes.trim()) body.notes = meetingNotes.trim();
       if (speakerNames.trim()) body.speakers = speakerNames.trim();
+      if (customInstructions.trim()) body.instructions = customInstructions.trim();
       await api.stopRecording(body);
       // Recording slot is now free — reset local state immediately
       recState = 'idle';
@@ -133,6 +135,7 @@
       // Clear notes for next recording
       meetingNotes = '';
       speakerNames = '';
+      customInstructions = '';
       addToast('Recording stopped. Processing in background...', 'info');
     } catch (e) {
       addToast(`Failed to stop recording: ${e.message}`, 'error');
@@ -383,7 +386,27 @@
                    focus:border-transparent placeholder-[var(--text-muted)] resize-y"
           ></textarea>
           <p class="text-xs text-[var(--text-muted)] mt-1">
-            Your notes will enhance the AI-generated minutes with your observations and context.
+            Your notes will appear in the meeting minutes and enhance the AI-generated content.
+          </p>
+        </div>
+
+        <!-- Custom LLM instructions -->
+        <div class="mt-3 pt-3 border-t border-[var(--border-subtle)]">
+          <label for="custom-instructions" class="block text-xs font-medium text-[var(--text-secondary)] mb-1">
+            Custom Instructions for AI (optional — tell the AI what to focus on)
+          </label>
+          <textarea
+            id="custom-instructions"
+            bind:value={customInstructions}
+            placeholder="e.g., Focus on action items for the Q2 migration&#10;This is a training session — capture key concepts taught&#10;Pay special attention to customer feedback about the new pricing"
+            rows="3"
+            class="w-full px-3 py-2 bg-[var(--bg-primary)] border border-[var(--border-subtle)] rounded-lg
+                   text-[var(--text-primary)] text-sm font-mono leading-relaxed
+                   focus:outline-none focus:ring-2 focus:ring-[var(--accent)]
+                   focus:border-transparent placeholder-[var(--text-muted)] resize-y"
+          ></textarea>
+          <p class="text-xs text-[var(--text-muted)] mt-1">
+            These instructions are added to the AI prompt — use them to steer what the minutes focus on.
           </p>
         </div>
       </div>

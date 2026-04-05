@@ -151,6 +151,8 @@ async def stop_recording(
             notes_data["notes"] = body.notes
         if body.speakers:
             notes_data["speakers"] = [s.strip() for s in body.speakers.split(",") if s.strip()]
+        if body.instructions:
+            notes_data["instructions"] = body.instructions
         notes_file.write_text(_json.dumps(notes_data, indent=2), encoding="utf-8")
         logger.info("Saved user notes for meeting %s (%d chars, %d speakers)",
                      meeting_id, len(body.notes or ""), len(notes_data.get("speakers", [])))

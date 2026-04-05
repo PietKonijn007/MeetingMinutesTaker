@@ -248,16 +248,20 @@ class PipelineOrchestrator:
         import json as _json
         user_notes = ""
         user_speakers = []
+        user_instructions = ""
         notes_file = self._data_dir / "notes" / f"{meeting_id}.json"
         if notes_file.exists():
             try:
                 notes_data = _json.loads(notes_file.read_text())
                 user_notes = notes_data.get("notes", "")
                 user_speakers = notes_data.get("speakers", [])
+                user_instructions = notes_data.get("instructions", "")
                 if user_notes:
                     _console(f"  User notes: {len(user_notes)} chars")
                 if user_speakers:
                     _console(f"  Speaker names provided: {', '.join(user_speakers)}")
+                if user_instructions:
+                    _console(f"  Custom instructions: {user_instructions[:100]}...")
             except Exception:
                 pass
 
@@ -285,19 +289,33 @@ class PipelineOrchestrator:
             enhanced_transcript = (
                 f"{transcript_data.full_text}\n\n"
                 f"---\n"
-                f"## Meeting Notes (taken by the meeting organizer during the meeting)\n"
-                f"The following notes were taken by the meeting organizer. "
-                f"Use them to enhance the minutes — they capture the organizer's priorities, "
-                f"observations, and context that may not be obvious from the transcript alone. "
-                f"Preserve the structure and emphasis from these notes.\n\n"
+                f"## Organizer's Meeting Notes\n"
+                f"The following notes were taken by the meeting organizer during the meeting. "
+                f"These notes reflect the organizer's priorities and observations. "
+                f"IMPORTANT: Include these notes as a dedicated section called "
+                f"'Organizer Notes' in the meeting minutes output. "
+                f"Also use them to enhance other sections — they capture context "
+                f"that may not be obvious from the transcript alone.\n\n"
                 f"{user_notes}"
             )
             _console(f"  Enhanced transcript with user notes ({len(user_notes)} chars)")
+
+        # Build custom system prompt additions from user instructions
+        custom_system_addendum = ""
+        if user_instructions:
+            custom_system_addendum = (
+                f"\n\n## Additional Instructions from the Meeting Organizer\n"
+                f"The meeting organizer has provided these specific instructions. "
+                f"Follow them carefully in addition to your standard analysis:\n\n"
+                f"{user_instructions}"
+            )
 
         # Try structured generation first
         try:
             _console(f"  Trying structured generation (tool_use)...", "yellow")
             system_prompt, user_prompt = prompt_engine.render_structured(template, context, enhanced_transcript)
+            if custom_system_addendum:
+                system_prompt += custom_system_addendum
             _console(f"  Prompt rendered: {len(user_prompt):,} chars")
             _console(f"  Calling LLM: {provider} / {model}...", "yellow")
 
@@ -346,7 +364,10 @@ class PipelineOrchestrator:
             _console(f"  Calling LLM: {provider} / {model}...", "yellow")
 
             t0 = time.time()
-            llm_response = await llm_client.generate(full_prompt, system_prompt=template.system_prompt)
+            fallback_system = template.system_prompt
+            if custom_system_addendum:
+                fallback_system += custom_system_addendum
+            llm_response = await llm_client.generate(full_prompt, system_prompt=fallback_system)
             t_llm = time.time() - t0
 
             _console(f"  ✓ LLM response received in {t_llm:.1f}s", "green")

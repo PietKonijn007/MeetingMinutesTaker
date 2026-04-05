@@ -191,8 +191,9 @@ class RecordingStartRequest(BaseModel):
 
 
 class RecordingStopRequest(BaseModel):
-    notes: str | None = None      # User's meeting notes (markdown)
-    speakers: str | None = None   # Comma-separated speaker names
+    notes: str | None = None          # User's meeting notes (markdown)
+    speakers: str | None = None       # Comma-separated speaker names
+    instructions: str | None = None   # Custom instructions for the LLM
 
 
 class RecordingStartResponse(BaseModel):
