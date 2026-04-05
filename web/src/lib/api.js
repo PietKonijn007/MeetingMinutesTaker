@@ -64,7 +64,7 @@ export const api = {
   // Recording
   autoDetectDevice: () => request('/auto-detect-device'),
   startRecording: (data = {}) => request('/recording/start', { method: 'POST', body: JSON.stringify(data) }),
-  stopRecording: () => request('/recording/stop', { method: 'POST' }),
+  stopRecording: (data = {}) => request('/recording/stop', { method: 'POST', body: JSON.stringify(data) }),
   getRecordingStatus: () => request('/recording/status'),
   getAudioDevices: () => request('/audio-devices'),
   getLanguages: () => request('/languages'),

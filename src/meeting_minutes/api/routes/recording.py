@@ -19,6 +19,7 @@ from meeting_minutes.api.schemas import (
     RecordingStartRequest,
     RecordingStartResponse,
     RecordingStatusResponse,
+    RecordingStopRequest,
 )
 from meeting_minutes.config import AppConfig
 
@@ -106,8 +107,9 @@ def start_recording(
 @router.post("/api/recording/stop")
 async def stop_recording(
     config: Annotated[AppConfig, Depends(get_config)],
+    body: RecordingStopRequest = RecordingStopRequest(),
 ):
-    """Stop recording and trigger the pipeline."""
+    """Stop recording and trigger the pipeline. Optionally include notes and speaker names."""
     if _current_recording["state"] != "recording":
         raise HTTPException(status_code=409, detail="Not currently recording")
 
@@ -136,6 +138,22 @@ async def stop_recording(
     # Clean up state file
     state_file = Path("/tmp/mm_recording_state.json")
     state_file.unlink(missing_ok=True)
+
+    # Save user notes and speaker names alongside the recording
+    if body.notes or body.speakers:
+        import json as _json
+        data_dir = Path(config.data_dir).expanduser()
+        notes_dir = data_dir / "notes"
+        notes_dir.mkdir(parents=True, exist_ok=True)
+        notes_file = notes_dir / f"{meeting_id}.json"
+        notes_data = {}
+        if body.notes:
+            notes_data["notes"] = body.notes
+        if body.speakers:
+            notes_data["speakers"] = [s.strip() for s in body.speakers.split(",") if s.strip()]
+        notes_file.write_text(_json.dumps(notes_data, indent=2), encoding="utf-8")
+        logger.info("Saved user notes for meeting %s (%d chars, %d speakers)",
+                     meeting_id, len(body.notes or ""), len(notes_data.get("speakers", [])))
 
     # Create pipeline job entry — starts as "queued" until the worker picks it up
     _pipeline_jobs[meeting_id] = {

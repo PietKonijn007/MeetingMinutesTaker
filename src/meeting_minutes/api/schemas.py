@@ -190,6 +190,11 @@ class RecordingStartRequest(BaseModel):
     language: str | None = None  # ISO code ("en", "nl", "fr") or null for auto-detect
 
 
+class RecordingStopRequest(BaseModel):
+    notes: str | None = None      # User's meeting notes (markdown)
+    speakers: str | None = None   # Comma-separated speaker names
+
+
 class RecordingStartResponse(BaseModel):
     meeting_id: str
     status: str = "recording"

@@ -35,17 +35,17 @@ backup:
   interval_hours: 1
 obsidian:
   enabled: true
-  vault_path: "/Users/jurgenhofkens/Documents/NetApp/Meeting Minutes"
+  vault_path: /Users/jurgenhofkens/Documents/NetApp/Meeting Minutes
 api:
-  host: "127.0.0.1"
+  host: 127.0.0.1
   port: 8080
   cors_origins:
-    - "http://localhost:8080"
-    - "http://127.0.0.1:8080"
-    - "http://localhost:3000"
-    - "http://127.0.0.1:3000"
+  - http://localhost:8080
+  - http://127.0.0.1:8080
+  - http://localhost:3000
+  - http://127.0.0.1:3000
 retention:
-  audio_days: 90
+  audio_days: 40
   transcript_days: -1
   minutes_days: -1
   backup_days: 30

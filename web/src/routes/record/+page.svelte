@@ -9,6 +9,10 @@
   let selectedLanguage = $state('auto');
   let startingRecording = $state(false);
   let stoppingRecording = $state(false);
+
+  // Live note-taking during recording
+  let speakerNames = $state('');
+  let meetingNotes = $state('');
   let levelHistory = $state(new Array(24).fill(0));
   let refreshingDevices = $state(false);
   let devicePollTimer = $state(null);
@@ -117,12 +121,18 @@
   async function stopRecording() {
     stoppingRecording = true;
     try {
-      await api.stopRecording();
+      const body = {};
+      if (meetingNotes.trim()) body.notes = meetingNotes.trim();
+      if (speakerNames.trim()) body.speakers = speakerNames.trim();
+      await api.stopRecording(body);
       // Recording slot is now free — reset local state immediately
       recState = 'idle';
       recMeetingId = null;
       recElapsed = 0;
       levelHistory = new Array(24).fill(0);
+      // Clear notes for next recording
+      meetingNotes = '';
+      speakerNames = '';
       addToast('Recording stopped. Processing in background...', 'info');
     } catch (e) {
       addToast(`Failed to stop recording: ${e.message}`, 'error');
@@ -338,6 +348,44 @@
             style="height: {barHeight}px; background-color: {isActive ? 'var(--accent)' : 'var(--border-subtle)'}; opacity: {isActive ? 0.5 + level * 0.5 : 0.3}"
           ></div>
         {/each}
+      </div>
+
+      <!-- Live note-taking area -->
+      <div class="w-full max-w-2xl bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-xl p-4 mb-6">
+        <!-- Speaker names -->
+        <div class="mb-3">
+          <label for="speaker-names" class="block text-xs font-medium text-[var(--text-secondary)] mb-1">
+            Speaker Names (comma-separated — helps identify who said what)
+          </label>
+          <input
+            id="speaker-names"
+            bind:value={speakerNames}
+            placeholder="e.g., Alice, Bob, Carol"
+            class="w-full px-3 py-2 bg-[var(--bg-primary)] border border-[var(--border-subtle)] rounded-lg
+                   text-[var(--text-primary)] text-sm focus:outline-none focus:ring-2 focus:ring-[var(--accent)]
+                   focus:border-transparent placeholder-[var(--text-muted)]"
+          />
+        </div>
+
+        <!-- Meeting notes -->
+        <div>
+          <label for="meeting-notes" class="block text-xs font-medium text-[var(--text-secondary)] mb-1">
+            Meeting Notes (markdown — will be merged with transcript for better minutes)
+          </label>
+          <textarea
+            id="meeting-notes"
+            bind:value={meetingNotes}
+            placeholder="Type your notes here as the meeting happens...&#10;&#10;- Key point discussed&#10;- Action item for Bob&#10;- Decision: go with option A"
+            rows="8"
+            class="w-full px-3 py-2 bg-[var(--bg-primary)] border border-[var(--border-subtle)] rounded-lg
+                   text-[var(--text-primary)] text-sm font-mono leading-relaxed
+                   focus:outline-none focus:ring-2 focus:ring-[var(--accent)]
+                   focus:border-transparent placeholder-[var(--text-muted)] resize-y"
+          ></textarea>
+          <p class="text-xs text-[var(--text-muted)] mt-1">
+            Your notes will enhance the AI-generated minutes with your observations and context.
+          </p>
+        </div>
       </div>
 
       <!-- Stop button -->

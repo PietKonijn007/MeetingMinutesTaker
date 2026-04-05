@@ -244,8 +244,25 @@ class PipelineOrchestrator:
         )
         _console(f"  Template selected: {template.name}")
 
-        # Build context
-        attendees = [s.name or s.label for s in tj.speakers]
+        # Load user notes and speaker names if available
+        import json as _json
+        user_notes = ""
+        user_speakers = []
+        notes_file = self._data_dir / "notes" / f"{meeting_id}.json"
+        if notes_file.exists():
+            try:
+                notes_data = _json.loads(notes_file.read_text())
+                user_notes = notes_data.get("notes", "")
+                user_speakers = notes_data.get("speakers", [])
+                if user_notes:
+                    _console(f"  User notes: {len(user_notes)} chars")
+                if user_speakers:
+                    _console(f"  Speaker names provided: {', '.join(user_speakers)}")
+            except Exception:
+                pass
+
+        # Build context — prefer user-provided speaker names over diarized labels
+        attendees = user_speakers if user_speakers else [s.name or s.label for s in tj.speakers]
         context = MeetingContext(
             meeting_id=meeting_id,
             title=f"Meeting {meeting_id[:8]}",
@@ -256,16 +273,31 @@ class PipelineOrchestrator:
         )
         _console(f"  Context: {context.date} | {context.duration} | {len(attendees)} attendees")
 
-        # Render prompt and generate
+        # Render prompt and generate — inject user notes if available
         prompt_engine = PromptTemplateEngine(templates_dir)
         provider = gen_config.llm.primary_provider
         model = gen_config.llm.model
         llm_client = LLMClient(gen_config.llm)
 
+        # Enhance transcript with user notes
+        enhanced_transcript = transcript_data.full_text
+        if user_notes:
+            enhanced_transcript = (
+                f"{transcript_data.full_text}\n\n"
+                f"---\n"
+                f"## Meeting Notes (taken by the meeting organizer during the meeting)\n"
+                f"The following notes were taken by the meeting organizer. "
+                f"Use them to enhance the minutes — they capture the organizer's priorities, "
+                f"observations, and context that may not be obvious from the transcript alone. "
+                f"Preserve the structure and emphasis from these notes.\n\n"
+                f"{user_notes}"
+            )
+            _console(f"  Enhanced transcript with user notes ({len(user_notes)} chars)")
+
         # Try structured generation first
         try:
             _console(f"  Trying structured generation (tool_use)...", "yellow")
-            system_prompt, user_prompt = prompt_engine.render_structured(template, context, transcript_data.full_text)
+            system_prompt, user_prompt = prompt_engine.render_structured(template, context, enhanced_transcript)
             _console(f"  Prompt rendered: {len(user_prompt):,} chars")
             _console(f"  Calling LLM: {provider} / {model}...", "yellow")
 
@@ -309,7 +341,7 @@ class PipelineOrchestrator:
             _console(f"  Falling back to text+regex path...", "yellow")
 
             # Fall back to old text+regex path
-            full_prompt = prompt_engine.render(template, context, transcript_data.full_text)
+            full_prompt = prompt_engine.render(template, context, enhanced_transcript)
             _console(f"  Prompt rendered: {len(full_prompt):,} chars")
             _console(f"  Calling LLM: {provider} / {model}...", "yellow")
 
