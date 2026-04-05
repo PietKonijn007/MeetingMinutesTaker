@@ -250,12 +250,22 @@
               class="w-full px-3 py-2 bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg text-sm text-[var(--text-primary)]
                      focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
             >
-              <option value="tiny">tiny (fastest, least accurate)</option>
-              <option value="base">base (fast, okay accuracy)</option>
-              <option value="small">small (balanced)</option>
-              <option value="medium">medium (good accuracy)</option>
-              <option value="large-v3">large-v3 (best accuracy, slowest)</option>
+              <optgroup label="Standard Models">
+                <option value="tiny">tiny (fastest, least accurate)</option>
+                <option value="base">base (fast, okay accuracy)</option>
+                <option value="small">small (balanced)</option>
+                <option value="medium">medium (recommended)</option>
+                <option value="large-v3">large-v3 (best accuracy, ~10GB RAM)</option>
+              </optgroup>
+              <optgroup label="Distil-Whisper (5-6x faster, <1% quality loss)">
+                <option value="distil-small.en">distil-small.en (English, very fast)</option>
+                <option value="distil-medium.en">distil-medium.en (English, fast + accurate)</option>
+                <option value="distil-large-v3">distil-large-v3 (all languages, fast + accurate)</option>
+              </optgroup>
             </select>
+            <p class="text-xs text-[var(--text-muted)] mt-1">
+              Distil models are 5-6x faster with &lt;1% quality loss. Apple Silicon Metal acceleration is auto-detected.
+            </p>
           </div>
 
           <div>
