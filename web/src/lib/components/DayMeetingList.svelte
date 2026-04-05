@@ -80,6 +80,13 @@
             <span class="text-[10px] text-[var(--text-muted)]">
               {formatDuration(meeting.duration)}
             </span>
+            {#if meeting.effectiveness_score > 0}
+              <span class="text-[10px] inline-flex gap-px" title="Effectiveness: {meeting.effectiveness_score}/5">
+                {#each Array(5) as _, i}
+                  <span class="{i < meeting.effectiveness_score ? 'text-yellow-400' : 'text-[var(--text-muted)] opacity-30'}">★</span>
+                {/each}
+              </span>
+            {/if}
           </div>
           {#if meeting.attendees?.length}
             <p class="text-[10px] text-[var(--text-muted)] mt-1 truncate">

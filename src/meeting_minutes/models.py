@@ -136,6 +136,7 @@ class LLMUsage(BaseModel):
 class ParticipantInfo(BaseModel):
     name: str
     role: str | None = None  # facilitator, presenter, contributor, observer
+    sentiment: str | None = None  # positive, neutral, negative, mixed
 
 
 class DiscussionPoint(BaseModel):

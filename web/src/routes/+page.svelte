@@ -65,6 +65,7 @@
         summary: m.summary,
         action_count: m.action_item_count || 0,
         decision_count: m.decision_count || 0,
+        effectiveness_score: m.effectiveness_score || 0,
       }));
     } catch (e) {
       console.error('Failed to load meetings:', e);

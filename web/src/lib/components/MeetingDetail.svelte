@@ -79,6 +79,8 @@
         minutes_markdown: raw.minutes?.markdown_content || null,
         summary: raw.minutes?.summary || raw.summary || null,
         duration: raw.duration,
+        participant_sentiments: raw.participant_sentiments || {},
+        effectiveness_score: raw.effectiveness_score || 0,
       };
     } catch (e) {
       console.error('Failed to load meeting:', e);
@@ -133,6 +135,19 @@
     }
   }
 
+  function sentimentColor(sentiment) {
+    switch (sentiment) {
+      case 'positive': return 'bg-green-400';
+      case 'negative': return 'bg-red-400';
+      case 'mixed': return 'bg-yellow-400';
+      default: return 'bg-gray-400';
+    }
+  }
+
+  function sentimentLabel(sentiment) {
+    return sentiment ? sentiment.charAt(0).toUpperCase() + sentiment.slice(1) : 'Unknown';
+  }
+
   function seekToTimestamp(seconds) {
     audioPlayerRef?.seekTo(seconds);
   }
@@ -180,6 +195,13 @@
           {meeting.attendees.length} people
         </span>
       {/if}
+      {#if meeting.effectiveness_score > 0}
+        <span class="inline-flex items-center gap-0.5 px-2.5 py-1 bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-full text-xs" title="Effectiveness score: {meeting.effectiveness_score}/5">
+          {#each Array(5) as _, i}
+            <span class="{i < meeting.effectiveness_score ? 'text-yellow-400' : 'text-[var(--text-muted)]'}">★</span>
+          {/each}
+        </span>
+      {/if}
     </div>
 
     <!-- Attendees -->
@@ -190,6 +212,12 @@
             <div class="flex items-center gap-1.5 px-2 py-1 bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-full">
               <PersonAvatar name={attendee} size="sm" />
               <span class="text-xs text-[var(--text-secondary)]">{attendee}</span>
+              {#if meeting.participant_sentiments?.[attendee]}
+                <span
+                  class="w-2 h-2 rounded-full {sentimentColor(meeting.participant_sentiments[attendee])}"
+                  title="{sentimentLabel(meeting.participant_sentiments[attendee])}"
+                ></span>
+              {/if}
             </div>
           {/each}
           {#if !showAllAttendees && meeting.attendees.length > 5}

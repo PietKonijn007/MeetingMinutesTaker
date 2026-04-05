@@ -40,6 +40,28 @@ router = APIRouter(prefix="/api/meetings", tags=["meetings"])
 
 
 def _meeting_to_list_item(m: MeetingORM) -> MeetingListItem:
+    # A4: Compute effectiveness score from structured JSON for list view
+    effectiveness_score = 0
+    if m.minutes and m.minutes.structured_json:
+        try:
+            import json
+            structured = json.loads(m.minutes.structured_json)
+            eff = structured.get("meeting_effectiveness") or {}
+            score = 0
+            if eff.get("had_clear_agenda"):
+                score += 1
+            if eff.get("decisions_made", 0) > 0:
+                score += 1
+            if eff.get("action_items_assigned", 0) > 0:
+                score += 1
+            if eff.get("unresolved_items", 0) == 0:
+                score += 1
+            if len(structured.get("discussion_points", [])) >= 2 and len(structured.get("action_items", [])) >= 1:
+                score += 1
+            effectiveness_score = min(score, 5)
+        except Exception:
+            pass
+
     return MeetingListItem(
         meeting_id=m.meeting_id,
         title=m.title,
@@ -51,6 +73,7 @@ def _meeting_to_list_item(m: MeetingORM) -> MeetingListItem:
         attendee_names=[a.name for a in m.attendees],
         action_item_count=len(m.action_items),
         decision_count=len(m.decisions),
+        effectiveness_score=effectiveness_score,
     )
 
 
@@ -96,6 +119,38 @@ def _meeting_to_detail(m: MeetingORM) -> MeetingDetail:
     transcript_text = m.transcript.full_text if m.transcript else None
     audio_file_path = m.transcript.audio_file_path if m.transcript else None
 
+    # Extract participant sentiments and effectiveness score from structured JSON
+    participant_sentiments: dict[str, str] = {}
+    effectiveness_score = 0
+
+    if m.minutes and m.minutes.structured_json:
+        try:
+            import json
+            structured = json.loads(m.minutes.structured_json)
+
+            # N7: Per-speaker sentiment
+            for p in structured.get("participants", []):
+                if p.get("name") and p.get("sentiment"):
+                    participant_sentiments[p["name"]] = p["sentiment"]
+
+            # A4: Effectiveness score (1-5, computed from structured data)
+            eff = structured.get("meeting_effectiveness") or {}
+            score = 0
+            if eff.get("had_clear_agenda"):
+                score += 1
+            if eff.get("decisions_made", 0) > 0:
+                score += 1
+            if eff.get("action_items_assigned", 0) > 0:
+                score += 1
+            if eff.get("unresolved_items", 0) == 0:
+                score += 1
+            # Bonus point: has substantial discussion + outcomes
+            if len(structured.get("discussion_points", [])) >= 2 and len(structured.get("action_items", [])) >= 1:
+                score += 1
+            effectiveness_score = min(score, 5)
+        except Exception:
+            pass
+
     return MeetingDetail(
         meeting_id=m.meeting_id,
         title=m.title,
@@ -110,6 +165,8 @@ def _meeting_to_detail(m: MeetingORM) -> MeetingDetail:
         decisions=decisions,
         transcript_text=transcript_text,
         audio_file_path=audio_file_path,
+        participant_sentiments=participant_sentiments,
+        effectiveness_score=effectiveness_score,
     )
 
 

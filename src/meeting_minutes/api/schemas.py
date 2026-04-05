@@ -88,6 +88,7 @@ class MeetingListItem(BaseModel):
     attendee_names: list[str] = []
     action_item_count: int = 0
     decision_count: int = 0
+    effectiveness_score: int = 0  # 0-5, 0 = unknown
 
 
 class MeetingDetail(BaseModel):
@@ -104,6 +105,8 @@ class MeetingDetail(BaseModel):
     decisions: list[DecisionResponse] = []
     transcript_text: str | None = None
     audio_file_path: str | None = None
+    participant_sentiments: dict[str, str] = {}  # name -> sentiment
+    effectiveness_score: int = 0  # 0-5, 0 = unknown
 
 
 class MeetingUpdate(BaseModel):

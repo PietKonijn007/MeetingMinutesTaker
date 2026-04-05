@@ -379,6 +379,21 @@ class PipelineOrchestrator:
             if parsed_minutes.title:
                 context.title = parsed_minutes.title
 
+            # N11: Meeting type refinement — check if LLM suggests a different type
+            if hasattr(structured, 'meeting_type_suggestion') and structured.meeting_type_suggestion:
+                suggested = structured.meeting_type_suggestion
+                if suggested != tj.meeting_type and suggested != "other":
+                    self._logger.info(
+                        "Meeting type refinement: classified as '%s' but content suggests '%s'",
+                        tj.meeting_type, suggested,
+                    )
+                    _console(
+                        f"  ℹ Type refinement: classified as '{tj.meeting_type}' but content suggests '{suggested}'",
+                        "dim",
+                    )
+                    # Update the meeting type for storage
+                    context.meeting_type = suggested
+
             _console(f"  ✓ Structured generation succeeded", "green")
             _console(f"    Title: {parsed_minutes.title}")
             _console(f"    Sentiment: {parsed_minutes.sentiment}")

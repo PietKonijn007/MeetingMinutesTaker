@@ -24,6 +24,7 @@ STRUCTURED_SYSTEM_PROMPT = """You are an expert meeting minutes assistant. Analy
 Guidelines:
 - Generate a specific, descriptive title (not generic like "Team Meeting")
 - Identify all participants and their roles in the discussion
+- For each participant, assess their sentiment throughout the meeting (positive, neutral, negative, or mixed)
 - Capture every discussion point with a topic summary
 - Extract ALL action items with owners and due dates when mentioned
 - Record ALL decisions with rationale
