@@ -19,7 +19,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
 # ─── Check Python ────────────────────────────────────────────────────
-echo -e "${BOLD}[1/8] Checking Python...${NC}"
+echo -e "${BOLD}[1/9] Checking Python...${NC}"
 PYTHON=""
 for p in python3.12 python3.11 python3; do
     if command -v "$p" &>/dev/null; then
@@ -41,7 +41,7 @@ if [ -z "$PYTHON" ]; then
 fi
 
 # ─── Check Node.js ───────────────────────────────────────────────────
-echo -e "${BOLD}[2/8] Checking Node.js...${NC}"
+echo -e "${BOLD}[2/9] Checking Node.js...${NC}"
 if command -v node &>/dev/null; then
     NODE_VERSION=$(node --version)
     echo -e "  ${GREEN}✓${NC} Found Node.js $NODE_VERSION"
@@ -57,7 +57,7 @@ else
 fi
 
 # ─── Install BlackHole (audio loopback) ──────────────────────────────
-echo -e "${BOLD}[3/8] Checking BlackHole 2ch...${NC}"
+echo -e "${BOLD}[3/9] Checking BlackHole 2ch...${NC}"
 if system_profiler SPAudioDataType 2>/dev/null | grep -q "BlackHole" || \
    ls /Library/Audio/Plug-Ins/HAL/ 2>/dev/null | grep -qi "blackhole"; then
     echo -e "  ${GREEN}✓${NC} BlackHole 2ch is installed"
@@ -72,7 +72,7 @@ else
 fi
 
 # ─── Create Python virtual environment ───────────────────────────────
-echo -e "${BOLD}[4/8] Setting up Python environment...${NC}"
+echo -e "${BOLD}[4/9] Setting up Python environment...${NC}"
 if [ ! -d ".venv" ]; then
     "$PYTHON" -m venv .venv
     echo -e "  ${GREEN}✓${NC} Virtual environment created"
@@ -92,7 +92,7 @@ pip install --quiet -e ".[dev]"
 echo -e "  ${GREEN}✓${NC} Python dependencies installed"
 
 # ─── Build frontend ─────────────────────────────────────────────────
-echo -e "${BOLD}[5/8] Building web frontend...${NC}"
+echo -e "${BOLD}[5/9] Building web frontend...${NC}"
 cd web
 if [ ! -d "node_modules" ]; then
     npm install --silent 2>/dev/null
@@ -102,12 +102,12 @@ cd ..
 echo -e "  ${GREEN}✓${NC} Frontend built"
 
 # ─── Initialize database ────────────────────────────────────────────
-echo -e "${BOLD}[6/8] Initializing database...${NC}"
+echo -e "${BOLD}[6/9] Initializing database...${NC}"
 .venv/bin/mm init 2>/dev/null
 echo -e "  ${GREEN}✓${NC} Database initialized"
 
 # ─── Configure API keys ─────────────────────────────────────────────
-echo -e "${BOLD}[7/8] Configuring API keys...${NC}"
+echo -e "${BOLD}[7/9] Configuring API keys...${NC}"
 if [ -f ".env" ]; then
     echo -e "  ${GREEN}✓${NC} .env file exists"
 else
@@ -131,10 +131,21 @@ else
 fi
 
 # ─── Install macOS service ───────────────────────────────────────────
-echo -e "${BOLD}[8/8] Setting up auto-start service...${NC}"
+echo -e "${BOLD}[8/9] Setting up auto-start service...${NC}"
 .venv/bin/mm service install 2>/dev/null && \
     echo -e "  ${GREEN}✓${NC} Service installed (auto-starts on login)" || \
     echo -e "  ${YELLOW}! Service install skipped (run 'mm service install' later)${NC}"
+
+# ─── Symlink mm command ─────────────────────────────────────────────
+echo -e "${BOLD}[9/9] Making 'mm' command available...${NC}"
+LINK_DIR="/usr/local/bin"
+if [ -w "$LINK_DIR" ] || [ -w "$(dirname "$LINK_DIR")" ]; then
+    ln -sf "$SCRIPT_DIR/.venv/bin/mm" "$LINK_DIR/mm"
+    echo -e "  ${GREEN}✓${NC} Linked mm → $LINK_DIR/mm"
+else
+    sudo ln -sf "$SCRIPT_DIR/.venv/bin/mm" "$LINK_DIR/mm"
+    echo -e "  ${GREEN}✓${NC} Linked mm → $LINK_DIR/mm (via sudo)"
+fi
 
 # ─── Done ────────────────────────────────────────────────────────────
 echo ""
