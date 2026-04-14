@@ -5,8 +5,9 @@
 The Meeting Minutes Taker is a local-first Python application organized as a three-system pipeline. System 1 captures audio and produces structured transcripts. System 2 generates LLM-powered meeting minutes from those transcripts. System 3 stores everything in SQLite and provides full-text search via a CLI. The systems communicate through JSON files on a shared filesystem, orchestrated by a pipeline coordinator that supports automatic, semi-automatic, and manual modes.
 
 The MVP targets single-user local deployment with:
-- `sounddevice` + `faster-whisper` + `pyannote.audio` for audio capture, transcription, and diarization
-- Anthropic Claude (with OpenAI fallback) for minutes generation
+- `sounddevice` + pluggable transcription engines (`faster-whisper` default, `whisper.cpp` optional) + `pyannote.audio` for audio capture, transcription, and diarization
+- Multi-provider LLM support: Anthropic Claude (primary), OpenAI, OpenRouter (200+ models), and **Ollama for fully local/offline summarization**
+- Hardware detection module for GPU/RAM-aware model recommendations
 - SQLite + FTS5 for storage and search
 - `typer` CLI as the primary user interface
 - `watchdog` for filesystem-based event coordination
@@ -63,13 +64,14 @@ meeting-minutes-taker/
 │       ├── __init__.py
 │       ├── config.py                # Configuration loading & validation
 │       ├── encryption.py            # Fernet encryption at rest
+│       ├── hardware.py              # GPU/RAM detection & model recommendations
 │       ├── models.py                # Shared data models (Pydantic)
 │       ├── logging.py               # Structured JSON logging
 │       ├── retention.py             # Data retention policy engine
 │       ├── system1/
 │       │   ├── __init__.py
 │       │   ├── capture.py           # Audio capture engine
-│       │   ├── transcribe.py        # Transcription engine (Whisper)
+│       │   ├── transcribe.py        # Transcription engine factory (faster-whisper, whisper.cpp)
 │       │   ├── diarize.py           # Speaker diarization
 │       │   └── output.py            # Transcript JSON writer
 │       ├── system2/
@@ -77,7 +79,7 @@ meeting-minutes-taker/
 │       │   ├── ingest.py            # Transcript ingestion & validation
 │       │   ├── router.py            # Meeting type routing
 │       │   ├── prompts.py           # Prompt construction (Jinja2)
-│       │   ├── llm_client.py        # LLM API client (Anthropic/OpenAI)
+│       │   ├── llm_client.py        # LLM API client (Anthropic/OpenAI/OpenRouter/Ollama)
 │       │   ├── schema.py            # StructuredMinutesResponse (tool_use schema)
 │       │   ├── parser.py            # LLM response parser
 │       │   ├── quality.py           # Quality assurance checks
@@ -193,18 +195,35 @@ sequenceDiagram
       Available via API endpoint GET /api/auto-detect-device."""
   ```
 
-#### TranscriptionEngine
+#### TranscriptionEngine (Factory Pattern)
 - **Responsibility**: Convert audio to text with timestamps and confidence scores
+- **Architecture**: Abstract base class (`BaseTranscriptionEngine`) with pluggable backends selected via `get_transcription_engine()` factory based on `config.transcription.primary_engine`
 - **Interface**:
   ```python
-  class TranscriptionEngine:
+  class BaseTranscriptionEngine(abc.ABC):
       def __init__(self, config: TranscriptionConfig) -> None: ...
+      @abc.abstractmethod
       def transcribe(self, audio_path: Path) -> TranscriptionResult:
-          """Transcribe audio file. Returns segments with word-level timestamps."""
+          """Transcribe audio file. Returns segments with timestamps."""
+      @abc.abstractmethod
       def detect_language(self, audio_path: Path) -> str: ...
+
+  class FasterWhisperEngine(BaseTranscriptionEngine):
+      """CTranslate2 backend. GPU-accelerated (Metal/CUDA). Best accuracy."""
+
+  class WhisperCppEngine(BaseTranscriptionEngine):
+      """GGML backend via pywhispercpp. Lower memory, faster on CPU."""
+
+  def get_transcription_engine(config: TranscriptionConfig) -> BaseTranscriptionEngine:
+      """Factory: creates engine based on config.primary_engine."""
+
+  def get_available_engines() -> list[dict[str, str]]:
+      """Returns available engines with install status."""
   ```
-- **Dependencies**: `faster-whisper`, configuration
+- **Engines**: `whisper` / `faster-whisper` -> `FasterWhisperEngine`, `whisper-cpp` / `whisper.cpp` -> `WhisperCppEngine`
+- **Dependencies**: `faster-whisper` (default), `pywhispercpp` (optional), configuration
 - **Output**: `TranscriptionResult` with segments, full_text, language, confidence scores
+- **Backwards compatibility**: `TranscriptionEngine` is aliased to `FasterWhisperEngine`
 
 #### DiarizationEngine
 - **Responsibility**: Identify and label distinct speakers
@@ -297,13 +316,19 @@ sequenceDiagram
       async def generate(self, prompt: str, system_prompt: str) -> LLMResponse:
           """Send prompt to configured LLM provider. Returns response with token usage."""
       async def generate_structured(
-          self, prompt: str, system_prompt: str, schema: type
-      ) -> StructuredLLMResponse:
-          """Send prompt with tool_use for guaranteed JSON. Returns structured response."""
+          self, prompt: str, system_prompt: str, tool_definition: dict | None
+      ) -> LLMResponse:
+          """Generate structured output. Uses Anthropic tool_use when available,
+          JSON-mode for Ollama/OpenAI/OpenRouter."""
   ```
-- **Providers**: Anthropic (primary), OpenAI (fallback)
-- **Retry**: Up to 3 attempts with exponential backoff
-- **Output**: `LLMResponse` with text, token counts, cost, processing time
+- **Providers**: Anthropic (primary), OpenAI, OpenRouter, **Ollama (local)**
+- **Provider methods**: `_call_anthropic()`, `_call_openai()`, `_call_openrouter()`, `_call_ollama()`
+- **Structured generation**:
+  - Anthropic: native `tool_use` with `tool_choice`
+  - Ollama/OpenAI/OpenRouter: `_generate_structured_via_json()` — embeds schema in system prompt, strips markdown fences, parses JSON
+- **Ollama specifics**: Uses OpenAI-compatible API at configurable `base_url` (default `localhost:11434`), no API key required, $0.00 cost tracking
+- **Retry**: Up to 3 attempts with exponential backoff, then fallback provider
+- **Output**: `LLMResponse` with text, token counts, cost, processing time, optional `structured_data`
 
 #### StructuredMinutesAdapter
 - **Responsibility**: Convert StructuredMinutesResponse (from tool_use) to ParsedMinutes

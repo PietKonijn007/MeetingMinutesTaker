@@ -72,8 +72,8 @@ Incremental implementation of the three-system meeting minutes pipeline. Each ta
   - [x]* 5.6 Write property test for prompt construction
     - **Property 10: Prompt construction completeness**
     - **Validates: Requirements 5.3**
-  - [x] 5.7 Implement LLMClient in `src/meeting_minutes/system2/llm_client.py` — async Anthropic/OpenAI API calls, retry with exponential backoff, fallback provider, token usage tracking, cost calculation
-    - _Requirements: 5.6, 5.7_
+  - [x] 5.7 Implement LLMClient in `src/meeting_minutes/system2/llm_client.py` — async Anthropic/OpenAI/OpenRouter/Ollama API calls, retry with exponential backoff, fallback provider, token usage tracking, cost calculation
+    - _Requirements: 5.6, 5.7, 5.8, 5.9_
   - [x] 5.8 Implement MinutesParser in `src/meeting_minutes/system2/parser.py` — parse LLM markdown response into ParsedMinutes (summary, sections, action_items, decisions, key_topics)
     - _Requirements: 5.4_
   - [x]* 5.9 Write property test for minutes parser
@@ -285,6 +285,22 @@ Incremental implementation of the three-system meeting minutes pipeline. Each ta
   - [x] 29.5 Update specs/02-minutes-generation.md with custom instructions, sentiment, effectiveness
   - [x] 29.6 Update .kiro/specs design.md with new files and config models
   - [x] 29.7 Update .kiro/specs tasks.md with batch 2 tasks
+
+- [x] 30. Local AI Support
+  - [x] 30.1 Implement Ollama LLM provider in `src/meeting_minutes/system2/llm_client.py` — `_call_ollama()` via OpenAI-compatible API, no API key required, configurable base_url, $0.00 cost tracking
+    - _Requirements: 5.8, 5.9_
+  - [x] 30.2 Implement JSON-mode structured generation for non-Anthropic providers — `_generate_structured_via_json()` embeds schema in system prompt, strips markdown fences, parses JSON
+    - _Requirements: 5.9_
+  - [x] 30.3 Add Ollama model fetcher in `src/meeting_minutes/api/model_fetcher.py` — queries local Ollama `/api/tags` for pulled models with size/family/quantization info
+  - [x] 30.4 Create hardware detection module in `src/meeting_minutes/hardware.py` — detects GPU type (CUDA/Metal/CPU), VRAM, RAM, recommends Whisper + Ollama models, checks Ollama install/running status
+  - [x] 30.5 Refactor transcription engine to factory pattern in `src/meeting_minutes/system1/transcribe.py` — `BaseTranscriptionEngine` ABC, `FasterWhisperEngine` (existing), `WhisperCppEngine` (new), `get_transcription_engine()` factory, `get_available_engines()` status checker
+    - _Requirements: 2.1, 2.2_
+  - [x] 30.6 Add `OllamaConfig` to config with `base_url` and `timeout_seconds`, document engine/provider options in config comments
+    - _Requirements: 13.1_
+  - [x] 30.7 Add API endpoints `GET /api/config/hardware` and `GET /api/config/transcription-engines`, enable Ollama model fetching in `/api/config/provider-models`
+  - [x] 30.8 Update frontend Settings page — transcription engine selector with install badges, Ollama status indicator, hardware-aware model recommendations, dynamic Ollama model dropdown
+  - [x] 30.9 Add `[local-ai]` optional dependency group in pyproject.toml (`pywhispercpp`, `psutil`)
+  - [x] 30.10 Update all documentation — README, specs (00-05), USER_GUIDE, design.md, requirements.md, tasks.md
 
 ## Notes
 

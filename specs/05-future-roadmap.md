@@ -4,6 +4,19 @@ This document contains detailed specifications for features not yet implemented.
 
 ---
 
+## Recently Implemented
+
+### Local AI Support (Implemented)
+
+The following local AI features have been implemented:
+
+- **Ollama LLM provider**: Full integration with Ollama's OpenAI-compatible API for local, free, offline meeting summarization. JSON-mode structured generation for meeting minutes output. Configurable base URL and timeout. Model discovery from local Ollama instance.
+- **Transcription engine factory**: Pluggable transcription backends via `BaseTranscriptionEngine` ABC — Faster Whisper (CTranslate2, default) and Whisper.cpp (GGML quantized, optional via `pywhispercpp`).
+- **Hardware detection**: Auto-detects GPU type (CUDA/Metal/CPU), VRAM, RAM and recommends appropriate Whisper and Ollama models. Available via `GET /api/config/hardware`.
+- **Settings UI updates**: Transcription engine selector with install status badges, Ollama status indicator, hardware-aware model recommendations, dynamic Ollama model dropdown.
+
+---
+
 ## Security
 
 ### S2: API Authentication (JWT / API Key)

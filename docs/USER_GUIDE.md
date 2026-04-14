@@ -11,15 +11,16 @@ This guide walks you through installing the system, setting up audio capture, co
 3. [Audio Setup (macOS)](#3-audio-setup-macos)
 4. [Configuration](#4-configuration)
 5. [API Keys](#5-api-keys)
-6. [Using the CLI](#6-using-the-cli)
-7. [Using the Web UI](#7-using-the-web-ui)
-8. [Pipeline Modes](#8-pipeline-modes)
-9. [Customizing Templates](#9-customizing-templates)
-10. [Template Manager (Web UI)](#10-template-manager-web-ui)
-11. [Managing Your Data](#11-managing-your-data)
-12. [Encryption at Rest](#12-encryption-at-rest)
-13. [Retention Policies](#13-retention-policies)
-14. [Troubleshooting](#14-troubleshooting)
+6. [Local AI Setup (Ollama)](#6-local-ai-setup-ollama)
+7. [Using the CLI](#7-using-the-cli)
+8. [Using the Web UI](#8-using-the-web-ui)
+9. [Pipeline Modes](#9-pipeline-modes)
+10. [Customizing Templates](#10-customizing-templates)
+11. [Template Manager (Web UI)](#11-template-manager-web-ui)
+12. [Managing Your Data](#12-managing-your-data)
+13. [Encryption at Rest](#13-encryption-at-rest)
+14. [Retention Policies](#14-retention-policies)
+15. [Troubleshooting](#15-troubleshooting)
 
 ---
 
@@ -230,13 +231,15 @@ recording:
 
 # ─── Transcription (System 1) ──────────────────────────
 transcription:
-  primary_engine: whisper                 # whisper (local) — only option for MVP
+  primary_engine: whisper                 # whisper (faster-whisper, default) | whisper-cpp (GGML)
   whisper_model: medium                   # tiny | base | small | medium | large-v3
                                           #   tiny:  ~1 GB RAM, fast, lower accuracy
                                           #   base:  ~1 GB RAM, good for short meetings
                                           #   small: ~2 GB RAM, good balance
                                           #   medium: ~5 GB RAM, recommended default
                                           #   large-v3: ~10 GB RAM, best accuracy
+                                          # Distil models also available:
+                                          #   distil-medium.en, distil-large-v3 (5-6x faster)
   language: auto                          # "auto" to detect, or ISO code ("en", "nl", "fr")
   custom_vocabulary: null                 # Path to a text file with custom words
                                           # (one per line: company names, jargon, acronyms)
@@ -251,16 +254,21 @@ generation:
   templates_dir: templates                # Directory containing .md.j2 template files
   llm:
     primary_provider: anthropic           # anthropic | openai | openrouter | ollama
-    model: claude-sonnet-4-6       # Model for minutes generation
+    model: claude-sonnet-4-6              # Model for minutes generation
     fallback_provider: null                # Fallback provider (null = disabled, or "openai")
     fallback_model: gpt-4o                # Fallback model (used when fallback_provider is set)
     # OpenRouter models use provider-prefixed IDs, e.g.:
     #   anthropic/claude-sonnet-4, google/gemini-2.5-pro-preview,
     #   openai/gpt-4o, meta-llama/llama-4-maverick, deepseek/deepseek-r1
+    # Ollama models: use the model name as shown by `ollama list`, e.g.:
+    #   qwen2.5:14b, llama3.1:8b, phi4:14b, mistral-small:24b
     temperature: 0.2                      # Low = more factual, less creative
     max_output_tokens: 4096               # Max length of generated minutes
     retry_attempts: 3                     # Retries on API failure
     timeout_seconds: 120                  # API call timeout
+    ollama:                               # Ollama-specific settings
+      base_url: "http://localhost:11434"  # Override with OLLAMA_BASE_URL env var
+      timeout_seconds: 300                # Local models can be slower
 
 # ─── Storage (System 3) ────────────────────────────────
 storage:
@@ -394,7 +402,88 @@ The file is loaded automatically at startup via `env.py`. You do not need to sou
 
 ---
 
-## 6. Using the CLI
+## 6. Local AI Setup (Ollama)
+
+Ollama lets you run LLMs locally for **free, private, offline** meeting summarization. No API keys or cloud services needed.
+
+### 6.1 Install Ollama
+
+**macOS:**
+```bash
+brew install ollama
+```
+
+**Linux:**
+```bash
+curl -fsSL https://ollama.com/install.sh | sh
+```
+
+**Windows:** Download from [ollama.com/download](https://ollama.com/download).
+
+### 6.2 Start Ollama and pull a model
+
+```bash
+ollama serve                    # Start the Ollama server (runs on port 11434)
+ollama pull qwen2.5:14b         # Pull a recommended model (~10GB)
+```
+
+**Recommended models by hardware:**
+
+| Your Hardware | Recommended Model | Pull Command |
+|---------------|-------------------|--------------|
+| 8GB RAM, no GPU | `qwen2.5:7b` | `ollama pull qwen2.5:7b` |
+| 16GB RAM or 8GB GPU | `qwen2.5:14b` | `ollama pull qwen2.5:14b` |
+| 32GB+ RAM or Apple Silicon | `qwen2.5:32b` | `ollama pull qwen2.5:32b` |
+| 48GB+ GPU/RAM | `qwen2.5:72b` | `ollama pull qwen2.5:72b` |
+
+The Settings page shows hardware-detected recommendations — visit `http://localhost:8080/settings` after starting the server.
+
+### 6.3 Configure the app to use Ollama
+
+In the web UI Settings page, select **Ollama (local)** as the LLM provider and choose your model from the dropdown (auto-populated from your local Ollama instance).
+
+Or edit `config/config.yaml`:
+
+```yaml
+generation:
+  llm:
+    primary_provider: ollama
+    model: qwen2.5:14b
+```
+
+### 6.4 Whisper.cpp transcription engine (optional)
+
+For lower memory usage or faster CPU transcription, you can use the Whisper.cpp engine instead of the default Faster Whisper:
+
+```bash
+pip install pywhispercpp       # Or: pip install -e ".[local-ai]"
+```
+
+Then set the engine in config:
+
+```yaml
+transcription:
+  primary_engine: whisper-cpp    # Uses GGML quantized models
+  whisper_model: medium
+```
+
+### 6.5 Hardware detection
+
+The app auto-detects your GPU and RAM to recommend models. Check your hardware profile:
+
+```bash
+curl http://localhost:8080/api/config/hardware | python -m json.tool
+```
+
+This returns your GPU type, VRAM, RAM, and recommended Whisper + Ollama models.
+
+### 6.6 Running fully offline
+
+With Ollama for summarization and local Whisper for transcription, the entire pipeline runs offline. The only external dependency is pyannote.audio for speaker diarization (which requires a one-time model download). Set `diarization.enabled: false` to skip this if needed.
+
+---
+
+## 7. Using the CLI
 
 All commands use the `mm` command.
 

@@ -169,30 +169,48 @@ Notes are saved to `data/notes/{meeting_id}.json` and automatically loaded by th
 
 ### 2.1 Transcription Backends
 
-#### Option A: Local Transcription (Whisper)
+The transcription system uses a **factory pattern** (`get_transcription_engine()`) that creates the appropriate engine based on `config.transcription.primary_engine`. All engines implement the `BaseTranscriptionEngine` abstract class with `transcribe()` and `detect_language()` methods.
 
-- **Model**: OpenAI Whisper (via `faster-whisper` or `whisper.cpp` for performance)
+#### Engine A: Faster Whisper (Default — `primary_engine: whisper`)
+
+- **Library**: `faster-whisper` (CTranslate2 backend)
 - **Model sizes**: tiny, base, small, medium, large-v3 (user-configurable, default: medium for balance of speed/accuracy)
 - **Distil-Whisper models**: `distil-medium.en`, `distil-large-v3` — faster variants optimized for English, providing significant speedups with minimal accuracy loss
 - **Language**: Auto-detect or user-specified; support for multilingual meetings
-- **Processing**:
-  - Real-time streaming transcription using chunked audio (30-second segments with 5-second overlap)
-  - Post-meeting batch transcription for higher accuracy (re-process full audio with large model)
-- **Hardware acceleration**: CUDA (NVIDIA), Metal (Apple Silicon with automatic detection and fallback to CPU), CPU fallback
+- **Word-level timestamps**: Full word-level timestamps and confidence scores
+- **Hardware acceleration**: CUDA (NVIDIA), Metal (Apple Silicon with automatic detection and fallback to CPU), CPU fallback with int8 quantization
+- **Processing**: Post-meeting batch transcription for high accuracy
 
-#### Option B: Cloud Transcription (Amazon Transcribe)
+#### Engine B: Whisper.cpp (GGML — `primary_engine: whisper-cpp`)
 
-- **Service**: Amazon Transcribe or Amazon Transcribe Streaming
-- **Features**: Automatic language identification, custom vocabulary, content redaction
-- **Streaming**: Real-time via WebSocket for live transcription
-- **Batch**: Upload completed audio file for higher-accuracy post-processing
-- **Cost management**: Track usage, set monthly limits, fall back to local when budget exceeded
+- **Library**: `pywhispercpp` (whisper.cpp C++ backend with GGML quantization)
+- **Model sizes**: Same Whisper models but quantized to Q4/Q5 for lower memory
+- **Advantages**: 2-3x faster than faster-whisper on CPU-only machines, ~50% less RAM
+- **Trade-off**: No word-level timestamps by default, slightly lower accuracy
+- **Best for**: CPU-only machines or memory-constrained environments
+- **Install**: `pip install pywhispercpp` or `pip install -e ".[local-ai]"`
 
-#### Option C: Hybrid (Default Recommended)
+#### Model Presets
 
-- Use local Whisper for real-time preview during the meeting
-- Use cloud transcription (or large local model) for final high-accuracy transcript after meeting ends
-- User can configure preferred pipeline per meeting type
+| Preset | Model | Use Case |
+|--------|-------|----------|
+| `fast` | `distil-medium.en` | Quick English transcription |
+| `balanced` | `medium` | Good accuracy, reasonable speed |
+| `best` | `large-v3` | Highest accuracy, needs 10GB+ RAM/VRAM |
+
+#### Hardware Auto-Detection
+
+The system auto-detects available hardware and selects optimal settings:
+
+| Hardware | Device | Compute Type | Recommended Model |
+|----------|--------|-------------|-------------------|
+| Apple Silicon (M1-M4) | Metal (`auto`) | float16 | large-v3 |
+| NVIDIA GPU (6GB+ VRAM) | CUDA | float16 | large-v3 |
+| NVIDIA GPU (<6GB VRAM) | CUDA | float16 | medium |
+| CPU only (16GB+ RAM) | CPU | int8 | medium |
+| CPU only (<16GB RAM) | CPU | int8 | small or base |
+
+Hardware profile and recommendations available via `GET /api/config/hardware`.
 
 ### 2.2 Speaker Diarization
 

@@ -204,30 +204,57 @@ All prompts include these universal instructions:
 
 ### 4.1 Supported LLM Backends
 
-| Backend | Models | Use Case |
-|---------|--------|----------|
-| Anthropic API | Claude Sonnet 4.6, Claude Opus 4.6 | Primary recommended backend |
-| OpenRouter | 200+ models (Claude, Gemini, GPT, Llama, DeepSeek, Mistral, etc.) | Multi-provider access via unified API |
-| OpenAI API | GPT-4o, GPT-4.1 | Alternative backend |
-| Local LLM | Llama 3, Mistral (via Ollama/vLLM) | Privacy-first / offline mode |
-| AWS Bedrock | Claude, Llama via Bedrock | Enterprise / AWS-integrated environments |
+| Backend | Models | Use Case | Structured Output |
+|---------|--------|----------|-------------------|
+| Anthropic API | Claude Sonnet 4.6, Claude Opus 4.6 | Primary recommended backend | tool_use (native) |
+| OpenRouter | 200+ models (Claude, Gemini, GPT, Llama, DeepSeek, Mistral, etc.) | Multi-provider access via unified API | JSON-mode |
+| OpenAI API | GPT-4o, GPT-4.1 | Alternative backend | JSON-mode |
+| **Ollama (local)** | Qwen2.5, Llama 3.1, Phi-4, Mistral, Gemma (any Ollama model) | **Privacy-first / offline / free** | JSON-mode |
+
+#### Ollama Local LLM Details
+
+Ollama provides a fully local, free alternative to cloud LLM providers. The integration:
+
+- Uses Ollama's **OpenAI-compatible API** (`/v1/chat/completions`) via the `openai` Python SDK
+- Supports **JSON-mode structured generation**: the schema is embedded in the system prompt and the model is instructed to return valid JSON
+- Automatically **strips markdown code fences** from responses before JSON parsing
+- **Model discovery**: `GET /api/config/provider-models?provider=ollama` queries the local Ollama instance for pulled models with size, family, and quantization info
+- **Hardware recommendations**: `GET /api/config/hardware` detects GPU/RAM and recommends appropriate Ollama models
+- **Configurable base URL**: `OLLAMA_BASE_URL` env var or `generation.llm.ollama.base_url` in config (default: `http://localhost:11434`)
+- **Generous timeout**: 300 seconds default (local models can be slow, especially on CPU)
+- **Cost tracking**: $0.00 per token (local models are free)
+
+**Recommended Ollama models for meeting summarization:**
+
+| Model | Params | VRAM/RAM Needed | Quality |
+|-------|--------|-----------------|---------|
+| `qwen2.5:7b` | 7B | ~5GB | Good for short meetings |
+| `llama3.1:8b` | 8B | ~6GB | Good general purpose |
+| `qwen2.5:14b` / `phi4:14b` | 14B | ~10GB | Good for most meetings |
+| `qwen2.5:32b` | 32B | ~20GB | Near-cloud quality |
+| `qwen2.5:72b` / `llama3.1:70b` | 70B+ | ~45GB | Cloud-equivalent |
 
 ### 4.2 LLM Configuration
 
 ```yaml
 llm:
   primary_provider: "anthropic"        # anthropic | openai | openrouter | ollama
-  model: "claude-sonnet-4-6"  # Model ID (for openrouter, use prefixed IDs like "anthropic/claude-sonnet-4")
-  fallback_provider: "openai"
+  model: "claude-sonnet-4-6"           # Model ID (for openrouter, use prefixed IDs like "anthropic/claude-sonnet-4")
+  fallback_provider: "openai"          # Fallback when primary fails (null to disable)
   fallback_model: "gpt-4o"
-  temperature: 0.2                    # low temperature for factual extraction
+  temperature: 0.2                     # low temperature for factual extraction
   max_output_tokens: 4096
   retry_attempts: 3
   timeout_seconds: 120
 
+  # Ollama-specific settings (only used when primary_provider = ollama)
+  ollama:
+    base_url: "http://localhost:11434"  # Ollama server URL (overridable via OLLAMA_BASE_URL env var)
+    timeout_seconds: 300                # Local models can be slower than cloud APIs
+
   # For long transcripts
   chunking:
-    strategy: "sliding_window"        # sliding_window | map_reduce | refine
+    strategy: "sliding_window"         # sliding_window | map_reduce | refine
     chunk_size_tokens: 80000
     overlap_tokens: 2000
 ```
@@ -283,9 +310,20 @@ The tool definition includes these fields:
 3. The response is parsed directly into a `StructuredMinutesResponse` Pydantic model
 4. A `StructuredMinutesAdapter` converts the structured response into the standard `ParsedMinutes` format used by the rest of the pipeline
 
-### 4A.4 Fallback to Text + Regex
+### 4A.4 JSON-Mode Structured Generation (Ollama, OpenAI, OpenRouter)
 
-When structured output fails (e.g., non-Anthropic provider such as OpenRouter or OpenAI, API error, schema validation failure), the system falls back to the original text-based generation with regex parsing via `MinutesParser`.
+For non-Anthropic providers, the `LLMClient._generate_structured_via_json()` method provides structured output via JSON-mode:
+
+1. The tool_definition schema is converted to field descriptions and injected into the system prompt
+2. The model is instructed to respond with ONLY valid JSON matching the schema
+3. The response is stripped of any markdown code fences (`\`\`\`json ... \`\`\``) before parsing
+4. If JSON parsing fails, the response falls back to text mode
+
+This enables Ollama, OpenAI, and OpenRouter models to produce structured `StructuredMinutesResponse` output without requiring Anthropic's native tool_use feature.
+
+### 4A.5 Fallback to Text + Regex
+
+When structured output fails (API error, schema validation failure, JSON parse error), the system falls back to the original text-based generation with regex parsing via `MinutesParser`.
 
 ---
 

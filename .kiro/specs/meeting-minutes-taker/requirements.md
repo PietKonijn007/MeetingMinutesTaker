@@ -7,9 +7,9 @@ The Meeting Minutes Taker is a local-first, three-system pipeline application th
 ## Glossary
 
 - **Audio_Capture_Engine**: The component responsible for recording audio from system audio devices using `sounddevice`, including circular buffering, gain control, and voice activity detection.
-- **Transcription_Engine**: The component that converts audio to text using local Whisper (`faster-whisper`) or cloud-based Amazon Transcribe.
+- **Transcription_Engine**: The component that converts audio to text using a pluggable transcription backend — `faster-whisper` (CTranslate2, default) or `whisper.cpp` (GGML, optional). Selected via factory pattern based on `config.transcription.primary_engine`.
 - **Diarization_Engine**: The component that identifies and labels distinct speakers in audio using `pyannote.audio`.
-- **Minutes_Generator**: The component that takes a transcript JSON and produces structured meeting minutes using an LLM (Anthropic Claude, OpenAI, or local model).
+- **Minutes_Generator**: The component that takes a transcript JSON and produces structured meeting minutes using an LLM (Anthropic Claude, OpenAI, OpenRouter, or **Ollama for local/offline generation**).
 - **Prompt_Router**: The component that selects the appropriate prompt template based on meeting type classification.
 - **Storage_Engine**: The SQLite-backed component that persists meetings, transcripts, minutes, action items, and decisions.
 - **Search_Engine**: The SQLite FTS5-based component that provides full-text search across transcripts and minutes.
@@ -45,8 +45,8 @@ The Meeting Minutes Taker is a local-first, three-system pipeline application th
 
 #### Acceptance Criteria
 
-1. WHEN a recording completes, THE Transcription_Engine SHALL transcribe the audio file using the configured engine (local Whisper by default).
-2. WHEN using local Whisper, THE Transcription_Engine SHALL use the `faster-whisper` library with the user-configured model size (default: medium).
+1. WHEN a recording completes, THE Transcription_Engine SHALL transcribe the audio file using the configured engine (`whisper` for faster-whisper by default, or `whisper-cpp` for whisper.cpp).
+2. WHEN using the `whisper` engine, THE Transcription_Engine SHALL use the `faster-whisper` library with the user-configured model size (default: medium). WHEN using the `whisper-cpp` engine, THE Transcription_Engine SHALL use the `pywhispercpp` library with GGML-quantized models.
 3. WHEN transcription completes, THE Transcription_Engine SHALL produce word-level timestamps and per-word confidence scores for each segment.
 4. WHEN transcription completes, THE Transcription_Engine SHALL output a Transcript_JSON file conforming to the schema version 1.0 in the configured transcripts directory.
 5. IF transcription fails with the primary engine, THEN THE Transcription_Engine SHALL retry with the configured fallback engine and save the audio for later reprocessing.
@@ -88,6 +88,8 @@ The Meeting Minutes Taker is a local-first, three-system pipeline application th
 5. WHEN minutes generation completes, THE Minutes_Generator SHALL output both a Minutes_JSON file and a rendered Markdown file to the configured minutes directory.
 6. IF the LLM API is unavailable, THEN THE Minutes_Generator SHALL queue the transcript for retry and log the failure.
 7. IF the LLM response is malformed or fails parsing, THEN THE Minutes_Generator SHALL retry with an adjusted prompt up to the configured retry limit (default: 3 attempts).
+8. WHEN the configured provider is "ollama", THE Minutes_Generator SHALL connect to the local Ollama instance via its OpenAI-compatible API and SHALL NOT require any API key.
+9. WHEN using a non-Anthropic provider for structured generation, THE Minutes_Generator SHALL embed the output schema in the system prompt and parse the response as JSON (with markdown code fence stripping).
 
 ### Requirement 6: Meeting Type Routing
 
