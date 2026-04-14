@@ -35,6 +35,10 @@ dev = [
     "pytest-mock>=3.12.0",
     "hypothesis>=6.100.0",
 ]
+local-ai = [
+    "pywhispercpp>=1.2.0",  # whisper.cpp transcription engine
+    "psutil>=5.9.0",        # hardware detection (RAM, etc.)
+]
 
 [project.scripts]
 mm = "meeting_minutes.system3.cli:app"

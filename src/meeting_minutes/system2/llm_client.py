@@ -1,14 +1,17 @@
-"""LLM API client with Anthropic primary and OpenAI fallback."""
+"""LLM API client with multi-provider support (Anthropic, OpenAI, OpenRouter, Ollama)."""
 
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import time
 from typing import Optional
 
 from meeting_minutes.config import LLMConfig
 from meeting_minutes.models import LLMResponse
+
+logger = logging.getLogger(__name__)
 
 
 # Cost per 1K tokens (approximate, as of early 2025)
@@ -37,6 +40,9 @@ COST_PER_1K_TOKENS: dict[str, dict[str, float]] = {
         "mistralai/mistral-medium-3": 0.002,
         "default": 0.003,
     },
+    "ollama": {
+        "default": 0.0,  # Local models are free
+    },
 }
 
 
@@ -47,7 +53,7 @@ def _calculate_cost(provider: str, model: str, input_tokens: int, output_tokens:
 
 
 class LLMClient:
-    """Send prompts to LLM and return raw responses. Anthropic primary, OpenAI fallback."""
+    """Send prompts to LLM and return raw responses. Supports Anthropic, OpenAI, OpenRouter, and Ollama."""
 
     def __init__(self, config: LLMConfig) -> None:
         self._config = config
@@ -104,6 +110,10 @@ class LLMClient:
             text, input_tokens, output_tokens = await self._call_openrouter(
                 prompt, system_prompt, model
             )
+        elif provider == "ollama":
+            text, input_tokens, output_tokens = await self._call_ollama(
+                prompt, system_prompt, model
+            )
         else:
             raise ValueError(f"Unknown provider: {provider}")
 
@@ -153,11 +163,34 @@ class LLMClient:
     async def generate_structured(
         self, prompt: str, system_prompt: str = "", tool_definition: dict | None = None
     ) -> LLMResponse:
-        """Generate structured output using Anthropic tool_use. Returns LLMResponse with structured_data."""
+        """Generate structured output. Uses Anthropic tool_use when available, JSON mode for others."""
         if tool_definition is None:
             from meeting_minutes.system2.schema import get_tool_definition
             tool_definition = get_tool_definition()
 
+        provider = self._config.primary_provider
+
+        # Ollama and non-Anthropic providers: use JSON-mode structured generation
+        if provider in ("ollama", "openai", "openrouter"):
+            for attempt in range(self._config.retry_attempts):
+                try:
+                    return await self._generate_structured_via_json(
+                        prompt=prompt,
+                        system_prompt=system_prompt,
+                        provider=provider,
+                        model=self._config.model,
+                        tool_definition=tool_definition,
+                    )
+                except Exception as exc:
+                    if attempt < self._config.retry_attempts - 1:
+                        wait = 2 ** attempt
+                        await asyncio.sleep(wait)
+                    else:
+                        raise RuntimeError(
+                            f"Structured generation failed after {self._config.retry_attempts} attempts: {exc}"
+                        ) from exc
+
+        # Anthropic: native tool_use
         for attempt in range(self._config.retry_attempts):
             try:
                 return await self._call_anthropic_structured(
@@ -294,3 +327,130 @@ class LLMClient:
         output_tokens = response.usage.completion_tokens if response.usage else 0
 
         return text, input_tokens, output_tokens
+
+    async def _call_ollama(
+        self, prompt: str, system_prompt: str, model: str
+    ) -> tuple[str, int, int]:
+        """Call a local Ollama instance via its OpenAI-compatible API."""
+        # Use config base_url, with env var override
+        config_url = getattr(self._config, "ollama", None)
+        default_url = config_url.base_url if config_url else "http://localhost:11434"
+        ollama_base_url = os.environ.get("OLLAMA_BASE_URL", default_url)
+
+        try:
+            from openai import AsyncOpenAI
+        except ImportError as exc:
+            raise RuntimeError("openai package not installed (needed for Ollama client)") from exc
+
+        client = AsyncOpenAI(
+            api_key="ollama",  # Ollama doesn't require a real key
+            base_url=f"{ollama_base_url}/v1",
+        )
+
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
+
+        try:
+            response = await client.chat.completions.create(
+                model=model,
+                messages=messages,
+                temperature=self._config.temperature,
+            )
+        except Exception as exc:
+            raise RuntimeError(
+                f"Ollama request failed. Is Ollama running at {ollama_base_url}? Error: {exc}"
+            ) from exc
+
+        text = response.choices[0].message.content or ""
+        input_tokens = response.usage.prompt_tokens if response.usage else 0
+        output_tokens = response.usage.completion_tokens if response.usage else 0
+
+        return text, input_tokens, output_tokens
+
+    async def _generate_structured_via_json(
+        self,
+        prompt: str,
+        system_prompt: str,
+        provider: str,
+        model: str,
+        tool_definition: dict,
+    ) -> LLMResponse:
+        """Generate structured output by requesting JSON from non-Anthropic providers.
+
+        Wraps the tool_definition schema into the prompt and asks the model to
+        respond with valid JSON matching that schema.
+        """
+        import json
+
+        # Build a JSON-focused system prompt
+        schema = tool_definition.get("input_schema", {})
+        properties = schema.get("properties", {})
+        field_descriptions = []
+        for field_name, field_info in properties.items():
+            desc = field_info.get("description", "")
+            ftype = field_info.get("type", "string")
+            field_descriptions.append(f"  - {field_name} ({ftype}): {desc}")
+
+        json_system = (
+            f"{system_prompt}\n\n"
+            "IMPORTANT: You must respond with ONLY valid JSON matching this schema. "
+            "Do not include any text before or after the JSON object.\n\n"
+            "Required JSON fields:\n" + "\n".join(field_descriptions)
+        )
+
+        start = time.time()
+
+        if provider == "ollama":
+            text, input_tokens, output_tokens = await self._call_ollama(
+                prompt, json_system, model
+            )
+        elif provider == "openai":
+            text, input_tokens, output_tokens = await self._call_openai(
+                prompt, json_system, model
+            )
+        elif provider == "openrouter":
+            text, input_tokens, output_tokens = await self._call_openrouter(
+                prompt, json_system, model
+            )
+        else:
+            raise ValueError(f"Unsupported provider for JSON-mode structured generation: {provider}")
+
+        elapsed = time.time() - start
+        cost = _calculate_cost(provider, model, input_tokens, output_tokens)
+
+        # Parse JSON from response — strip markdown fences if present
+        json_text = text.strip()
+        if json_text.startswith("```"):
+            # Remove markdown code fences
+            lines = json_text.split("\n")
+            # Drop first line (```json) and last line (```)
+            lines = [l for l in lines if not l.strip().startswith("```")]
+            json_text = "\n".join(lines)
+
+        try:
+            structured_data = json.loads(json_text)
+        except json.JSONDecodeError:
+            logger.warning("Failed to parse JSON from %s/%s response, returning as text", provider, model)
+            return LLMResponse(
+                text=text,
+                provider=provider,
+                model=model,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                cost_usd=cost,
+                processing_time_seconds=elapsed,
+                structured_data=None,
+            )
+
+        return LLMResponse(
+            text="",
+            provider=provider,
+            model=model,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cost_usd=cost,
+            processing_time_seconds=elapsed,
+            structured_data=structured_data,
+        )

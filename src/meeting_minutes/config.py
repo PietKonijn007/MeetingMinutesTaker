@@ -16,8 +16,8 @@ class RecordingConfig(BaseModel):
 
 
 class TranscriptionConfig(BaseModel):
-    primary_engine: str = "whisper"
-    whisper_model: str = "medium"
+    primary_engine: str = "whisper"  # whisper | whisper-cpp
+    whisper_model: str = "medium"   # tiny, base, small, medium, large-v3, distil-*
     language: str = "auto"
     custom_vocabulary: str | None = None
 
@@ -27,8 +27,13 @@ class DiarizationConfig(BaseModel):
     engine: str = "pyannote"
 
 
+class OllamaConfig(BaseModel):
+    base_url: str = "http://localhost:11434"
+    timeout_seconds: int = 300  # Local models can be slow; generous timeout
+
+
 class LLMConfig(BaseModel):
-    primary_provider: str = "anthropic"
+    primary_provider: str = "anthropic"  # anthropic | openai | openrouter | ollama
     model: str = "claude-sonnet-4-6"
     fallback_provider: str | None = "openai"
     fallback_model: str | None = "gpt-4o"
@@ -36,6 +41,7 @@ class LLMConfig(BaseModel):
     max_output_tokens: int = 4096
     retry_attempts: int = 3
     timeout_seconds: int = 120
+    ollama: OllamaConfig = OllamaConfig()
 
 
 class GenerationConfig(BaseModel):

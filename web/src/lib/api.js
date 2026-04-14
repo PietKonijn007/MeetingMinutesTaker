@@ -20,6 +20,9 @@ async function request(path, options = {}) {
 }
 
 export const api = {
+  // Raw request helper for endpoints not yet wrapped
+  request,
+
   // Meetings
   getMeetings: (params = {}) => {
     const qs = new URLSearchParams(params).toString();

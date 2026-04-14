@@ -14,9 +14,15 @@
   let recording_device = $state('auto');
   let recording_sample_rate = $state(16000);
   let recording_silence_minutes = $state(5);
+  let transcription_engine = $state('whisper');
   let transcription_model = $state('medium');
   let transcription_language = $state('auto');
   let diarization_enabled = $state(true);
+
+  // Hardware info & local AI status
+  let hardware_info = $state(null);
+  let hardware_loading = $state(false);
+  let transcription_engines = $state([]);
   let llm_provider = $state('anthropic');
   let llm_model = $state('claude-sonnet-4-6');
   let llm_temperature = $state(0.2);
@@ -88,11 +94,27 @@
     return Object.entries(groups).sort(([a], [b]) => a.localeCompare(b));
   }
 
-  async function loadProviderModels(provider, refresh = false) {
-    if (provider === 'ollama') {
-      provider_models = [];
-      return;
+  async function loadHardwareInfo() {
+    hardware_loading = true;
+    try {
+      hardware_info = await api.request('/config/hardware');
+    } catch (_) {
+      hardware_info = null;
+    } finally {
+      hardware_loading = false;
     }
+  }
+
+  async function loadTranscriptionEngines() {
+    try {
+      const result = await api.request('/config/transcription-engines');
+      transcription_engines = result.engines || [];
+    } catch (_) {
+      transcription_engines = [];
+    }
+  }
+
+  async function loadProviderModels(provider, refresh = false) {
     const fetchId = ++models_fetch_id;
     models_loading = true;
     models_warning = '';
@@ -138,6 +160,7 @@
         recording_device = r.audio_device || 'auto';
         recording_sample_rate = r.sample_rate || 16000;
         recording_silence_minutes = r.auto_stop_silence_minutes || 5;
+        transcription_engine = t.primary_engine || 'whisper';
         transcription_model = t.whisper_model || 'medium';
         transcription_language = t.language || 'auto';
         diarization_enabled = d.enabled !== false;
@@ -179,6 +202,10 @@
       // Load dynamic model list for current provider
       loadProviderModels(llm_provider);
 
+      // Load hardware info and transcription engines
+      loadHardwareInfo();
+      loadTranscriptionEngines();
+
       // Load backup list
       try {
         backups = await api.getBackups();
@@ -214,6 +241,7 @@
           auto_stop_silence_minutes: recording_silence_minutes
         },
         transcription: {
+          primary_engine: transcription_engine,
           whisper_model: transcription_model,
           language: transcription_language
         },
@@ -328,9 +356,32 @@
       <!-- Transcription -->
       <section>
         <h2 class="text-lg font-semibold text-[var(--text-primary)] mb-1">Transcription</h2>
-        <p class="text-sm text-[var(--text-muted)] mb-4">Configure Whisper speech-to-text.</p>
+        <p class="text-sm text-[var(--text-muted)] mb-4">Configure local speech-to-text engine.</p>
 
         <div class="space-y-4">
+          <div>
+            <label class="block text-sm font-medium text-[var(--text-primary)] mb-1">Engine</label>
+            <select
+              bind:value={transcription_engine}
+              class="w-full px-3 py-2 bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg text-sm text-[var(--text-primary)]
+                     focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
+            >
+              <option value="whisper">Faster Whisper (CTranslate2) — GPU-accelerated, best accuracy</option>
+              <option value="whisper-cpp">Whisper.cpp (GGML) — faster on CPU, lower memory</option>
+            </select>
+            {#if transcription_engines.length > 0}
+              <div class="mt-1 flex flex-wrap gap-2">
+                {#each transcription_engines as eng}
+                  <span class="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full
+                    {eng.status === 'installed' ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' : 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400'}">
+                    <span class="w-1.5 h-1.5 rounded-full {eng.status === 'installed' ? 'bg-green-500' : 'bg-yellow-500'}"></span>
+                    {eng.name}: {eng.status === 'installed' ? 'installed' : 'not installed'}
+                  </span>
+                {/each}
+              </div>
+            {/if}
+          </div>
+
           <div>
             <label class="block text-sm font-medium text-[var(--text-primary)] mb-1">Whisper Model</label>
             <select
@@ -351,9 +402,16 @@
                 <option value="distil-large-v3">distil-large-v3 (all languages, fast + accurate)</option>
               </optgroup>
             </select>
-            <p class="text-xs text-[var(--text-muted)] mt-1">
-              Distil models are 5-6x faster with &lt;1% quality loss. Apple Silicon Metal acceleration is auto-detected.
-            </p>
+            {#if hardware_info?.recommendations?.whisper_model}
+              <p class="text-xs text-[var(--text-muted)] mt-1">
+                Recommended for your hardware: <strong>{hardware_info.recommendations.whisper_model}</strong>
+                ({hardware_info.recommendations.whisper_device} / {hardware_info.recommendations.whisper_compute_type})
+              </p>
+            {:else}
+              <p class="text-xs text-[var(--text-muted)] mt-1">
+                Distil models are 5-6x faster with &lt;1% quality loss. GPU acceleration is auto-detected.
+              </p>
+            {/if}
           </div>
 
           <div>
@@ -426,20 +484,18 @@
           <div>
             <div class="flex items-center justify-between mb-1">
               <label class="block text-sm font-medium text-[var(--text-primary)]">Model</label>
-              {#if llm_provider !== 'ollama'}
-                <button
-                  onclick={() => loadProviderModels(llm_provider, true)}
-                  disabled={models_loading}
-                  class="flex items-center gap-1 px-2 py-1 text-xs text-[var(--text-muted)] hover:text-[var(--text-primary)]
-                         transition-colors duration-150 disabled:opacity-50"
-                  title="Refresh model list from provider API"
-                >
-                  <svg class="w-3.5 h-3.5 {models_loading ? 'animate-spin' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                  </svg>
-                  {models_loading ? 'Loading...' : 'Refresh'}
-                </button>
-              {/if}
+              <button
+                onclick={() => loadProviderModels(llm_provider, true)}
+                disabled={models_loading}
+                class="flex items-center gap-1 px-2 py-1 text-xs text-[var(--text-muted)] hover:text-[var(--text-primary)]
+                       transition-colors duration-150 disabled:opacity-50"
+                title={llm_provider === 'ollama' ? 'Refresh models from local Ollama' : 'Refresh model list from provider API'}
+              >
+                <svg class="w-3.5 h-3.5 {models_loading ? 'animate-spin' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+                {models_loading ? 'Loading...' : 'Refresh'}
+              </button>
             </div>
 
             {#if models_loading}
@@ -451,20 +507,57 @@
                 <option>Loading models from {llm_provider}...</option>
               </select>
             {:else if llm_provider === 'ollama'}
-              <!-- Ollama: text input only -->
-              <select
-                bind:value={llm_model}
-                class="w-full px-3 py-2 bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg text-sm text-[var(--text-primary)]
-                       focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
-              >
-                {#if custom_models.ollama?.length > 0}
-                  {#each custom_models.ollama as m}
-                    <option value={m}>{m}</option>
+              <!-- Ollama: models fetched from local Ollama instance -->
+              {#if provider_models.length > 0}
+                <select
+                  bind:value={llm_model}
+                  class="w-full px-3 py-2 bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg text-sm text-[var(--text-primary)]
+                         focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
+                >
+                  {#each provider_models as m}
+                    <option value={m.id}>
+                      {m.name}{m.parameter_size ? ` (${m.parameter_size})` : ''}{m.size_gb ? ` — ${m.size_gb}GB` : ''}
+                    </option>
                   {/each}
-                {:else}
-                  <option value="" disabled>No models used yet — enter one below</option>
-                {/if}
-              </select>
+                  {#if custom_models.ollama?.length > 0}
+                    <optgroup label="Previously used">
+                      {#each custom_models.ollama as m}
+                        {#if !provider_models.some(pm => pm.id === m)}
+                          <option value={m}>{m}</option>
+                        {/if}
+                      {/each}
+                    </optgroup>
+                  {/if}
+                </select>
+              {:else}
+                <select
+                  bind:value={llm_model}
+                  class="w-full px-3 py-2 bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg text-sm text-[var(--text-primary)]
+                         focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
+                >
+                  {#if custom_models.ollama?.length > 0}
+                    {#each custom_models.ollama as m}
+                      <option value={m}>{m}</option>
+                    {/each}
+                  {:else}
+                    <option value="" disabled>No models found — is Ollama running?</option>
+                  {/if}
+                </select>
+              {/if}
+              {#if hardware_info?.ollama}
+                <div class="mt-1 flex items-center gap-2">
+                  <span class="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full
+                    {hardware_info.ollama.running ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' : 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'}">
+                    <span class="w-1.5 h-1.5 rounded-full {hardware_info.ollama.running ? 'bg-green-500' : 'bg-red-500'}"></span>
+                    Ollama: {hardware_info.ollama.running ? `running (v${hardware_info.ollama.version})` : hardware_info.ollama.installed ? 'installed but not running' : 'not installed'}
+                  </span>
+                </div>
+              {/if}
+              {#if hardware_info?.recommendations?.ollama_models?.length > 0}
+                <p class="text-xs text-[var(--text-muted)] mt-1">
+                  Recommended for your hardware: {hardware_info.recommendations.ollama_models.slice(0, 3).join(', ')}
+                </p>
+              {/if}
             {:else if provider_models.length > 0 && llm_provider === 'openrouter'}
               <!-- OpenRouter: grouped by provider with pricing -->
               <select
