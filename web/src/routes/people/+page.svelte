@@ -7,6 +7,7 @@
 
   let people = $state([]);
   let loading = $state(true);
+  let error = $state('');
   let searchQuery = $state('');
 
   const filteredPeople = $derived(
@@ -20,11 +21,18 @@
 
   async function loadPeople() {
     loading = true;
+    error = '';
     try {
       const data = await api.getPeople();
-      people = data.items || data || [];
+      const rawItems = data.items || data || [];
+      // Normalize: API returns person_id; frontend uses id
+      people = rawItems.map((p) => ({
+        ...p,
+        id: p.id || p.person_id,
+      }));
     } catch (e) {
       console.error('Failed to load people:', e);
+      error = e.message || 'Failed to load people';
       people = [];
     } finally {
       loading = false;
@@ -66,6 +74,11 @@
       {#each Array(5) as _}
         <Skeleton type="avatar" />
       {/each}
+    </div>
+  {:else if error}
+    <div class="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4">
+      <p class="text-sm text-red-700 dark:text-red-400">Failed to load people: {error}</p>
+      <button onclick={loadPeople} class="mt-2 text-xs text-red-700 dark:text-red-400 underline">Retry</button>
     </div>
   {:else if people.length === 0}
     <EmptyState
