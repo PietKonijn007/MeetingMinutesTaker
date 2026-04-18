@@ -891,6 +891,7 @@ def upgrade_cmd(
     restart: bool = typer.Option(True, "--restart/--no-restart", help="Restart the service after upgrading"),
 ):
     """Pull latest code from GitHub and rebuild everything."""
+    import os
     import subprocess
 
     project_root = _get_project_root()
@@ -936,6 +937,32 @@ def upgrade_cmd(
         err_console.print(f"[red]pip install failed: {result.stderr}[/red]")
         raise typer.Exit(code=1)
     console.print("  [green]✓[/green] Python dependencies updated")
+
+    # 3b. Ensure whisper.cpp engine is installed (best effort, hardware-aware)
+    pywhispercpp_check = subprocess.run(
+        [str(venv_pip.parent / "python"), "-c", "import pywhispercpp"],
+        capture_output=True, text=True, cwd=project_root,
+    )
+    if pywhispercpp_check.returncode != 0:
+        console.print("  [dim]Installing Whisper.cpp engine (hardware-optimized)...[/dim]")
+        import platform as _platform
+        env = os.environ.copy()
+        if _platform.system() == "Darwin" and _platform.machine() == "arm64":
+            env["WHISPER_METAL"] = "1"
+        elif _platform.system() == "Linux":
+            try:
+                subprocess.check_output(["nvidia-smi", "-L"], stderr=subprocess.DEVNULL, timeout=2)
+                env["WHISPER_CUDA"] = "1"
+            except Exception:
+                pass
+        wcpp_result = subprocess.run(
+            [str(venv_pip), "install", "--quiet", "--no-binary=pywhispercpp", "pywhispercpp", "psutil"],
+            capture_output=True, text=True, cwd=project_root, env=env,
+        )
+        if wcpp_result.returncode == 0:
+            console.print("  [green]✓[/green] Whisper.cpp engine installed")
+        else:
+            console.print("  [dim]Whisper.cpp install skipped (Faster Whisper still works)[/dim]")
 
     # 4. Rebuild frontend
     console.print("[bold][4/5] Rebuilding web frontend...[/bold]")

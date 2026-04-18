@@ -19,7 +19,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
 # ─── Check Python ────────────────────────────────────────────────────
-echo -e "${BOLD}[1/9] Checking Python...${NC}"
+echo -e "${BOLD}[1/10] Checking Python...${NC}"
 PYTHON=""
 for p in python3.12 python3.11 python3; do
     if command -v "$p" &>/dev/null; then
@@ -41,7 +41,7 @@ if [ -z "$PYTHON" ]; then
 fi
 
 # ─── Check Node.js ───────────────────────────────────────────────────
-echo -e "${BOLD}[2/9] Checking Node.js...${NC}"
+echo -e "${BOLD}[2/10] Checking Node.js...${NC}"
 if command -v node &>/dev/null; then
     NODE_VERSION=$(node --version)
     echo -e "  ${GREEN}✓${NC} Found Node.js $NODE_VERSION"
@@ -57,7 +57,7 @@ else
 fi
 
 # ─── Install BlackHole (audio loopback) ──────────────────────────────
-echo -e "${BOLD}[3/9] Checking BlackHole 2ch...${NC}"
+echo -e "${BOLD}[3/10] Checking BlackHole 2ch...${NC}"
 if system_profiler SPAudioDataType 2>/dev/null | grep -q "BlackHole" || \
    ls /Library/Audio/Plug-Ins/HAL/ 2>/dev/null | grep -qi "blackhole"; then
     echo -e "  ${GREEN}✓${NC} BlackHole 2ch is installed"
@@ -72,7 +72,7 @@ else
 fi
 
 # ─── Create Python virtual environment ───────────────────────────────
-echo -e "${BOLD}[4/9] Setting up Python environment...${NC}"
+echo -e "${BOLD}[4/10] Setting up Python environment...${NC}"
 if [ ! -d ".venv" ]; then
     "$PYTHON" -m venv .venv
     echo -e "  ${GREEN}✓${NC} Virtual environment created"
@@ -91,8 +91,68 @@ echo "  Installing dependencies (this may take a few minutes)..."
 pip install --quiet -e ".[dev]"
 echo -e "  ${GREEN}✓${NC} Python dependencies installed"
 
+# ─── Install Whisper.cpp with hardware-specific acceleration ────────
+echo -e "${BOLD}[5/10] Installing Whisper.cpp transcription engine...${NC}"
+
+OS_NAME="$(uname -s)"
+ARCH_NAME="$(uname -m)"
+WHISPER_PLATFORM="generic CPU"
+WHISPER_ENV_FLAGS=()
+
+if [ "$OS_NAME" = "Darwin" ] && [ "$ARCH_NAME" = "arm64" ]; then
+    WHISPER_PLATFORM="Apple Silicon (Metal + Accelerate)"
+    # Metal and Accelerate are auto-detected by cmake on Apple Silicon
+    WHISPER_ENV_FLAGS+=("WHISPER_METAL=1" "WHISPER_COREML=0")
+elif [ "$OS_NAME" = "Darwin" ] && [ "$ARCH_NAME" = "x86_64" ]; then
+    WHISPER_PLATFORM="Intel Mac (Accelerate)"
+    # Accelerate framework auto-detected
+elif [ "$OS_NAME" = "Linux" ]; then
+    if command -v nvidia-smi &>/dev/null && nvidia-smi -L &>/dev/null; then
+        WHISPER_PLATFORM="Linux + NVIDIA CUDA"
+        WHISPER_ENV_FLAGS+=("WHISPER_CUDA=1")
+    elif [ -d "/opt/rocm" ]; then
+        WHISPER_PLATFORM="Linux + AMD ROCm"
+        WHISPER_ENV_FLAGS+=("WHISPER_HIPBLAS=1")
+    else
+        WHISPER_PLATFORM="Linux CPU (OpenBLAS if available)"
+        if command -v pkg-config &>/dev/null && pkg-config --exists openblas 2>/dev/null; then
+            WHISPER_ENV_FLAGS+=("WHISPER_OPENBLAS=1")
+        fi
+    fi
+fi
+
+echo "  Hardware: $WHISPER_PLATFORM"
+
+# Check cmake (required to build whisper.cpp)
+if ! command -v cmake &>/dev/null; then
+    echo -e "  ${YELLOW}! cmake not found.${NC}"
+    if [ "$OS_NAME" = "Darwin" ] && command -v brew &>/dev/null; then
+        echo "  Installing cmake via Homebrew..."
+        brew install cmake &>/dev/null && echo -e "  ${GREEN}✓${NC} cmake installed"
+    else
+        echo -e "  ${YELLOW}! Skipping whisper.cpp build (install cmake and re-run to enable).${NC}"
+        echo -e "  ${YELLOW}  Faster Whisper still works as the default engine.${NC}"
+    fi
+fi
+
+if command -v cmake &>/dev/null; then
+    echo "  Building pywhispercpp from source (2-5 minutes)..."
+    # Force source build to pick up hardware accelerators (wheel may not have them)
+    BUILD_CMD="pip install --quiet --no-binary=pywhispercpp pywhispercpp psutil"
+    if [ ${#WHISPER_ENV_FLAGS[@]} -gt 0 ]; then
+        BUILD_CMD="${WHISPER_ENV_FLAGS[*]} $BUILD_CMD"
+    fi
+    if eval "$BUILD_CMD" 2>/dev/null; then
+        echo -e "  ${GREEN}✓${NC} Whisper.cpp installed ($WHISPER_PLATFORM)"
+    else
+        echo -e "  ${YELLOW}! Whisper.cpp build failed (Faster Whisper still works as default)${NC}"
+        # Still try to install psutil for hardware detection
+        pip install --quiet psutil 2>/dev/null || true
+    fi
+fi
+
 # ─── Build frontend ─────────────────────────────────────────────────
-echo -e "${BOLD}[5/9] Building web frontend...${NC}"
+echo -e "${BOLD}[6/10] Building web frontend...${NC}"
 cd web
 if [ ! -d "node_modules" ]; then
     npm install --silent 2>/dev/null
@@ -102,12 +162,12 @@ cd ..
 echo -e "  ${GREEN}✓${NC} Frontend built"
 
 # ─── Initialize database ────────────────────────────────────────────
-echo -e "${BOLD}[6/9] Initializing database...${NC}"
+echo -e "${BOLD}[7/10] Initializing database...${NC}"
 .venv/bin/mm init 2>/dev/null
 echo -e "  ${GREEN}✓${NC} Database initialized"
 
 # ─── Configure API keys ─────────────────────────────────────────────
-echo -e "${BOLD}[7/9] Configuring API keys...${NC}"
+echo -e "${BOLD}[8/10] Configuring API keys...${NC}"
 if [ -f ".env" ]; then
     echo -e "  ${GREEN}✓${NC} .env file exists"
 else
@@ -131,13 +191,13 @@ else
 fi
 
 # ─── Install macOS service ───────────────────────────────────────────
-echo -e "${BOLD}[8/9] Setting up auto-start service...${NC}"
+echo -e "${BOLD}[9/10] Setting up auto-start service...${NC}"
 .venv/bin/mm service install 2>/dev/null && \
     echo -e "  ${GREEN}✓${NC} Service installed (auto-starts on login)" || \
     echo -e "  ${YELLOW}! Service install skipped (run 'mm service install' later)${NC}"
 
 # ─── Symlink mm command ─────────────────────────────────────────────
-echo -e "${BOLD}[9/9] Making 'mm' command available...${NC}"
+echo -e "${BOLD}[10/10] Making 'mm' command available...${NC}"
 LINK_DIR="/usr/local/bin"
 if [ -w "$LINK_DIR" ] || [ -w "$(dirname "$LINK_DIR")" ]; then
     ln -sf "$SCRIPT_DIR/.venv/bin/mm" "$LINK_DIR/mm"

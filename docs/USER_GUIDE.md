@@ -451,21 +451,33 @@ generation:
     model: qwen2.5:14b
 ```
 
-### 6.4 Whisper.cpp transcription engine (optional)
+### 6.4 Whisper.cpp transcription engine
 
-For lower memory usage or faster CPU transcription, you can use the Whisper.cpp engine instead of the default Faster Whisper:
+Whisper.cpp is installed automatically by `install.sh` and `mm upgrade`, compiled with hardware-specific acceleration:
+
+| Platform | Acceleration |
+|----------|--------------|
+| Apple Silicon (M1-M4) | Metal + Accelerate framework |
+| Intel Mac | Accelerate framework |
+| Linux + NVIDIA GPU | CUDA (via `WHISPER_CUDA=1`) |
+| Linux + AMD GPU | ROCm/HIPBLAS |
+| Linux CPU | OpenBLAS (if available) |
+
+The installer detects your hardware and forces a source build with the correct flags so the engine can use your GPU. Verify the install with:
 
 ```bash
-pip install pywhispercpp       # Or: pip install -e ".[local-ai]"
+python -c "import pywhispercpp; print(pywhispercpp.__version__)"
 ```
 
-Then set the engine in config:
+To use Whisper.cpp instead of the default Faster Whisper, set the engine in config (or pick it in the Settings page):
 
 ```yaml
 transcription:
   primary_engine: whisper-cpp    # Uses GGML quantized models
   whisper_model: medium
 ```
+
+If the build fails (missing cmake, no compiler, etc.), Faster Whisper continues to work as the default — only the alternative engine is unavailable.
 
 ### 6.5 Hardware detection
 
