@@ -92,18 +92,49 @@ def _meeting_to_detail(m: MeetingORM) -> MeetingDetail:
         follow_ups: list[dict] = []
         parking_lot: list[str] = []
         key_topics: list[str] = []
+
+        import json as _json
+        structured = None
+
+        # Primary source: DB column (new meetings)
         if m.minutes.structured_json:
             try:
-                import json as _json
-                _s = _json.loads(m.minutes.structured_json)
-                sentiment = _s.get("sentiment")
-                discussion_points = _s.get("discussion_points", []) or []
-                risks_and_concerns = _s.get("risks_and_concerns", []) or []
-                follow_ups = _s.get("follow_ups", []) or []
-                parking_lot = _s.get("parking_lot", []) or []
-                key_topics = _s.get("key_topics", []) or []
+                structured = _json.loads(m.minutes.structured_json)
             except Exception:
-                pass
+                structured = None
+
+        # Fallback: load from the on-disk minutes JSON (older meetings whose
+        # structured_json in the DB is NULL, but whose file has the data)
+        if not structured:
+            try:
+                from pathlib import Path as _Path
+                minutes_file = _Path(__file__).resolve().parent.parent.parent.parent.parent / "data" / "minutes" / f"{m.meeting_id}.json"
+                # Also check config.data_dir path
+                if not minutes_file.exists():
+                    from meeting_minutes.config import ConfigLoader
+                    _cfg = ConfigLoader.load_default()
+                    minutes_file = _Path(_cfg.data_dir).expanduser() / "minutes" / f"{m.meeting_id}.json"
+                if minutes_file.exists():
+                    with open(minutes_file, "r", encoding="utf-8") as f:
+                        file_data = _json.load(f)
+                    structured = file_data.get("structured_data") or {
+                        "sentiment": file_data.get("sentiment"),
+                        "discussion_points": file_data.get("discussion_points", []),
+                        "risks_and_concerns": file_data.get("risks_and_concerns", []),
+                        "follow_ups": file_data.get("follow_ups", []),
+                        "parking_lot": file_data.get("parking_lot", []),
+                        "key_topics": file_data.get("key_topics", []),
+                    }
+            except Exception:
+                structured = None
+
+        if structured:
+            sentiment = structured.get("sentiment")
+            discussion_points = structured.get("discussion_points", []) or []
+            risks_and_concerns = structured.get("risks_and_concerns", []) or []
+            follow_ups = structured.get("follow_ups", []) or []
+            parking_lot = structured.get("parking_lot", []) or []
+            key_topics = structured.get("key_topics", []) or []
 
         minutes = MinutesResponse(
             minutes_id=m.minutes.minutes_id,

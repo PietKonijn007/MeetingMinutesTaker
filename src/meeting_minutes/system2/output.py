@@ -60,6 +60,30 @@ class MinutesJSONWriter:
         # Build markdown from parsed minutes
         markdown = self._build_markdown(minutes, metadata)
 
+        # Build structured_data dict — this is what gets persisted to the DB's
+        # structured_json column and served back to the frontend via the API.
+        # Without this, discussion_points/risks/follow_ups/parking_lot live
+        # only in the on-disk JSON file and never reach the UI.
+        participants = getattr(minutes, "participants", [])
+        discussion_points = getattr(minutes, "discussion_points", [])
+        risks_and_concerns = getattr(minutes, "risks_and_concerns", [])
+        follow_ups = getattr(minutes, "follow_ups", [])
+        parking_lot = getattr(minutes, "parking_lot", []) or []
+        meeting_effectiveness = getattr(minutes, "meeting_effectiveness", None)
+
+        structured_data = {
+            "sentiment": getattr(minutes, "sentiment", None),
+            "participants": [p.model_dump() for p in participants],
+            "discussion_points": [dp.model_dump() for dp in discussion_points],
+            "decisions": [d.model_dump() for d in minutes.decisions],
+            "action_items": [ai.model_dump() for ai in minutes.action_items],
+            "risks_and_concerns": [rc.model_dump() for rc in risks_and_concerns],
+            "follow_ups": [fu.model_dump() for fu in follow_ups],
+            "parking_lot": parking_lot,
+            "key_topics": minutes.key_topics,
+            "meeting_effectiveness": meeting_effectiveness.model_dump() if meeting_effectiveness else None,
+        }
+
         minutes_json = MinutesJSON(
             meeting_id=minutes.meeting_id,
             generated_at=datetime.now(timezone.utc),
@@ -73,12 +97,13 @@ class MinutesJSONWriter:
             minutes_markdown=markdown,
             llm=llm_usage,
             sentiment=getattr(minutes, "sentiment", None),
-            participants=getattr(minutes, "participants", []),
-            discussion_points=getattr(minutes, "discussion_points", []),
-            risks_and_concerns=getattr(minutes, "risks_and_concerns", []),
-            follow_ups=getattr(minutes, "follow_ups", []),
-            parking_lot=getattr(minutes, "parking_lot", []),
-            meeting_effectiveness=getattr(minutes, "meeting_effectiveness", None),
+            participants=participants,
+            discussion_points=discussion_points,
+            risks_and_concerns=risks_and_concerns,
+            follow_ups=follow_ups,
+            parking_lot=parking_lot,
+            meeting_effectiveness=meeting_effectiveness,
+            structured_data=structured_data,
         )
 
         json_path = output_dir / f"{minutes.meeting_id}.json"
