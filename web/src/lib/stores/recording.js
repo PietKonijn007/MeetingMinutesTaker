@@ -16,14 +16,30 @@ function createRecordingStore() {
   let ws = null;
   let reconnectTimer = null;
 
-  function connect() {
+  async function fetchWsToken() {
+    const res = await fetch('/api/security/ws-token', { method: 'POST' });
+    if (!res.ok) throw new Error(`ws-token HTTP ${res.status}`);
+    const data = await res.json();
+    return data.token;
+  }
+
+  async function connect() {
     if (typeof window === 'undefined') return;
     if (ws && ws.readyState <= 1) return; // already open or connecting
 
+    let token;
+    try {
+      token = await fetchWsToken();
+    } catch (e) {
+      console.error('[recording-store] Failed to fetch WS token:', e);
+      reconnectTimer = setTimeout(connect, 3000);
+      return;
+    }
+
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const host = window.location.host;
-    const url = `${protocol}//${host}/ws/recording`;
-    console.log('[recording-store] Connecting to WebSocket:', url);
+    const url = `${protocol}//${host}/ws/recording?token=${encodeURIComponent(token)}`;
+    console.log('[recording-store] Connecting to WebSocket');
 
     try {
       ws = new WebSocket(url);

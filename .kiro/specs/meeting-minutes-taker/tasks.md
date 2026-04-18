@@ -360,9 +360,9 @@ Incremental implementation of the three-system meeting minutes pipeline. Each ta
     - _Fixes: H-2 (Overpermissive CORS configuration)_
 
 - [ ] 32. Security hardening — Do Soon (next sprint)
-  - [ ] 32.1 Add WebSocket authentication via one-time token — REST endpoint issues a short-lived token; both `/ws/recording` and `/ws/pipeline/:id` validate the token query parameter before `websocket.accept()` in `src/meeting_minutes/api/ws.py`
+  - [x] 32.1 Add WebSocket authentication via one-time token — `POST /api/security/ws-token` mints a 60s single-use token; both `/ws/recording` and `/ws/pipeline/:id` validate the `?token=` query parameter before `websocket.accept()`. Frontend fetches a fresh token on every (re)connect.
     - _Fixes: H-1 (Unauthenticated WebSocket endpoints)_
-  - [ ] 32.2 Add `slowapi` rate limiting middleware for LLM-backed endpoints — limit to 10 calls/minute per client on summarize, action-item, and semantic-search routes
+  - [x] 32.2 Add in-memory sliding-window rate limiter (10 calls/60s per client IP) to `POST /api/chat` and `POST /api/meetings/:id/regenerate`. Returns 429 with Retry-After header on breach. No external dependency.
     - _Fixes: H-4 (No rate limiting on LLM-backed endpoints)_
   - [ ] 32.3 Use Pydantic `SecretStr` for all API key config fields — update `AppConfig` in `src/meeting_minutes/config.py`; audit all logging calls to ensure key values are never logged
     - _Fixes: M-1 (LLM API keys potentially logged)_

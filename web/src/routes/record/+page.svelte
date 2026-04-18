@@ -31,13 +31,23 @@
   let ws = null;
   let wsReconnectTimer = null;
 
-  function connectWebSocket() {
+  async function connectWebSocket() {
     if (typeof window === 'undefined') return;
     if (ws && ws.readyState <= 1) return; // already open or connecting
 
+    let token;
+    try {
+      const res = await fetch('/api/security/ws-token', { method: 'POST' });
+      if (!res.ok) throw new Error(`ws-token HTTP ${res.status}`);
+      token = (await res.json()).token;
+    } catch (e) {
+      wsReconnectTimer = setTimeout(connectWebSocket, 3000);
+      return;
+    }
+
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const host = window.location.host;
-    const url = `${protocol}//${host}/ws/recording`;
+    const url = `${protocol}//${host}/ws/recording?token=${encodeURIComponent(token)}`;
 
     try {
       ws = new WebSocket(url);

@@ -12,6 +12,7 @@ from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from meeting_minutes.api.deps import get_config, get_db_session, get_search, get_storage
+from meeting_minutes.api.rate_limit import check_llm_limit
 from meeting_minutes.api.schemas import (
     ActionItemResponse,
     DecisionResponse,
@@ -662,7 +663,7 @@ def delete_meeting(
     return {"status": "deleted", "meeting_id": meeting_id, "files_deleted": len(deleted_files)}
 
 
-@router.post("/{meeting_id}/regenerate")
+@router.post("/{meeting_id}/regenerate", dependencies=[Depends(check_llm_limit)])
 async def regenerate_meeting(
     meeting_id: str,
     storage: Annotated[StorageEngine, Depends(get_storage)],

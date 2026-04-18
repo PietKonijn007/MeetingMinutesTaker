@@ -65,12 +65,10 @@ The frontend must then send `X-Api-Key: <value>` with every request.
 
 ## HIGH — Fix Soon
 
-### H-1: Unauthenticated WebSocket Endpoints
+### ~~H-1: Unauthenticated WebSocket Endpoints~~ — RESOLVED
 
-**File:** `src/meeting_minutes/api/ws.py`  
-`/ws/recording` opens a microphone recording session; `/ws/pipeline/:id` streams pipeline progress. Both accept any connection with no token check. A rogue page open in the same browser (or any LAN peer) can hijack a live recording session.
-
-**Fix:** Validate a one-time token passed as a query parameter during the WebSocket handshake (before `websocket.accept()`). The frontend requests the token from the REST API (which can be auth-protected per C-1).
+> **Fixed:** Both `/ws/recording` and `/ws/pipeline/:id` now require a one-time token passed as `?token=<value>`. Tokens are minted via `POST /api/security/ws-token` (CORS-protected so cross-origin pages can't mint tokens), have a 60-second TTL, and are single-use. Frontend WebSocket clients fetch a fresh token before each connect/reconnect.  
+> **Files:** `src/meeting_minutes/api/ws.py`, `src/meeting_minutes/api/ws_tokens.py`, `src/meeting_minutes/api/routes/security.py`, `web/src/lib/stores/recording.js`, `web/src/routes/record/+page.svelte`
 
 ---
 
@@ -90,11 +88,10 @@ At-rest encryption is opt-in and off by default. The SQLite database contains fu
 
 ---
 
-### H-4: No Rate Limiting on LLM-Backed Endpoints
+### ~~H-4: No Rate Limiting on LLM-Backed Endpoints~~ — RESOLVED
 
-Endpoints that trigger LLM calls (summarize, action items, semantic search) are unbounded. A single unauthenticated client can exhaust OpenAI/Anthropic quota in seconds.
-
-**Fix:** Add `slowapi` rate limiting middleware. Even a generous limit (e.g., 10 LLM calls/minute) prevents accidental or malicious quota drain.
+> **Fixed:** In-memory sliding-window rate limiter (10 calls per 60s per client IP) applied as a FastAPI dependency to `POST /api/chat` and `POST /api/meetings/:id/regenerate`. Returns `429` with a `Retry-After` header when the limit is exceeded. No external dependency required.  
+> **Files:** `src/meeting_minutes/api/rate_limit.py`, `src/meeting_minutes/api/routes/chat.py`, `src/meeting_minutes/api/routes/meetings.py`
 
 ---
 
@@ -209,8 +206,8 @@ Meeting transcripts containing adversarial text (e.g., "Ignore previous instruct
 
 ### Do Soon (next sprint)
 
-5. **H-1** — WebSocket authentication via one-time token  
-6. **H-4** — Rate limiting on LLM endpoints  
+5. ~~**H-1** — WebSocket authentication via one-time token~~ **DONE**  
+6. ~~**H-4** — Rate limiting on LLM endpoints~~ **DONE**  
 7. **M-1** — Use `SecretStr` for API key fields; audit log statements  
 8. **M-3** — Validate Ollama URL resolves to loopback  
 9. **S-1** — Commit `package-lock.json`; use `npm ci`  

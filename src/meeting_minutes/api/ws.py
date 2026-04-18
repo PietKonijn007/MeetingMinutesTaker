@@ -7,11 +7,26 @@ import json
 import logging
 import time
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect, status
+
+from meeting_minutes.api.ws_tokens import consume_token
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["websocket"])
+
+
+async def _authenticate_ws(websocket: WebSocket) -> bool:
+    """Validate one-time token from query string before accepting (H-1).
+
+    Returns True if the handshake should proceed. On failure closes the
+    socket with a policy-violation code and returns False.
+    """
+    token = websocket.query_params.get("token")
+    if not consume_token(token):
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        return False
+    return True
 
 
 @router.websocket("/ws/recording")
@@ -21,6 +36,8 @@ async def ws_recording(websocket: WebSocket):
     Pushes JSON messages with the current recording state and active
     pipeline jobs every tick.
     """
+    if not await _authenticate_ws(websocket):
+        return
     await websocket.accept()
     try:
         while True:
@@ -80,6 +97,8 @@ async def ws_recording(websocket: WebSocket):
 @router.websocket("/ws/pipeline/{meeting_id}")
 async def ws_pipeline(websocket: WebSocket, meeting_id: str):
     """Pipeline progress updates for a specific meeting."""
+    if not await _authenticate_ws(websocket):
+        return
     await websocket.accept()
     try:
         while True:

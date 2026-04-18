@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from meeting_minutes.api.deps import get_config, get_db_session
+from meeting_minutes.api.rate_limit import check_llm_limit
 from meeting_minutes.config import AppConfig
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
@@ -41,7 +42,7 @@ class ChatMessageItem(BaseModel):
     created_at: str | None = None
 
 
-@router.post("", response_model=ChatResponse)
+@router.post("", response_model=ChatResponse, dependencies=[Depends(check_llm_limit)])
 async def chat(
     body: ChatRequest,
     config: Annotated[AppConfig, Depends(get_config)],
