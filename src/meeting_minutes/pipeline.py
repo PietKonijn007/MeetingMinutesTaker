@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import time
 import uuid
 from pathlib import Path
@@ -204,6 +205,9 @@ class PipelineOrchestrator:
         diarization_result = None
         if self._config.diarization.enabled:
             _console(f"  Speaker diarization...", "yellow")
+            self._logger.info("Speaker diarization starting (engine=%s)", self._config.diarization.engine)
+            if not os.environ.get("HF_TOKEN"):
+                self._logger.warning("HF_TOKEN environment variable not set — diarization will likely fail. Get a token at huggingface.co/settings/tokens and accept the license at huggingface.co/pyannote/speaker-diarization-3.1")
             diarize_engine = DiarizationEngine(self._config.diarization)
             try:
                 t0 = time.time()
@@ -213,11 +217,18 @@ class PipelineOrchestrator:
                 diarization_result.meeting_id = meeting_id
                 t_diarize = time.time() - t0
                 n_speakers = len(set(s.speaker for s in diarization_result.segments))
-                _console(f"  ✓ Diarization done in {t_diarize:.1f}s — {n_speakers} speaker(s) detected", "green")
+                n_segments = len(diarization_result.segments)
+                if n_segments == 0:
+                    self._logger.warning("Diarization returned 0 segments in %.1fs — speaker labels will be missing. Check HF_TOKEN and pyannote license acceptance.", t_diarize)
+                    _console(f"  ⚠ Diarization returned 0 segments in {t_diarize:.1f}s — check HF_TOKEN", "yellow")
+                else:
+                    self._logger.info("Diarization done in %.1fs — segments=%d speakers=%d", t_diarize, n_segments, n_speakers)
+                    _console(f"  ✓ Diarization done in {t_diarize:.1f}s — {n_speakers} speaker(s) detected", "green")
             except Exception as exc:
                 self._logger.warning("Diarization failed: %s — continuing without", exc)
                 _console(f"  ⚠ Diarization failed: {exc} — continuing without", "yellow")
         else:
+            self._logger.info("Diarization disabled in config — skipping")
             _console(f"  Diarization: disabled", "dim")
 
         # Write transcript JSON

@@ -20,6 +20,7 @@
 
   let loading = $state(false);
 
+  const itemId = $derived(item.action_item_id || item.id);
   const isDone = $derived(item.status === 'done');
   const isOverdue = $derived(
     item.due_date && !isDone && new Date(item.due_date) < new Date()
@@ -32,10 +33,14 @@
   }
 
   async function toggleStatus() {
+    if (!itemId) {
+      console.error('Action item missing ID, cannot update:', item);
+      return;
+    }
     loading = true;
     try {
       const newStatus = isDone ? 'open' : 'done';
-      await api.updateActionItem(item.id, { status: newStatus });
+      await api.updateActionItem(itemId, { status: newStatus });
       item.status = newStatus;
       onUpdate?.(item);
     } catch (e) {
