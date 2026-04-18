@@ -491,7 +491,16 @@ def serve_cmd(
     pid = _port_in_use(host, port)
 
     if pid is not None:
-        if pid > 0:
+        # Detect TTY — launchd/systemd/docker have no terminal, so prompts hang
+        is_interactive = sys.stdin.isatty() and sys.stdout.isatty()
+
+        if not is_interactive:
+            console.print(f"[yellow]Port {port} is already in use (non-interactive — auto-resolving).[/yellow]")
+            if not auto_port:
+                err_console.print(f"[red]Port {port} in use and --no-auto-port is set.[/red]")
+                raise typer.Exit(code=1)
+            choice = "next"
+        elif pid > 0:
             console.print(f"[yellow]Port {port} is already in use by PID {pid}.[/yellow]")
             choice = typer.prompt(
                 "Kill the process and use this port, or find the next free port?",
