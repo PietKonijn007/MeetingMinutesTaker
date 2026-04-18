@@ -161,6 +161,7 @@
         follow_ups: raw.minutes?.follow_ups || [],
         parking_lot: raw.minutes?.parking_lot || [],
         key_topics: raw.minutes?.key_topics || [],
+        sections: raw.minutes?.sections || [],
         sentiment: raw.minutes?.sentiment || null,
       };
       // Reset expanded discussion topics on new meeting load
@@ -344,7 +345,7 @@
     <!-- Tab content -->
     <div class="mb-8">
       {#if activeTab === 'minutes'}
-        {#if meeting.minutes_markdown || meeting.summary || meeting.discussion_points?.length}
+        {#if meeting.minutes_markdown || meeting.summary || meeting.discussion_points?.length || meeting.sections?.length}
           <!-- Toggle: structured view vs raw markdown -->
           <div class="flex items-center justify-end gap-2 mb-4">
             {#if meeting.discussion_points?.length}
@@ -476,6 +477,58 @@
                 </div>
               {/if}
 
+              <!-- Sections fallback: used by older meetings and text+regex path
+                   where the LLM produced markdown sections instead of structured
+                   discussion_points. Only renders when there are no discussion
+                   points AND there are sections to show. -->
+              {#if !meeting.discussion_points?.length && meeting.sections?.length}
+                {@const renderableSections = meeting.sections.filter(s => {
+                  const h = (s.heading || '').toLowerCase();
+                  const t = (s.type || '').toLowerCase();
+                  // Skip sections that are already rendered as dedicated cards
+                  return !['summary', 'action items', 'actions', 'decisions', 'key topics',
+                          'risks & concerns', 'risks and concerns', 'follow-ups', 'follow ups',
+                          'parking lot'].includes(h) &&
+                         !['summary', 'action_items', 'decisions', 'key_topics'].includes(t);
+                })}
+                {#if renderableSections.length}
+                  <div>
+                    <h3 class="text-xs font-semibold uppercase tracking-wider text-[var(--text-muted)] mb-3">
+                      Discussion ({renderableSections.length})
+                    </h3>
+                    <div class="space-y-2">
+                      {#each renderableSections as section, idx}
+                        {@const isOpen = expandedTopics.has(1000 + idx)}
+                        <div class="bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg overflow-hidden transition-colors hover:border-[var(--text-muted)]">
+                          <button
+                            onclick={() => toggleTopic(1000 + idx)}
+                            class="w-full flex items-start gap-3 p-4 text-left"
+                          >
+                            <svg
+                              class="w-4 h-4 mt-0.5 text-[var(--text-muted)] shrink-0 transition-transform {isOpen ? 'rotate-90' : ''}"
+                              fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                            >
+                              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+                            </svg>
+                            <div class="flex-1 min-w-0">
+                              <h4 class="text-sm font-semibold text-[var(--text-primary)]">{section.heading || 'Section'}</h4>
+                              {#if !isOpen && section.content}
+                                <p class="text-xs text-[var(--text-muted)] mt-1 line-clamp-2">{section.content.slice(0, 200)}</p>
+                              {/if}
+                            </div>
+                          </button>
+                          {#if isOpen && section.content}
+                            <div class="px-4 pb-4 pl-11">
+                              <p class="text-sm text-[var(--text-secondary)] leading-relaxed whitespace-pre-wrap">{section.content}</p>
+                            </div>
+                          {/if}
+                        </div>
+                      {/each}
+                    </div>
+                  </div>
+                {/if}
+              {/if}
+
               <!-- Outcomes grid: Decisions + Actions (compact preview, full lists in tabs) -->
               {#if meeting.decisions?.length || meeting.actions?.length}
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -600,7 +653,7 @@
               {/if}
 
               <!-- Fallback: if no structured data, show markdown -->
-              {#if !meeting.summary && !meeting.discussion_points?.length && meeting.minutes_markdown}
+              {#if !meeting.summary && !meeting.discussion_points?.length && !meeting.sections?.length && meeting.minutes_markdown}
                 <div class="bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg p-6">
                   <MarkdownRenderer content={meeting.minutes_markdown} />
                 </div>

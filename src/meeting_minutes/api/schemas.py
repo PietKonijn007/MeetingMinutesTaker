@@ -76,6 +76,7 @@ class MinutesResponse(BaseModel):
     follow_ups: list[dict[str, Any]] = []
     parking_lot: list[str] = []
     key_topics: list[str] = []
+    sections: list[dict[str, Any]] = []  # fallback for text+regex path or older meetings
 
 
 # ---------------------------------------------------------------------------
