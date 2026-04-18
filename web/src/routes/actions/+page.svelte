@@ -88,7 +88,7 @@
     <!-- Open items -->
     {#if openItems.length > 0}
       <div class="space-y-1 mb-6">
-        {#each openItems as item (item.id)}
+        {#each openItems as item (item.action_item_id)}
           <ActionItemRow {item} />
         {/each}
       </div>
@@ -112,7 +112,7 @@
 
         {#if showCompleted}
           <div class="space-y-1">
-            {#each doneItems as item (item.id)}
+            {#each doneItems as item (item.action_item_id)}
               <ActionItemRow {item} />
             {/each}
           </div>
