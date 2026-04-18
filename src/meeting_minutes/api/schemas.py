@@ -129,11 +129,24 @@ class ExportRequest(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+class TranscriptSegmentResponse(BaseModel):
+    id: int
+    start: float | None = None
+    end: float | None = None
+    speaker: str | None = None
+    text: str
+    # Alias fields for frontend compat
+    start_time: float | None = None
+    end_time: float | None = None
+
+
 class TranscriptResponse(BaseModel):
     meeting_id: str
     full_text: str | None = None
     language: str | None = None
     audio_file_path: str | None = None
+    segments: list[TranscriptSegmentResponse] = []
+    speakers: list[dict[str, Any]] = []
 
 
 # ---------------------------------------------------------------------------

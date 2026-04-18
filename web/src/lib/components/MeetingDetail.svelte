@@ -585,8 +585,27 @@
         {/if}
 
         {#if transcript?.segments?.length}
+          {@const speakerMap = Object.fromEntries((transcript.speakers || []).map(s => [s.label, s.name || s.label]))}
+          {@const speakerColors = ['#6366F1', '#0EA5E9', '#22C55E', '#F59E0B', '#EC4899', '#F97316', '#14B8A6', '#A855F7']}
+          {@const uniqueSpeakers = [...new Set(transcript.segments.map(s => s.speaker).filter(Boolean))]}
+          {@const colorFor = (label) => label ? speakerColors[uniqueSpeakers.indexOf(label) % speakerColors.length] : '#6B7280'}
+
+          <!-- Speaker legend -->
+          {#if uniqueSpeakers.length > 0}
+            <div class="flex flex-wrap gap-2 mb-3 pb-3 border-b border-[var(--border-subtle)]">
+              {#each uniqueSpeakers as label}
+                <span class="inline-flex items-center gap-1.5 text-xs text-[var(--text-secondary)]">
+                  <span class="w-2 h-2 rounded-full" style="background-color: {colorFor(label)}"></span>
+                  {speakerMap[label] || label}
+                </span>
+              {/each}
+            </div>
+          {/if}
+
           <div class="space-y-1">
             {#each transcript.segments as segment, i}
+              {@const displayName = speakerMap[segment.speaker] || segment.speaker || 'Unknown'}
+              {@const speakerColor = colorFor(segment.speaker)}
               <div
                 class="flex gap-3 p-3 rounded-lg transition-colors duration-150
                        {isActiveSegment(segment) ? 'bg-[var(--accent)] bg-opacity-5' : 'hover:bg-[var(--bg-surface-hover)]'}"
@@ -598,7 +617,10 @@
                   {formatTimestamp(segment.start_time)}
                 </button>
                 <div class="flex-1 min-w-0">
-                  <span class="text-sm font-semibold text-[var(--text-primary)]">{segment.speaker || 'Unknown'}</span>
+                  <span class="inline-flex items-center gap-1.5 text-sm font-semibold text-[var(--text-primary)]">
+                    <span class="w-2 h-2 rounded-full shrink-0" style="background-color: {speakerColor}"></span>
+                    {displayName}
+                  </span>
                   <p class="text-sm text-[var(--text-secondary)] mt-0.5">{segment.text}</p>
                 </div>
               </div>

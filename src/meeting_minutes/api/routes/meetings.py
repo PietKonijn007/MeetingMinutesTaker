@@ -311,19 +311,48 @@ def get_meeting(
 def get_transcript(
     meeting_id: str,
     storage: Annotated[StorageEngine, Depends(get_storage)],
+    config: Annotated[AppConfig, Depends(get_config)],
 ):
-    """Get full transcript for a meeting."""
+    """Get full transcript for a meeting (includes segments + speaker labels)."""
     m = storage.get_meeting(meeting_id)
     if m is None:
         raise HTTPException(status_code=404, detail=f"No meeting with ID {meeting_id}")
     if m.transcript is None:
         raise HTTPException(status_code=404, detail="No transcript available for this meeting")
 
+    # Load segments + speakers from the transcript JSON file
+    segments: list = []
+    speakers: list = []
+    data_dir = Path(config.data_dir).expanduser()
+    transcript_path = data_dir / "transcripts" / f"{meeting_id}.json"
+    if transcript_path.exists():
+        try:
+            import json as _json
+            data = _json.loads(transcript_path.read_text())
+            raw_segments = data.get("transcript", {}).get("segments", []) or []
+            for s in raw_segments:
+                segments.append({
+                    "id": s.get("id", 0),
+                    "start": s.get("start"),
+                    "end": s.get("end"),
+                    "start_time": s.get("start"),
+                    "end_time": s.get("end"),
+                    "speaker": s.get("speaker"),
+                    "text": s.get("text", ""),
+                })
+            for sp in data.get("speakers", []) or []:
+                if isinstance(sp, dict):
+                    speakers.append(sp)
+        except Exception:
+            pass
+
     return TranscriptResponse(
         meeting_id=meeting_id,
         full_text=m.transcript.full_text,
         language=m.transcript.language,
         audio_file_path=m.transcript.audio_file_path,
+        segments=segments,
+        speakers=speakers,
     )
 
 
