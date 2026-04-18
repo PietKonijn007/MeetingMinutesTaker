@@ -461,9 +461,78 @@ def init_cmd():
 def serve_cmd(
     host: str = typer.Option("127.0.0.1", "--host", help="Bind address"),
     port: int = typer.Option(8080, "--port", "-p", help="Port number"),
+    auto_port: bool = typer.Option(True, "--auto-port/--no-auto-port", help="Auto-find a free port if the requested one is busy"),
 ):
     """Start the API server."""
+    import signal
+    import socket
     import uvicorn
+
+    def _port_in_use(host: str, port: int) -> int | None:
+        """Return the PID using the port, or None if the port is free."""
+        import subprocess
+        try:
+            result = subprocess.run(
+                ["lsof", "-ti", f"tcp:{port}"],
+                capture_output=True, text=True, timeout=3,
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                return int(result.stdout.strip().split("\n")[0])
+        except Exception:
+            pass
+        # Fallback: just try to bind
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.bind((host, port))
+                return None
+        except OSError:
+            return -1  # In use but PID unknown
+
+    pid = _port_in_use(host, port)
+
+    if pid is not None:
+        if pid > 0:
+            console.print(f"[yellow]Port {port} is already in use by PID {pid}.[/yellow]")
+            choice = typer.prompt(
+                "Kill the process and use this port, or find the next free port?",
+                type=typer.Choice(["kill", "next", "abort"], case_sensitive=False),
+                default="next",
+            )
+        else:
+            console.print(f"[yellow]Port {port} is already in use.[/yellow]")
+            choice = typer.prompt(
+                "Find the next free port, or abort?",
+                type=typer.Choice(["next", "abort"], case_sensitive=False),
+                default="next",
+            )
+
+        if choice == "kill" and pid > 0:
+            import os
+            try:
+                os.kill(pid, signal.SIGTERM)
+                console.print(f"  [green]Killed PID {pid}[/green]")
+                import time
+                time.sleep(1)
+            except ProcessLookupError:
+                console.print(f"  [dim]PID {pid} already exited[/dim]")
+            except PermissionError:
+                err_console.print(f"[red]Permission denied killing PID {pid}. Try: sudo kill {pid}[/red]")
+                raise typer.Exit(code=1)
+        elif choice == "next":
+            if not auto_port:
+                err_console.print(f"[red]Port {port} in use and --no-auto-port is set.[/red]")
+                raise typer.Exit(code=1)
+            original = port
+            for candidate in range(port + 1, port + 20):
+                if _port_in_use(host, candidate) is None:
+                    port = candidate
+                    break
+            else:
+                err_console.print(f"[red]No free port found in range {original+1}–{original+19}[/red]")
+                raise typer.Exit(code=1)
+            console.print(f"  [green]Using port {port} instead[/green]")
+        else:
+            raise typer.Exit(code=0)
 
     console.print(f"[green]Starting API server on {host}:{port}[/green]")
     uvicorn.run(
