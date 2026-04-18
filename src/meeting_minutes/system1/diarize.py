@@ -26,6 +26,7 @@ class DiarizationEngine:
             return self._pipeline
 
         import os
+        import platform
         import warnings
 
         try:
@@ -41,6 +42,22 @@ class DiarizationEngine:
                 "pyannote/speaker-diarization-3.1",
                 token=hf_token,
             )
+
+            # Move pipeline to best available device for 5-10x speedup
+            try:
+                import torch
+                if platform.system() == "Darwin" and platform.machine() == "arm64" and torch.backends.mps.is_available():
+                    device = torch.device("mps")
+                    logger.info("Diarization: using Apple Silicon GPU (MPS)")
+                elif torch.cuda.is_available():
+                    device = torch.device("cuda")
+                    logger.info("Diarization: using NVIDIA CUDA")
+                else:
+                    device = torch.device("cpu")
+                    logger.info("Diarization: using CPU (slow — expect ~1x real-time)")
+                self._pipeline.to(device)
+            except Exception as device_exc:
+                logger.warning("Could not move diarization pipeline to GPU: %s — using CPU", device_exc)
         except ImportError as exc:
             raise RuntimeError(
                 "pyannote.audio is not installed. Run: pip install pyannote.audio"
