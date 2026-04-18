@@ -112,10 +112,25 @@ class DiarizationEngine:
                 num_speakers=0,
             )
 
+        # pyannote.audio 3.3+ returns DiarizeOutput wrapper; older versions
+        # return Annotation directly. Unwrap if needed.
+        annotation = diarization
+        if not hasattr(annotation, "itertracks"):
+            for attr in ("speaker_diarization", "diarization", "annotation"):
+                candidate = getattr(annotation, attr, None)
+                if candidate is not None and hasattr(candidate, "itertracks"):
+                    annotation = candidate
+                    break
+            else:
+                raise RuntimeError(
+                    f"Diarization output has no usable annotation. "
+                    f"Got {type(diarization).__name__} with attrs: {dir(diarization)[:20]}"
+                )
+
         segments: list[DiarizationSegment] = []
         speakers: set[str] = set()
 
-        for turn, _, speaker in diarization.itertracks(yield_label=True):
+        for turn, _, speaker in annotation.itertracks(yield_label=True):
             # Ensure SPEAKER_XX format
             label = self._normalize_label(speaker)
             segments.append(
