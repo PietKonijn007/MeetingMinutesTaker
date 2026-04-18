@@ -13,7 +13,7 @@ Record Audio ──► Transcribe ──► Generate Minutes ──► Store & S
 
 **System 2 — Minutes Generation**: Auto-detects meeting type using an LLM classifier with meeting type refinement, routes transcripts to meeting-type-specific prompt templates, generates structured minutes via LLM. Supports **four providers**: Anthropic Claude (tool_use for guaranteed JSON), OpenAI, OpenRouter (200+ models), and **Ollama for fully local/offline summarization** (JSON-mode structured generation). Extracts action items and decisions with per-speaker sentiment analysis and meeting effectiveness scoring, and runs quality checks. Supports custom LLM instructions provided during recording.
 
-**System 3 — Storage & Search**: Stores everything in SQLite with full-text search (FTS5), provides a CLI for searching, browsing, and managing meetings and action items. Supports encryption at rest, configurable retention policies, and in-calendar search with filters.
+**System 3 — Storage & Search**: Stores everything in SQLite with full-text search (FTS5) and **semantic vector search** (via `sqlite-vec` + `sentence-transformers`). Provides a CLI for searching, browsing, and managing meetings and action items. **"Chat with your meetings"** feature uses RAG (Retrieval-Augmented Generation) to answer natural-language questions across all your meeting history — e.g., _"Summarize all actions Jon Porter has taken on lead times since April 1st"_. Supports encryption at rest, configurable retention policies, and in-calendar search with filters.
 
 ## Supported Meeting Types
 
@@ -152,6 +152,8 @@ mm actions complete <action_id>                   # Mark done
 | `mm generate <id>` | Generate minutes from transcript |
 | `mm reprocess <id>` | Re-run generation + ingestion (skips transcription/diarization) |
 | `mm rediarize <id>` | Re-run speaker diarization on existing audio (skips transcription) |
+| `mm embed` | Generate semantic search embeddings for all meetings (run once to backfill) |
+| `mm embed <id>` | Embed a single meeting |
 | `mm delete <id>` | Delete meeting and all associated data |
 | `mm cleanup` | Run retention policy cleanup (delete expired data) |
 | `mm generate-key` | Generate a new encryption key for at-rest encryption |
@@ -176,7 +178,7 @@ mm serve
 open http://localhost:8080
 ```
 
-**Pages**: Meetings (calendar view with day list + inline detail + search with filters), Meeting Detail, Action Items, Decisions, People, Stats (charts), Record (live waveform + concurrent pipeline status + live note-taking), Templates (view/edit/create prompt templates), Settings (LLM provider/model selection with custom model support, Security, Retention, and CORS config).
+**Pages**: Meetings (calendar view with day list + inline detail + search with filters), **Chat** (talk to your meetings — ask natural-language questions across all meeting history with citations), Meeting Detail, Action Items, Decisions, People, Stats (charts), Record (live waveform + concurrent pipeline status + live note-taking), Templates (view/edit/create prompt templates), Settings (LLM provider/model selection with custom model support, Performance & Hardware, Security, Retention, and CORS config).
 
 **Features**: Dark mode, full-text search with `Cmd+K`, in-calendar search with type filter chips, keyboard navigation, responsive layout, meeting type color coding, WebSocket-based real-time updates, concurrent pipeline processing (record a new meeting while the previous one processes in background), auto-detect capture device, auto-save recovery every 5 minutes during recording, live note-taking during recording (speaker names, notes, custom LLM instructions), structured card-based minutes view with collapsible discussion topics, color-coded transcript per-speaker with inline "Name speakers" editor, Performance & Hardware settings (Apple Silicon MPS toggle), encryption at rest, retention policies with automatic cleanup.
 
@@ -255,6 +257,8 @@ MeetingMinutesTaker/
 │   ├── pipeline.py            # Pipeline orchestrator (with retry)
 │   ├── retention.py           # Data retention policy engine
 │   ├── hardware.py            # GPU/RAM detection and model recommendations
+│   ├── embeddings.py          # Semantic search: chunk + embed + sqlite-vec index
+│   ├── chat.py                # RAG chat engine: query parsing + hybrid retrieval + LLM
 │   ├── system1/               # Audio capture & transcription
 │   │   ├── capture.py         #   AudioCaptureEngine (sounddevice, circular buffer)
 │   │   ├── transcribe.py      #   Transcription engine factory (faster-whisper, whisper.cpp)
@@ -314,6 +318,8 @@ MeetingMinutesTaker/
 | LLM | Anthropic Claude (primary), OpenRouter (200+ models), OpenAI, Ollama (local) |
 | Database | SQLite + SQLAlchemy |
 | Full-text search | SQLite FTS5 with BM25 ranking |
+| Semantic search | `sentence-transformers` (bge-small) + `sqlite-vec` |
+| Chat/RAG | Hybrid retrieval (FTS5 + vector) → LLM synthesis with citations |
 | CLI | `typer` + `rich` |
 | Templates | Jinja2 |
 | API server | FastAPI + uvicorn |

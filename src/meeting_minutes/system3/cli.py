@@ -685,6 +685,79 @@ def cleanup_cmd():
 
 
 # ---------------------------------------------------------------------------
+# mm embed
+# ---------------------------------------------------------------------------
+
+
+@app.command("embed")
+def embed_cmd(
+    meeting_id: str = typer.Argument(None, help="Meeting ID to embed (omit for all)"),
+    force: bool = typer.Option(False, "--force", "-f", help="Re-embed even if already indexed"),
+):
+    """Generate semantic search embeddings for meetings.
+
+    Run without arguments to embed all meetings. On first run after upgrade,
+    this backfills embeddings for all existing meetings (~2s per meeting).
+    """
+    from meeting_minutes.embeddings import EmbeddingEngine
+    from meeting_minutes.system3.db import get_session_factory, EmbeddingChunkORM
+    from rich.progress import Progress
+
+    config = _load_config()
+    db_path = Path(config.storage.sqlite_path).expanduser()
+    data_dir = Path(config.data_dir).expanduser()
+    session_factory = get_session_factory(f"sqlite:///{db_path}")
+    session = session_factory()
+    engine = EmbeddingEngine(config)
+
+    if meeting_id:
+        # Single meeting
+        console.print(f"[bold]Embedding meeting {meeting_id[:12]}...[/bold]")
+        count = engine.index_meeting(meeting_id, session, data_dir)
+        console.print(f"[green]✓ Indexed {count} chunks[/green]")
+    else:
+        # All meetings
+        minutes_dir = data_dir / "minutes"
+        if not minutes_dir.exists():
+            console.print("[yellow]No minutes directory found.[/yellow]")
+            return
+
+        meeting_files = sorted(minutes_dir.glob("*.json"))
+        if not meeting_files:
+            console.print("[yellow]No meetings found to embed.[/yellow]")
+            return
+
+        # Check which already have embeddings
+        if not force:
+            existing = {r[0] for r in session.query(EmbeddingChunkORM.meeting_id).distinct().all()}
+            to_embed = [f for f in meeting_files if f.stem not in existing]
+        else:
+            to_embed = meeting_files
+
+        if not to_embed:
+            console.print(f"[dim]All {len(meeting_files)} meetings already embedded. Use --force to re-embed.[/dim]")
+            return
+
+        console.print(f"[bold]Embedding {len(to_embed)} meeting(s)...[/bold]")
+        total_chunks = 0
+
+        with Progress() as progress:
+            task = progress.add_task("Embedding", total=len(to_embed))
+            for mf in to_embed:
+                mid = mf.stem
+                try:
+                    count = engine.index_meeting(mid, session, data_dir)
+                    total_chunks += count
+                except Exception as exc:
+                    console.print(f"  [yellow]⚠ {mid[:8]}: {exc}[/yellow]")
+                progress.advance(task)
+
+        console.print(f"\n[green]✓ Indexed {total_chunks} chunks across {len(to_embed)} meetings[/green]")
+
+    session.close()
+
+
+# ---------------------------------------------------------------------------
 # mm generate-key
 # ---------------------------------------------------------------------------
 

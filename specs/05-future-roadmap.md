@@ -31,6 +31,14 @@ The following local AI features have been implemented:
 - **structured_data persistence fix**: `MinutesJSONWriter` now populates `MinutesJSON.structured_data` so `structured_json` DB column gets written; resolves issue where discussion points etc. existed on disk but weren't returned by the API.
 - **Sections fallback**: API always reads the on-disk minutes JSON to expose `sections[]` from the text+regex fallback path; UI renders them as collapsible cards when `discussion_points` is empty, with dedup against already-rendered sections.
 
+### Semantic Search & Chat (Implemented)
+
+- **Embedding engine**: `sentence-transformers` with `BAAI/bge-small-en-v1.5` (384-dim, local). Chunks meetings into summary, discussion points, action items, decisions, risks, follow-ups, and transcript windows. Vectors stored in `sqlite-vec` inside the same `meetings.db` — backed up automatically.
+- **Chat engine (RAG)**: Natural-language Q&A over meeting history. Parses query for filters (person, date range, topic), combines FTS5 keyword search + vector semantic search, sends top-K chunks to user's LLM for synthesis with citations.
+- **Chat UI**: New `/chat` page in sidebar with conversation history, suggested queries, markdown-rendered answers, and clickable meeting citation links.
+- **Pipeline integration**: New meetings are auto-embedded after ingestion. `mm embed` CLI command for backfilling existing meetings.
+- **API endpoints**: `POST /api/chat`, `GET /api/chat/sessions`, `GET /api/chat/sessions/:id/messages`, `DELETE /api/chat/sessions/:id`.
+
 ### CLI & Install UX (Implemented)
 
 - **Port conflict handling in `mm serve`**: Detects busy port via `lsof`, prompts to kill the holder, auto-pick the next free port, or abort. Auto-resolves non-interactively under launchd/systemd.

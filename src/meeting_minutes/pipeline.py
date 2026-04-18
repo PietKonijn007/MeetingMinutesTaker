@@ -127,6 +127,16 @@ class PipelineOrchestrator:
             max_retries=1, base_delay=2, step_name="Ingestion",
         )
 
+        # Embed for semantic search (best-effort, non-blocking)
+        _console("  Indexing for semantic search...", "dim")
+        try:
+            await asyncio.get_event_loop().run_in_executor(
+                None, self._embed_meeting, meeting_id
+            )
+        except Exception as exc:
+            self._logger.warning("Embedding failed for %s: %s — semantic search may be incomplete", meeting_id, exc)
+            _console(f"  ⚠ Embedding failed: {exc}", "yellow")
+
         # Post-processing: backup and Obsidian export
         self._maybe_backup()
         self._export_to_obsidian_from_file(meeting_id)
@@ -758,6 +768,29 @@ class PipelineOrchestrator:
         _console(f"\n{'='*60}", "bold")
         _console(f"  REPROCESS COMPLETE — {elapsed:.1f}s", "bold green")
         _console(f"{'='*60}\n")
+
+    def _embed_meeting(self, meeting_id: str) -> None:
+        """Generate and store embeddings for a single meeting."""
+        from meeting_minutes.embeddings import EmbeddingEngine
+        from meeting_minutes.system3.db import get_session_factory
+
+        db_path = Path(self._config.storage.sqlite_path).expanduser()
+        session_factory = get_session_factory(f"sqlite:///{db_path}")
+        session = session_factory()
+
+        try:
+            engine = EmbeddingEngine(self._config)
+            count = engine.index_meeting(meeting_id, session, self._data_dir)
+            if count > 0:
+                self._logger.info("Indexed %d chunks for meeting %s", count, meeting_id)
+                _console(f"  ✓ Indexed {count} chunks for semantic search", "green")
+            else:
+                _console(f"  ⚠ No chunks to index", "dim")
+        except Exception as exc:
+            self._logger.warning("Embedding failed: %s", exc)
+            raise
+        finally:
+            session.close()
 
     def _maybe_backup(self) -> None:
         """Create a backup if the last one is older than the configured interval."""

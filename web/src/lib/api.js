@@ -102,6 +102,14 @@ export const api = {
   getRetentionStatus: () => request('/retention/status'),
   runRetentionCleanup: () => request('/retention/cleanup', { method: 'POST' }),
 
+  // Chat (talk to your notes)
+  sendChatMessage: (message, sessionId = null) => request('/chat', {
+    method: 'POST', body: JSON.stringify({ message, session_id: sessionId }),
+  }),
+  getChatSessions: () => request('/chat/sessions'),
+  getChatMessages: (sessionId) => request(`/chat/sessions/${sessionId}/messages`),
+  deleteChatSession: (sessionId) => request(`/chat/sessions/${sessionId}`, { method: 'DELETE' }),
+
   // Templates
   getTemplates: () => request('/templates'),
   getTemplate: (type) => request(`/templates/${type}`),

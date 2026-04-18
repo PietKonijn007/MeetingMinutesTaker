@@ -312,6 +312,18 @@ Incremental implementation of the three-system meeting minutes pipeline. Each ta
   - [x] 33.4 `install.sh` detects platform (Apple Silicon/Intel Mac/Linux+CUDA/Linux+ROCm/Linux CPU) and sets `WHISPER_METAL=1` / `WHISPER_CUDA=1` / `WHISPER_HIPBLAS=1` / `WHISPER_OPENBLAS=1` for source build of pywhispercpp.
   - [x] 33.5 `install.sh` step [2.5/10] installs ffmpeg via Homebrew (required by pyannote 3.3+/torchcodec).
 
+- [x] 34. Semantic search & chat ("Talk to your meetings")
+  - [x] 34.1 Add `sentence-transformers` and `sqlite-vec` to dependencies
+  - [x] 34.2 Add `EmbeddingChunkORM`, `ChatSessionORM`, `ChatMessageORM` to db.py; create `embedding_vectors` sqlite-vec virtual table
+  - [x] 34.3 Build `EmbeddingEngine` in `embeddings.py` — chunk meetings (transcript sliding window + structured fields), embed with bge-small, store in sqlite-vec
+  - [x] 34.4 Build `ChatEngine` in `chat.py` — query filter parsing (person/date/topic), semantic search, context building, LLM RAG synthesis, conversation history
+  - [x] 34.5 Add auto-embed step to pipeline (after ingestion) + `_embed_meeting()` method
+  - [x] 34.6 Add `mm embed` CLI command with progress bar, `--force` flag, single/all modes
+  - [x] 34.7 Add chat API routes (`POST /api/chat`, `GET /api/chat/sessions`, `GET /api/chat/sessions/:id/messages`, `DELETE /api/chat/sessions/:id`)
+  - [x] 34.8 Build Chat page frontend with conversation sidebar, suggested queries, markdown answers with citations, auto-scroll, session management
+  - [x] 34.9 Add "Chat" to sidebar navigation with icon
+  - [x] 34.10 Fix duplicate search bar: rename in-calendar search placeholder to "Filter meetings..."
+
 - [x] 30. Local AI Support
   - [x] 30.1 Implement Ollama LLM provider in `src/meeting_minutes/system2/llm_client.py` — `_call_ollama()` via OpenAI-compatible API, no API key required, configurable base_url, $0.00 cost tracking
     - _Requirements: 5.8, 5.9_

@@ -557,6 +557,54 @@ sudo asitop
 
 ---
 
+## 6.8 Semantic search & chat ("Talk to your meetings")
+
+The system can embed all your meetings into a vector database for semantic search and AI-powered Q&A.
+
+### First-time setup: backfill embeddings
+
+After upgrading, run this once to embed all existing meetings:
+
+```bash
+mm embed                    # Embed all meetings (~2s each)
+mm embed --force            # Re-embed everything (if you want a fresh index)
+mm embed <meeting_id>       # Embed a single meeting
+```
+
+New meetings are automatically embedded during the pipeline (after ingestion).
+
+### Using the Chat page
+
+Open the **Chat** page from the sidebar. Ask natural-language questions like:
+
+- _"Summarize all meetings with Jon Porter since April"_
+- _"What decisions were made about the product roadmap?"_
+- _"Show me open action items for the marketing team"_
+- _"What risks were raised in our last planning session?"_
+
+The system:
+1. Parses your query to extract filters (person, date range, topic focus)
+2. Searches across all embedded meeting chunks (transcripts, summaries, action items, decisions, discussions)
+3. Combines keyword search (FTS5) + semantic search (vector similarity)
+4. Sends the most relevant chunks to your configured LLM
+5. Returns a synthesized answer with clickable meeting citations
+
+**Chat history** is saved in the sidebar. Click any previous conversation to continue it.
+
+### How embeddings work
+
+Each meeting is chunked into embeddable pieces:
+- **Summary** (1 chunk)
+- **Discussion points** (1 chunk each)
+- **Action items** (1 chunk each, tagged with owner)
+- **Decisions** (1 chunk each, tagged with decision-maker)
+- **Risks, follow-ups** (1 chunk each)
+- **Transcript** (sliding window, ~400 tokens per chunk with overlap)
+
+Each chunk is embedded with `BAAI/bge-small-en-v1.5` (384-dim, ~130MB model, runs locally on CPU or MPS). Vectors are stored in `sqlite-vec` inside the same `meetings.db` file — so **backups automatically include embeddings**.
+
+---
+
 ## 7. Using the CLI
 
 All commands use the `mm` command.

@@ -65,6 +65,8 @@ meeting-minutes-taker/
 │       ├── config.py                # Configuration loading & validation
 │       ├── encryption.py            # Fernet encryption at rest
 │       ├── hardware.py              # GPU/RAM detection & model recommendations
+│       ├── embeddings.py            # Semantic search: chunk + embed + sqlite-vec
+│       ├── chat.py                  # RAG chat engine: hybrid retrieval + LLM synthesis
 │       ├── models.py                # Shared data models (Pydantic)
 │       ├── logging.py               # Structured JSON logging
 │       ├── retention.py             # Data retention policy engine

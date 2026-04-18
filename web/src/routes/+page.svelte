@@ -204,7 +204,7 @@
         <input
           bind:value={searchQuery}
           oninput={onSearchInput}
-          placeholder="Search all meetings..."
+          placeholder="Filter meetings..."
           class="w-full pl-10 pr-8 py-2 bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg text-sm text-[var(--text-primary)] placeholder-[var(--text-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
         />
         {#if searchQuery}
