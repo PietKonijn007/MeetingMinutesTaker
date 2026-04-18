@@ -278,6 +278,11 @@ class EmbeddingEngine:
         now = datetime.now(timezone.utc)
 
         # Store chunks + vectors
+        import struct
+        vec_insert_ok = 0
+        vec_insert_failed = 0
+        last_vec_error: str | None = None
+
         for chunk_data, vector in zip(chunks, vectors):
             chunk_orm = EmbeddingChunkORM(
                 meeting_id=chunk_data["meeting_id"],
@@ -293,16 +298,28 @@ class EmbeddingEngine:
             session.flush()  # Get the auto-generated chunk_id
 
             # Insert vector into sqlite-vec virtual table
-            import struct
             vec_bytes = struct.pack(f"{len(vector)}f", *vector)
             try:
                 session.execute(sql_text(
-                    "INSERT INTO embedding_vectors (chunk_id, embedding) VALUES (:cid, :vec)"
+                    "INSERT INTO embedding_vectors (chunk_id, embedding) VALUES (:cid, vec_f32(:vec))"
                 ), {"cid": chunk_orm.chunk_id, "vec": vec_bytes})
+                vec_insert_ok += 1
             except Exception as exc:
-                logger.warning("Failed to insert vector for chunk %d: %s", chunk_orm.chunk_id, exc)
+                vec_insert_failed += 1
+                last_vec_error = str(exc)
 
         session.commit()
+
+        if vec_insert_failed > 0:
+            logger.error(
+                "Vector insertion failed for %d/%d chunks in meeting %s. Last error: %s. "
+                "Semantic search will be degraded for this meeting. Is sqlite-vec loaded? "
+                "Try: .venv/bin/python -c 'import sqlite_vec; print(sqlite_vec.__file__)'",
+                vec_insert_failed, len(chunks), meeting_id, last_vec_error,
+            )
+        else:
+            logger.info("Indexed %d chunks (%d vectors) for meeting %s", len(chunks), vec_insert_ok, meeting_id)
+
         return len(chunks)
 
     # ------------------------------------------------------------------
@@ -323,31 +340,54 @@ class EmbeddingEngine:
         import struct
         from sqlalchemy import text as sql_text
 
+        from meeting_minutes.system3.db import EmbeddingChunkORM
+
         query_vec = self.embed_query(query)
         vec_bytes = struct.pack(f"{len(query_vec)}f", *query_vec)
 
         # sqlite-vec KNN query: find nearest chunks
-        # We fetch more than limit to allow post-filtering
-        fetch_limit = limit * 5
+        # We fetch much more than limit to allow aggressive post-filtering
+        fetch_limit = max(limit * 10, 100)
+
+        chunk_ids: list[int] = []
+        distances: dict[int, float] = {}
+        used_vec_search = False
 
         try:
             rows = session.execute(sql_text(
                 "SELECT chunk_id, distance FROM embedding_vectors "
-                "WHERE embedding MATCH :qvec "
-                "ORDER BY distance LIMIT :lim"
+                "WHERE embedding MATCH vec_f32(:qvec) AND k = :lim "
+                "ORDER BY distance"
             ), {"qvec": vec_bytes, "lim": fetch_limit}).fetchall()
+            chunk_ids = [r[0] for r in rows]
+            distances = {r[0]: r[1] for r in rows}
+            used_vec_search = True
         except Exception as exc:
-            logger.warning("sqlite-vec search failed: %s", exc)
+            logger.error(
+                "sqlite-vec search failed (extension not loaded or vectors not indexed?): %s — falling back to keyword search",
+                exc,
+            )
+
+        # Fallback: if vector search returned nothing, do a LIKE keyword search
+        if not chunk_ids:
+            logger.warning(
+                "Vector search returned no results (%s). Falling back to keyword search.",
+                "vec search ok" if used_vec_search else "vec search failed",
+            )
+            # Simple keyword fallback: any chunk whose text contains words from the query
+            keywords = [w for w in query.lower().split() if len(w) > 3]
+            if keywords:
+                q = session.query(EmbeddingChunkORM)
+                from sqlalchemy import or_, func
+                q = q.filter(or_(*[func.lower(EmbeddingChunkORM.text).contains(k) for k in keywords]))
+                chunk_orms_fallback = q.limit(limit * 3).all()
+                for c in chunk_orms_fallback:
+                    chunk_ids.append(c.chunk_id)
+                    distances[c.chunk_id] = 0.5  # arbitrary distance for fallback results
+
+        if not chunk_ids:
             return []
 
-        if not rows:
-            return []
-
-        # Load chunk metadata for the returned IDs
-        chunk_ids = [r[0] for r in rows]
-        distances = {r[0]: r[1] for r in rows}
-
-        from meeting_minutes.system3.db import EmbeddingChunkORM
         chunk_orms = session.query(EmbeddingChunkORM).filter(
             EmbeddingChunkORM.chunk_id.in_(chunk_ids)
         ).all()

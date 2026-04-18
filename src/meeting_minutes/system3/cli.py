@@ -689,16 +689,96 @@ def cleanup_cmd():
 # ---------------------------------------------------------------------------
 
 
+def _embed_diagnose() -> None:
+    """Diagnostic for the semantic search setup."""
+    from sqlalchemy import text as _sql_text
+    from meeting_minutes.system3.db import get_session_factory, EmbeddingChunkORM
+
+    config = _load_config()
+    db_path = Path(config.storage.sqlite_path).expanduser()
+
+    console.print(f"[bold]Semantic search diagnostic[/bold]\n")
+    console.print(f"DB path: {db_path}")
+    console.print(f"DB exists: {db_path.exists()}")
+
+    # Check sqlite-vec import
+    try:
+        import sqlite_vec
+        console.print(f"[green]✓[/green] sqlite_vec package: {sqlite_vec.__file__}")
+    except ImportError as e:
+        console.print(f"[red]✗[/red] sqlite_vec package not installed: {e}")
+        return
+
+    # Check sentence-transformers import
+    try:
+        import sentence_transformers
+        console.print(f"[green]✓[/green] sentence_transformers: {sentence_transformers.__version__}")
+    except ImportError as e:
+        console.print(f"[red]✗[/red] sentence_transformers not installed: {e}")
+        return
+
+    session_factory = get_session_factory(f"sqlite:///{db_path}")
+    session = session_factory()
+
+    # Check sqlite-vec loaded in this session
+    try:
+        session.execute(_sql_text("SELECT vec_version()")).fetchone()
+        console.print(f"[green]✓[/green] sqlite-vec extension loaded")
+    except Exception as e:
+        console.print(f"[red]✗[/red] sqlite-vec not loaded in DB session: {e}")
+        session.close()
+        return
+
+    # Count chunks
+    chunk_count = session.query(EmbeddingChunkORM).count()
+    console.print(f"  Embedding chunks in DB: [cyan]{chunk_count}[/cyan]")
+
+    # Count vectors in virtual table
+    try:
+        vec_count = session.execute(_sql_text("SELECT COUNT(*) FROM embedding_vectors")).scalar()
+        console.print(f"  Vectors in embedding_vectors: [cyan]{vec_count}[/cyan]")
+        if vec_count != chunk_count:
+            console.print(
+                f"  [yellow]⚠ Mismatch: {chunk_count} chunks but {vec_count} vectors. "
+                f"Try: mm embed --force[/yellow]"
+            )
+    except Exception as e:
+        console.print(f"[red]✗[/red] Failed to count vectors: {e}")
+        session.close()
+        return
+
+    # Try a test query
+    if vec_count and vec_count > 0:
+        try:
+            from meeting_minutes.embeddings import EmbeddingEngine
+            engine = EmbeddingEngine(config)
+            results = engine.search("What was discussed", session, limit=5)
+            console.print(f"  [green]✓[/green] Test query returned {len(results)} results")
+            if results:
+                top = results[0]
+                console.print(f"    Top match: [{top['chunk_type']}] {top['text'][:80]}...")
+                console.print(f"    Distance: {top['distance']:.3f} (lower = closer)")
+        except Exception as e:
+            console.print(f"[red]✗[/red] Test query failed: {e}")
+
+    session.close()
+
+
 @app.command("embed")
 def embed_cmd(
     meeting_id: str = typer.Argument(None, help="Meeting ID to embed (omit for all)"),
     force: bool = typer.Option(False, "--force", "-f", help="Re-embed even if already indexed"),
+    check: bool = typer.Option(False, "--check", help="Diagnose the semantic search setup (vectors, counts, test query)"),
 ):
     """Generate semantic search embeddings for meetings.
 
     Run without arguments to embed all meetings. On first run after upgrade,
     this backfills embeddings for all existing meetings (~2s per meeting).
     """
+    if check:
+        _embed_diagnose()
+        return
+
     from meeting_minutes.embeddings import EmbeddingEngine
     from meeting_minutes.system3.db import get_session_factory, EmbeddingChunkORM
     from rich.progress import Progress

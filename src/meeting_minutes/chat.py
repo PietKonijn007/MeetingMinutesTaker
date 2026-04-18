@@ -221,12 +221,11 @@ class ChatEngine:
         if person_match:
             filters["person"] = person_match.group(1)
 
-        # Focus on action items / decisions
-        lower_q = query.lower()
-        if "action" in lower_q or "task" in lower_q:
-            filters["chunk_types"] = ["action_item", "follow_up", "summary"]
-        elif "decision" in lower_q:
-            filters["chunk_types"] = ["decision", "summary"]
+        # Note: we intentionally do NOT filter by chunk_type even when the user
+        # mentions "decisions" or "actions" — the semantic search already ranks
+        # relevant chunks higher, and restricting by type kills recall when the
+        # top-matching chunks happen to be transcript windows or summaries. The
+        # LLM is smart enough to identify decisions/actions in the context.
 
         return filters
 
