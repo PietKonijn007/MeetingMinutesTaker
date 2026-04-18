@@ -349,6 +349,44 @@ Incremental implementation of the three-system meeting minutes pipeline. Each ta
   - [x] 30.9 Add `[local-ai]` optional dependency group in pyproject.toml (`pywhispercpp`, `psutil`)
   - [x] 30.10 Update all documentation — README, specs (00-05), USER_GUIDE, design.md, requirements.md, tasks.md
 
+- [ ] 31. Security hardening — Do Now (before any non-localhost deployment)
+  - [ ] 31.1 Add API key authentication to all REST endpoints — read `MM_API_KEY` from environment, implement `require_api_key` FastAPI dependency, apply to all routers in `src/meeting_minutes/api/main.py`
+    - _Fixes: C-1 (No authentication on any endpoint)_
+  - [ ] 31.2 Add path boundary check to audio file serving — resolve `meeting.audio_path` and assert it starts with resolved `config.storage.audio_dir` before returning `FileResponse` in `src/meeting_minutes/api/routes/meetings.py` lines 531–559
+    - _Fixes: C-2 (Path traversal in audio file serving)_
+  - [ ] 31.3 Move Fernet encryption key out of `config/config.yaml` — read from `MM_ENCRYPTION_KEY` environment variable (fallback: OS keychain via `keyring`); update `src/meeting_minutes/encryption.py` and `config.py`; add `config.yaml` to `.gitignore`
+    - _Fixes: C-3 (Encryption key stored in plaintext config file)_
+  - [ ] 31.4 Restrict CORS configuration — set `allow_origins=["http://localhost:3000"]`, replace `allow_methods=["*"]` with explicit list, replace `allow_headers=["*"]` with explicit list in `src/meeting_minutes/api/main.py`
+    - _Fixes: H-2 (Overpermissive CORS configuration)_
+
+- [ ] 32. Security hardening — Do Soon (next sprint)
+  - [ ] 32.1 Add WebSocket authentication via one-time token — REST endpoint issues a short-lived token; both `/ws/recording` and `/ws/pipeline/:id` validate the token query parameter before `websocket.accept()` in `src/meeting_minutes/api/ws.py`
+    - _Fixes: H-1 (Unauthenticated WebSocket endpoints)_
+  - [ ] 32.2 Add `slowapi` rate limiting middleware for LLM-backed endpoints — limit to 10 calls/minute per client on summarize, action-item, and semantic-search routes
+    - _Fixes: H-4 (No rate limiting on LLM-backed endpoints)_
+  - [ ] 32.3 Use Pydantic `SecretStr` for all API key config fields — update `AppConfig` in `src/meeting_minutes/config.py`; audit all logging calls to ensure key values are never logged
+    - _Fixes: M-1 (LLM API keys potentially logged)_
+  - [ ] 32.4 Validate Ollama base URL resolves to loopback (`127.0.0.1` / `::1`) — add check in `src/meeting_minutes/system2/llm_client.py` before making requests; allow override via `allow_remote_ollama: true` config flag
+    - _Fixes: M-3 (Ollama remote URL accepted without validation / SSRF)_
+  - [ ] 32.5 Remove `web/package-lock.json` from `.gitignore`, commit lockfile, document `npm ci` usage in developer setup instructions
+    - _Fixes: S-1 (npm lock file excluded from git)_
+  - [ ] 32.6 Pin `pyyaml>=6.0.2` in `pyproject.toml` to ensure CVE-2024-24758 fix is always present
+    - _Fixes: S-2 (pyyaml version pin)_
+
+- [ ] 33. Security hardening — Do Later (hardening pass)
+  - [ ] 33.1 Enable at-rest encryption by default once C-3 (task 31.3) is resolved — update `config/config.yaml` default and migration docs
+    - _Fixes: H-3 (Database stored in plaintext by default)_
+  - [ ] 33.2 Add allowlist validation for subprocess arguments that originate from config in `src/meeting_minutes/system3/cli.py` — reject values not matching expected patterns before passing to `subprocess.run()`
+    - _Fixes: M-2 (Subprocess calls without explicit shell=False verification)_
+  - [ ] 33.3 Add Pydantic `Literal` or `Enum` validation for all string choice parameters (`provider`, `model_name`, etc.) in API route schemas so FastAPI rejects invalid values at the boundary
+    - _Fixes: M-4 (No input validation on enum/choice parameters)_
+  - [ ] 33.4 Sandbox Obsidian vault path — validate configured path is within `~` and does not match sensitive directories (`.ssh`, `.gnupg`, etc.) before any file write
+    - _Fixes: M-5 (Obsidian vault path not sandboxed)_
+  - [ ] 33.5 Validate backup/restore destination is bounded to application data directory — audit restore path handling and add boundary check
+    - _Fixes: L-1 (Backup/restore path not validated)_
+  - [ ] 33.6 Raise explicit error on Fernet decryption failure instead of returning fallback/empty data — update `src/meeting_minutes/encryption.py`
+    - _Fixes: L-2 (Decryption failure falls back to plaintext silently)_
+
 ## Notes
 
 - Tasks marked with `*` are optional and can be skipped for faster MVP
@@ -357,3 +395,4 @@ Incremental implementation of the three-system meeting minutes pipeline. Each ta
 - Property tests validate universal correctness properties using `hypothesis`
 - Unit tests validate specific examples and edge cases
 - All property tests should run with `@settings(max_examples=100)`
+- Tasks 31–33 implement findings from `docs/SECURITY.md` — ordered by priority (31 = Critical/Do Now, 32 = High/Do Soon, 33 = Low-Medium/Do Later)

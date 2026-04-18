@@ -532,6 +532,7 @@ def get_meeting_analytics(
 def get_audio(
     meeting_id: str,
     storage: Annotated[StorageEngine, Depends(get_storage)],
+    config: Annotated[AppConfig, Depends(get_config)],
 ):
     """Stream the audio file for a meeting."""
     m = storage.get_meeting(meeting_id)
@@ -540,7 +541,13 @@ def get_audio(
     if m.transcript is None or not m.transcript.audio_file_path:
         raise HTTPException(status_code=404, detail="No audio file available for this meeting")
 
-    audio_path = Path(m.transcript.audio_file_path)
+    audio_path = Path(m.transcript.audio_file_path).resolve()
+
+    # Prevent path traversal: audio must be inside the configured data directory
+    audio_root = Path(config.data_dir).expanduser().resolve()
+    if not str(audio_path).startswith(str(audio_root) + "/"):
+        raise HTTPException(status_code=403, detail="Audio file path not allowed")
+
     if not audio_path.exists():
         raise HTTPException(status_code=404, detail="Audio file not found on disk")
 
