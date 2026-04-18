@@ -49,6 +49,9 @@
   // Security settings
   let security_encryption_enabled = $state(false);
   let security_encryption_key = $state('');
+
+  // Performance settings
+  let perf_pytorch_mps_fallback = $state(true);
   let generating_key = $state(false);
 
   // Obsidian settings
@@ -190,6 +193,9 @@
         retention_transcript_days = ret.transcript_days ?? -1;
         retention_minutes_days = ret.minutes_days ?? -1;
         retention_backup_days = ret.backup_days ?? 30;
+
+        const perf = c.performance || {};
+        perf_pytorch_mps_fallback = perf.pytorch_mps_fallback !== false;
       }
 
       // Load custom models
@@ -280,6 +286,9 @@
           transcript_days: retention_transcript_days,
           minutes_days: retention_minutes_days,
           backup_days: retention_backup_days
+        },
+        performance: {
+          pytorch_mps_fallback: perf_pytorch_mps_fallback
         }
       });
       addToast('Settings saved', 'success');
@@ -443,6 +452,32 @@
           <div>
             <span class="text-sm font-medium text-[var(--text-primary)]">Enable diarization</span>
             <p class="text-xs text-[var(--text-muted)]">Identify and label individual speakers in the transcript.</p>
+          </div>
+        </label>
+      </section>
+
+      <!-- Performance & Hardware -->
+      <section>
+        <h2 class="text-lg font-semibold text-[var(--text-primary)] mb-1">Performance & Hardware</h2>
+        <p class="text-sm text-[var(--text-muted)] mb-4">Hardware acceleration tuning (applied at service startup).</p>
+
+        <label class="flex items-start gap-3 cursor-pointer">
+          <input
+            type="checkbox"
+            bind:checked={perf_pytorch_mps_fallback}
+            class="mt-0.5 w-4 h-4 rounded border-[var(--border-subtle)] text-[var(--accent)]
+                   focus:ring-[var(--accent)] focus:ring-2"
+          />
+          <div>
+            <span class="text-sm font-medium text-[var(--text-primary)]">Enable MPS CPU fallback (Apple Silicon)</span>
+            <p class="text-xs text-[var(--text-muted)] mt-0.5">
+              Sets <code class="text-[11px] bg-[var(--bg-surface)] px-1 py-0.5 rounded">PYTORCH_ENABLE_MPS_FALLBACK=1</code>.
+              When Metal GPU doesn't support an operation, quietly fall back to CPU instead of crashing.
+              Recommended on Apple Silicon — ~5–10× faster diarization than pure CPU. No effect on Intel/NVIDIA hardware.
+            </p>
+            <p class="text-xs text-yellow-500 dark:text-yellow-400 mt-1">
+              Requires service restart (<code class="text-[11px]">mm service stop &amp;&amp; mm service start</code>) to take effect.
+            </p>
           </div>
         </label>
       </section>

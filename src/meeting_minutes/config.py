@@ -92,6 +92,16 @@ class RetentionConfig(BaseModel):
     backup_days: int = 30         # -1 = keep forever
 
 
+class PerformanceConfig(BaseModel):
+    """Hardware acceleration and performance tuning settings."""
+
+    # Enable PYTORCH_ENABLE_MPS_FALLBACK: lets Metal GPU silently fall back to CPU
+    # for ops not yet supported on MPS (instead of crashing). Recommended on
+    # Apple Silicon — ~5-10x faster diarization than pure CPU. No effect on
+    # non-Apple-Silicon hardware.
+    pytorch_mps_fallback: bool = True
+
+
 class AppConfig(BaseModel):
     data_dir: str = "~/MeetingMinutesTaker/data"
     log_level: str = "INFO"
@@ -106,6 +116,15 @@ class AppConfig(BaseModel):
     api: APIConfig = APIConfig()
     retention: RetentionConfig = RetentionConfig()
     security: SecurityConfig = SecurityConfig()
+    performance: PerformanceConfig = PerformanceConfig()
+
+    def model_post_init(self, __context) -> None:
+        """Apply performance settings to process env vars (affects torch, etc.)."""
+        import os
+        if self.performance.pytorch_mps_fallback:
+            os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
+        else:
+            os.environ.pop("PYTORCH_ENABLE_MPS_FALLBACK", None)
 
 
 class ConfigLoader:
