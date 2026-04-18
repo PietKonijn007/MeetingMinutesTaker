@@ -312,6 +312,15 @@ Incremental implementation of the three-system meeting minutes pipeline. Each ta
   - [x] 33.4 `install.sh` detects platform (Apple Silicon/Intel Mac/Linux+CUDA/Linux+ROCm/Linux CPU) and sets `WHISPER_METAL=1` / `WHISPER_CUDA=1` / `WHISPER_HIPBLAS=1` / `WHISPER_OPENBLAS=1` for source build of pywhispercpp.
   - [x] 33.5 `install.sh` step [2.5/10] installs ffmpeg via Homebrew (required by pyannote 3.3+/torchcodec).
 
+- [x] 35. People management (edit / delete / merge)
+  - [x] 35.1 Add `PATCH /api/people/:id` — rename/change email. On rename, cascade to `action_items.owner` and `decisions.made_by`. Reject with 409 on email conflict.
+  - [x] 35.2 Add `DELETE /api/people/:id` — remove from `meeting_attendees`; preserve historical `owner`/`made_by` strings.
+  - [x] 35.3 Add `POST /api/people/:id/merge` — reassign meeting_attendees (deduplicated), optionally rewrite historical attributions, carry over source email, delete source.
+  - [x] 35.4 Person detail page: inline Edit form (name + email), Merge modal (target dropdown sorted by name with meeting counts + "rename actions" checkbox), Delete ConfirmModal.
+  - [x] 35.5 Fix People list page id-field mismatch (person_id vs id) so the list actually renders; add visible error state.
+  - [x] 35.6 Resolve `sqlite_path` relative to project root (not CWD) so CLI commands from any directory hit the same DB as launchd-spawned mm serve. Added `resolve_db_path()` helper used by all 11 call sites.
+  - [x] 35.7 Add `backups/` to .gitignore so `mm upgrade` doesn't warn about untracked directory.
+
 - [x] 34. Semantic search & chat ("Talk to your meetings")
   - [x] 34.1 Add `sentence-transformers` and `sqlite-vec` to dependencies
   - [x] 34.2 Add `EmbeddingChunkORM`, `ChatSessionORM`, `ChatMessageORM` to db.py; create `embedding_vectors` sqlite-vec virtual table

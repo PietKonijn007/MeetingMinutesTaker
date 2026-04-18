@@ -410,6 +410,12 @@ Directory of all people who have appeared in meetings.
 - Decisions they made
 - Stats: total meetings, avg meeting duration, most common meeting types
 
+**Edit / Delete / Merge actions** (top-right of the header):
+
+- **✎ Edit** — toggles inline inputs for name and email. Save calls `PATCH /api/people/:id`. Renaming automatically propagates the new name to `action_items.owner` and `decisions.made_by` so historical attributions stay consistent. 409 returned if the email is already used by another person (use Merge instead).
+- **Merge…** — opens a modal with a dropdown of all other people (sorted by name, showing meeting count). Target is the person to keep. Checkbox (default on) controls whether historical `owner`/`made_by` references to the source name are rewritten to the target's name. Calls `POST /api/people/:id/merge {target_id, rename_actions}`. After merge, user is redirected to the target's detail page. The source person's email is carried over if the target had none.
+- **Delete** — shows a ConfirmModal explaining that historical attributions are preserved; on confirm, calls `DELETE /api/people/:id`. Person is removed from `meeting_attendees` rows; historical `owner`/`made_by` strings are left alone (they're strings, not FKs).
+
 ---
 
 ### 3.6 Stats Page (`/stats`)
@@ -610,6 +616,9 @@ GET    /api/people                           # All known people
 GET    /api/people/:id                       # Person detail
 GET    /api/people/:id/meetings              # Meetings for a person
 GET    /api/people/:id/action-items          # Action items for a person
+PATCH  /api/people/:id                       # Rename (propagates to action_items.owner + decisions.made_by) and/or change email
+DELETE /api/people/:id                       # Delete person (removes from meeting_attendees, keeps historical owner/made_by strings)
+POST   /api/people/:id/merge                 # Merge into another. Body: {"target_id": "...", "rename_actions": true}
 
 GET    /api/stats                            # Aggregate statistics
 GET    /api/stats/meetings-over-time         # Weekly meeting count series

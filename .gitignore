@@ -27,6 +27,7 @@ db/
 logs/
 models/
 voice-profiles/
+backups/
 
 # Secrets
 .env

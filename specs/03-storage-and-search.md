@@ -329,7 +329,14 @@ PATCH  /api/action-items/:id             # Update action item status
 GET    /api/decisions                    # List all decisions (filtered)
 
 GET    /api/people                       # List all known people
+GET    /api/people/:id                   # Person detail (with meeting_count, open_action_count, last_meeting_date)
 GET    /api/people/:id/meetings          # Meetings for a person
+GET    /api/people/:id/action-items      # Action items owned by a person
+PATCH  /api/people/:id                   # Rename and/or change email (propagates new name to action_items.owner and decisions.made_by)
+DELETE /api/people/:id                   # Delete person + their meeting_attendees rows (keeps historical owner/made_by strings)
+POST   /api/people/:id/merge             # Merge source into target. Body: {target_id, rename_actions: bool}
+                                         # Reassigns meeting_attendees (dedup), optionally rewrites historical owner/made_by,
+                                         # carries over source email if target has none, deletes source.
 
 GET    /api/topics                       # List all topics
 GET    /api/topics/:id/meetings          # Meetings for a topic

@@ -739,7 +739,8 @@ Open [http://localhost:8080](http://localhost:8080) in your browser. The API doc
 | **Meeting Detail** | `/meeting/:id` | Full minutes, transcript with audio player, action items, decisions, tags. |
 | **Action Items** | `/actions` | All action items across meetings. Filter by owner, status, overdue. Check items off. |
 | **Decisions** | `/decisions` | Chronological log of all decisions, grouped by date. |
-| **People** | `/people` | Directory of everyone who has appeared in meetings, with meeting counts and action items. |
+| **Chat** | `/chat` | Talk to your meetings — ask natural-language questions across all meeting history with citations. |
+| **People** | `/people` | Directory of everyone who has appeared in meetings, with meeting counts and action items. Click a person to edit, delete, or merge. |
 | **Stats** | `/stats` | Charts: meetings over time, distribution by type, action item velocity, time in meetings. |
 | **Record** | `/record` | Start/stop recording with live timer, audio levels, auto-detected device. Shows concurrent pipeline job status. |
 | **Templates** | `/templates` | View, edit, and create meeting prompt templates. Built-in templates are protected from deletion. |
@@ -875,6 +876,24 @@ cd web && npm run build && cd ..
 mm serve
 # → API + UI both served at localhost:8080
 ```
+
+### 7.5 Managing People
+
+The People page (`/people`) lists every attendee across all your meetings, automatically deduplicated by name and email. Because diarization produces labels and different meetings sometimes use different spellings of the same name (e.g. "Tom" and "Tom Hankins"), the system often creates duplicate person entities you'll want to clean up.
+
+Click any person to open their detail page, which shows their meeting history, action items, and decisions. Three actions are available:
+
+**✎ Edit** — change name and/or email. Renaming automatically updates all references to the old name in action_items (owner) and decisions (made_by), so historical attributions stay consistent. You'll see a 409 error if another person already uses the email you're trying to set — use Merge instead.
+
+**Merge…** — combine duplicate entities. Opens a modal with a dropdown of all other people (sorted alphabetically, each showing their meeting count for easy identification). Pick the target (the entity to keep), optionally tick "Rename owner/maker in action items and decisions" (default: on), and click Merge. What happens:
+- Every meeting the source attended gets reassigned to the target (deduplicated if the target was already on the same meeting)
+- Source email is carried over to the target if the target had no email
+- Historical `owner` and `made_by` strings are rewritten (if the checkbox was ticked)
+- The source person is deleted, and you land on the target's page
+
+**Delete** — remove the person entirely from your directory and from all meeting attendee lists. Historical `owner`/`made_by` strings in action items and decisions are preserved (they're stored as strings, not FKs), so your meeting history stays readable. Confirmation modal prevents accidental clicks.
+
+**Typical cleanup workflow**: open each person flagged as a dup, click Merge, pick the canonical entity, confirm. Takes ~5 seconds per merge.
 
 ---
 
