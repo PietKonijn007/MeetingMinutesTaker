@@ -9,7 +9,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from meeting_minutes.config import ConfigLoader
+from meeting_minutes.config import ConfigLoader, resolve_db_path
 from meeting_minutes.env import load_dotenv
 from meeting_minutes.system3.db import get_session_factory
 
@@ -21,7 +21,7 @@ load_dotenv()
 async def lifespan(app: FastAPI):
     """Create the DB session factory on startup; clean up on shutdown."""
     config = ConfigLoader.load_default()
-    db_path = Path(config.storage.sqlite_path).expanduser()
+    db_path = resolve_db_path(config.storage.sqlite_path)
     db_path.parent.mkdir(parents=True, exist_ok=True)
     app.state.session_factory = get_session_factory(f"sqlite:///{db_path}")
     yield

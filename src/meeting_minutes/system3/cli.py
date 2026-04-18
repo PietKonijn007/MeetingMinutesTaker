@@ -14,7 +14,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
-from meeting_minutes.config import ConfigLoader
+from meeting_minutes.config import ConfigLoader, resolve_db_path
 from meeting_minutes.env import load_dotenv
 
 # Load .env before anything else
@@ -51,7 +51,7 @@ def _get_db_session(config=None):
     if config is None:
         config = _load_config()
 
-    db_path = Path(config.storage.sqlite_path).expanduser()
+    db_path = resolve_db_path(config.storage.sqlite_path)
     db_path.parent.mkdir(parents=True, exist_ok=True)
     session_factory = get_session_factory(f"sqlite:///{db_path}")
     return session_factory()
@@ -462,7 +462,7 @@ def init_cmd():
         (data_dir / subdir).mkdir(parents=True, exist_ok=True)
 
     # Create db directory and initialize tables
-    db_path = Path(config.storage.sqlite_path).expanduser()
+    db_path = resolve_db_path(config.storage.sqlite_path)
     db_path.parent.mkdir(parents=True, exist_ok=True)
 
     # Auto-backup existing database before initialization
@@ -602,7 +602,7 @@ def backup_now(ctx: typer.Context):
     from meeting_minutes.backup import backup_database, rotate_backups
 
     config = _load_config()
-    db_path = Path(config.storage.sqlite_path).expanduser()
+    db_path = resolve_db_path(config.storage.sqlite_path)
     backup_dir = Path(config.backup.backup_dir)
 
     if not db_path.exists():
@@ -647,7 +647,7 @@ def backup_restore(
     config = _load_config()
     backup_dir = Path(config.backup.backup_dir)
     backup_file = backup_dir / filename
-    db_path = Path(config.storage.sqlite_path).expanduser()
+    db_path = resolve_db_path(config.storage.sqlite_path)
 
     if not backup_file.exists():
         err_console.print(f"[red]Backup not found: {backup_file}[/red]")
@@ -695,7 +695,7 @@ def _embed_diagnose() -> None:
     from meeting_minutes.system3.db import get_session_factory, EmbeddingChunkORM
 
     config = _load_config()
-    db_path = Path(config.storage.sqlite_path).expanduser()
+    db_path = resolve_db_path(config.storage.sqlite_path)
 
     console.print(f"[bold]Semantic search diagnostic[/bold]\n")
     console.print(f"DB path: {db_path}")
@@ -784,7 +784,7 @@ def embed_cmd(
     from rich.progress import Progress
 
     config = _load_config()
-    db_path = Path(config.storage.sqlite_path).expanduser()
+    db_path = resolve_db_path(config.storage.sqlite_path)
     data_dir = Path(config.data_dir).expanduser()
     session_factory = get_session_factory(f"sqlite:///{db_path}")
     session = session_factory()

@@ -102,6 +102,24 @@ class PerformanceConfig(BaseModel):
     pytorch_mps_fallback: bool = True
 
 
+def resolve_db_path(sqlite_path: str) -> Path:
+    """Resolve the sqlite_path config value to an absolute Path.
+
+    Rules:
+    - Absolute paths (starts with /) and ~ are used as-is.
+    - Relative paths are resolved against the **project root** (the directory
+      containing pyproject.toml), NOT the current working directory. This
+      ensures the CLI (run from any directory) and launchd-spawned `mm serve`
+      (run from the project root) both hit the same DB file.
+    """
+    p = Path(sqlite_path).expanduser()
+    if not p.is_absolute():
+        # project_root = parent of src/meeting_minutes/
+        project_root = Path(__file__).resolve().parent.parent.parent
+        p = project_root / p
+    return p
+
+
 class AppConfig(BaseModel):
     data_dir: str = "~/MeetingMinutesTaker/data"
     log_level: str = "INFO"

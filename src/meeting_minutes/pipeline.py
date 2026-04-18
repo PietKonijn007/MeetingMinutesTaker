@@ -8,7 +8,7 @@ import time
 import uuid
 from pathlib import Path
 
-from meeting_minutes.config import AppConfig
+from meeting_minutes.config import AppConfig, resolve_db_path
 from meeting_minutes.logging import get_logger
 
 
@@ -609,7 +609,7 @@ class PipelineOrchestrator:
             )
 
         _console(f"  Ingesting into database...")
-        db_path = Path(self._config.storage.sqlite_path).expanduser()
+        db_path = resolve_db_path(self._config.storage.sqlite_path)
         db_path.parent.mkdir(parents=True, exist_ok=True)
         session_factory = get_session_factory(f"sqlite:///{db_path}")
         session = session_factory()
@@ -774,7 +774,7 @@ class PipelineOrchestrator:
         from meeting_minutes.embeddings import EmbeddingEngine
         from meeting_minutes.system3.db import get_session_factory
 
-        db_path = Path(self._config.storage.sqlite_path).expanduser()
+        db_path = resolve_db_path(self._config.storage.sqlite_path)
         session_factory = get_session_factory(f"sqlite:///{db_path}")
         session = session_factory()
 
@@ -810,7 +810,7 @@ class PipelineOrchestrator:
                 if hours_since < self._config.backup.interval_hours:
                     return
 
-        db_path = Path(self._config.storage.sqlite_path).expanduser()
+        db_path = resolve_db_path(self._config.storage.sqlite_path)
         if db_path.exists():
             try:
                 backup_file = backup_database(db_path, backup_dir)

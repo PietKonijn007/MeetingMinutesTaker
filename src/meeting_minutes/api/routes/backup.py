@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from meeting_minutes.api.deps import get_config
-from meeting_minutes.config import AppConfig
+from meeting_minutes.config import AppConfig, resolve_db_path
 
 router = APIRouter(prefix="/api/backups", tags=["backups"])
 
@@ -50,7 +50,7 @@ def create_backup_endpoint(
     """Create a database backup now."""
     from meeting_minutes.backup import backup_database, rotate_backups
 
-    db_path = Path(config.storage.sqlite_path).expanduser()
+    db_path = resolve_db_path(config.storage.sqlite_path)
     if not db_path.exists():
         raise HTTPException(status_code=404, detail=f"Database not found: {db_path}")
 
