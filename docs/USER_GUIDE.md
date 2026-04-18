@@ -384,7 +384,32 @@ The `pyannote.audio` models are gated. You need to:
 export HF_TOKEN="hf_..."
 ```
 
+**Additional requirements for pyannote.audio 3.3+:**
+- `ffmpeg` — `brew install ffmpeg` (the installer does this automatically in step 2.5/10)
+- `torchcodec` — installed via `pip install torchcodec` (included in `pyproject.toml` dependencies)
+
 If you don't want diarization, set `diarization.enabled: false` in the config and skip this step.
+
+### 5.4.1 Speaker name mapping
+
+When you enter speaker names in the Record page's live note-taking field (e.g., `Tom, Mary`), the names are assigned to diarization labels **in order of first-speaking**:
+
+- Whoever talks first → `Tom`
+- Whoever talks second → `Mary`
+
+These names replace `SPEAKER_00`, `SPEAKER_01` everywhere — transcript segments, LLM prompt, generated minutes, and the Transcript tab display.
+
+**If you forgot to enter names or got the order wrong**, open the meeting in the web UI → Transcript tab → click **"✎ Name speakers"**. A small inline editor lets you assign names to each `SPEAKER_XX` label. Clicking **"Save & regenerate minutes"** rewrites the transcript JSON and regenerates the minutes with correct names (takes ~30s).
+
+### 5.4.2 Re-running diarization on existing meetings
+
+If a meeting was processed before you accepted the pyannote license or installed ffmpeg, diarization will have returned zero segments — no speaker labels anywhere. Instead of re-recording:
+
+```bash
+mm rediarize <meeting_id>
+```
+
+This re-runs only diarization on the existing audio file (~30s to 3min depending on length and hardware), merges speaker labels into the existing transcript, and regenerates minutes.
 
 ### 5.5 Using a `.env` file
 
@@ -493,6 +518,43 @@ This returns your GPU type, VRAM, RAM, and recommended Whisper + Ollama models.
 
 With Ollama for summarization and local Whisper for transcription, the entire pipeline runs offline. The only external dependency is pyannote.audio for speaker diarization (which requires a one-time model download). Set `diarization.enabled: false` to skip this if needed.
 
+### 6.7 Performance & Hardware settings
+
+The Settings page has a **Performance & Hardware** section that controls hardware acceleration flags applied at service startup. Currently exposes:
+
+**MPS CPU fallback (Apple Silicon)** — Toggle (default: on). Sets the `PYTORCH_ENABLE_MPS_FALLBACK=1` environment variable. When pyannote's Metal GPU backend hits an op that isn't supported on MPS, it silently falls back to CPU for that op instead of crashing. Without this, pyannote diarization raises `NotImplementedError` on Apple Silicon for certain models.
+
+**Impact on diarization speed:**
+
+| Setup | Approx. time for 13-min audio |
+|-------|-------------------------------|
+| Apple Silicon + MPS (default) | 1-3 min |
+| Apple Silicon + MPS with CPU fallback (recommended) | 2-5 min |
+| Apple Silicon CPU only | 12-20 min |
+| NVIDIA CUDA | 30-90 sec |
+
+The toggle equivalent in YAML:
+
+```yaml
+performance:
+  pytorch_mps_fallback: true    # default
+```
+
+**Important:** changes require a service restart (`mm service stop && mm service start`) to take effect — the env var is read once at process startup.
+
+**Verifying Metal is in use:**
+
+```bash
+# Look for this line in logs after starting a diarization:
+grep -i "diarization:" ~/MeetingMinutesTaker/logs/server.log | tail -3
+# Expected: "Diarization: using Apple Silicon GPU (MPS)"
+
+# Or use asitop for a live GPU dashboard:
+.venv/bin/pip install asitop
+sudo asitop
+# GPU should jump to 50-95% during pyannote inference
+```
+
 ---
 
 ## 7. Using the CLI
@@ -579,14 +641,32 @@ Then open [http://localhost:8080](http://localhost:8080) in your browser. See se
 # Generate minutes from an existing transcript (manual trigger)
 mm generate <meeting_id>
 
-# Re-run the entire pipeline for a meeting
+# Re-run generation + ingestion (skips transcription/diarization).
+# Use when you changed prompt templates or speaker names and want
+# to regenerate minutes without paying the transcription cost.
 mm reprocess <meeting_id>
+
+# Re-run ONLY speaker diarization on existing audio (skips transcription).
+# Use when diarization was broken at the time of original recording
+# (missing HF_TOKEN / ffmpeg / torchcodec) and you want to add speaker
+# labels without re-transcribing. Also re-runs minutes generation by default.
+mm rediarize <meeting_id>
+
+# Just update the transcript's speakers without regenerating minutes
+mm rediarize <meeting_id> --skip-regenerate
 
 # Delete a meeting and all its data
 mm delete <meeting_id>
 
 # Delete without confirmation prompt
 mm delete <meeting_id> --yes
+
+# Pull latest code from main and rebuild everything
+# (switches branch if needed, reinstalls deps, rebuilds frontend,
+#  restarts service). Use --branch to pull from a specific branch.
+mm upgrade
+mm upgrade --branch main           # explicit
+mm upgrade --no-restart            # update code but don't restart service
 ```
 
 ---
@@ -1093,7 +1173,8 @@ Or view the status in the web UI Settings > Retention section.
 
 | Problem | Solution |
 |---------|----------|
-| **`mm serve` fails to start** | Make sure FastAPI and uvicorn are installed: `pip install -e ".[dev]"`. Check that port 8080 isn't already in use. |
+| **`mm serve` fails to start** | Make sure FastAPI and uvicorn are installed: `pip install -e ".[dev]"`. Check that port 8080 isn't already in use (`mm serve` will now prompt you to kill the holding process or pick the next free port). For launchd service conflicts, run `mm service stop` before `mm serve`. |
+| **`mm serve` says port in use** | `mm serve` auto-detects busy ports and offers options: `kill` (terminates the process holding it), `next` (scans ports +1 to +19 for a free one), or `abort`. In non-interactive contexts (launchd/systemd), it auto-picks the next free port. Use `--no-auto-port` to disable auto-finding. |
 | **Blank page at localhost:8080** | The Svelte frontend needs to be built first: `cd web && npm install && npm run build`. In development, use `npm run dev` on port 3000 instead. |
 | **API returns 404 for everything** | The database may not be initialized. Run `alembic upgrade head` to create tables. |
 | **"CORS error" in browser console** | This only happens if you access the Svelte dev server directly without the proxy. Make sure `vite.config.js` proxies `/api` to `:8080`, or access the API server directly at `:8080`. |

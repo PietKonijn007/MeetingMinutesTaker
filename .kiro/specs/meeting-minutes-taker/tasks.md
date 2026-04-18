@@ -286,6 +286,32 @@ Incremental implementation of the three-system meeting minutes pipeline. Each ta
   - [x] 29.6 Update .kiro/specs design.md with new files and config models
   - [x] 29.7 Update .kiro/specs tasks.md with batch 2 tasks
 
+- [x] 31. Diarization reliability & speaker experience
+  - [x] 31.1 Install ffmpeg + torchcodec as hard deps (pyannote.audio 3.3+ requirement). install.sh step 2.5/10 `brew install ffmpeg`; pyproject adds `torchcodec>=0.1.0`.
+  - [x] 31.2 Support pyannote 3.3+ DiarizeOutput wrapper in `DiarizationEngine.diarize()` (unwrap via `speaker_diarization` / `diarization` / `annotation` attrs).
+  - [x] 31.3 Auto-move pyannote pipeline to best available device (MPS/CUDA/CPU) in `DiarizationEngine._load_pipeline()` for 5-10× speedup.
+  - [x] 31.4 Actionable diagnostics in `DiarizationEngine.diarize()` exception handler — pattern-match common error strings and suggest fixes.
+  - [x] 31.5 Add `mm rediarize <meeting_id>` CLI command + `PipelineOrchestrator.rediarize()` method — re-run diarization on existing audio without re-transcribing; optionally chain into regeneration.
+  - [x] 31.6 `DiarizationEngine.apply_speaker_names()` — map SPEAKER_XX labels to user-provided names in first-speaking order; wired into `run_transcription()` and `rediarize()`.
+  - [x] 31.7 Inline speaker rename UI on Transcript tab ("✎ Name speakers" button) backed by `PATCH /api/meetings/:id/transcript/speakers` endpoint.
+  - [x] 31.8 PerformanceConfig in config + Settings UI toggle for `PYTORCH_ENABLE_MPS_FALLBACK`. Applied at startup via `AppConfig.model_post_init()`.
+  - [x] 31.9 Surface diarization events in server.log — success, failure, disabled, empty segments. Fixes silent-failure mode where diarization returned 0 segments with no log entry.
+
+- [x] 32. Minutes display & persistence
+  - [x] 32.1 Card-based Minutes tab — collapsible discussion topics, outcomes grid, risks, follow-ups, parking lot cards with "Raw markdown" fallback toggle. Replaces flat markdown render.
+  - [x] 32.2 Fix structured data persistence — `MinutesJSONWriter` now populates `MinutesJSON.structured_data` so `StorageEngine.upsert_meeting()` writes it to `minutes.structured_json` DB column. Resolves issue where discussion_points existed on disk but API returned empty arrays.
+  - [x] 32.3 Sections fallback rendering — API always reads on-disk minutes JSON to extract `sections[]` (never stored in DB); UI renders sections as collapsible cards when `discussion_points` is empty. Deduplicates headings already rendered as dedicated cards.
+  - [x] 32.4 Expose `discussion_points`, `risks_and_concerns`, `follow_ups`, `parking_lot`, `key_topics`, `sections`, `sentiment` in `MinutesResponse` schema.
+  - [x] 32.5 Transcript segments + speakers exposed via `GET /api/meetings/:id/transcript` — read from on-disk JSON since segments aren't in DB.
+  - [x] 32.6 Color-coded per-speaker rendering in Transcript tab with legend bar.
+
+- [x] 33. CLI & install UX
+  - [x] 33.1 `mm serve` port conflict handling — detect via `lsof`, prompt kill/next/abort; auto-resolve non-interactively under launchd/systemd. `--auto-port/--no-auto-port` flag.
+  - [x] 33.2 `mm upgrade` always pulls from main by default (`--branch` override); auto-switches branch if not on main. Prevents stuck-on-feature-branch upgrade surprises.
+  - [x] 33.3 `mm upgrade` step [3b/5] auto-installs pywhispercpp with hardware-specific build flags if missing.
+  - [x] 33.4 `install.sh` detects platform (Apple Silicon/Intel Mac/Linux+CUDA/Linux+ROCm/Linux CPU) and sets `WHISPER_METAL=1` / `WHISPER_CUDA=1` / `WHISPER_HIPBLAS=1` / `WHISPER_OPENBLAS=1` for source build of pywhispercpp.
+  - [x] 33.5 `install.sh` step [2.5/10] installs ffmpeg via Homebrew (required by pyannote 3.3+/torchcodec).
+
 - [x] 30. Local AI Support
   - [x] 30.1 Implement Ollama LLM provider in `src/meeting_minutes/system2/llm_client.py` — `_call_ollama()` via OpenAI-compatible API, no API key required, configurable base_url, $0.00 cost tracking
     - _Requirements: 5.8, 5.9_

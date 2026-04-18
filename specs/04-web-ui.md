@@ -250,10 +250,19 @@ The richest page. Shows everything about a single meeting.
 
 #### 3.2.4 Minutes Tab
 
-- Rendered markdown with proper heading hierarchy, bold, lists, checkboxes
-- Code blocks styled with syntax highlighting (for technical meetings)
-- Action items rendered as interactive checkboxes — toggling updates the database
-- "Copy as Markdown" button in top-right of the tab
+Structured card layout (replaces the old flat markdown render):
+
+- **Summary card**: accent left-border, sentiment badge in the corner, summary text. Always present.
+- **Key topics chips**: hashtag-style chips from `key_topics`.
+- **Discussion section**: collapsible cards for each item in `discussion_points`. Header bar shows topic title, sentiment badge, and participant avatars (up to 3 + overflow). Click to expand for full summary and complete participant list. "Expand all / Collapse all" toggle above the cards.
+- **Outcomes grid** (2 columns): Decisions (◆) and Action items (○) preview. Each shows the top 3 with "View all →" deep-link to the respective tab.
+- **Risks & Concerns**: yellow left-border card with ⚠ icon per item.
+- **Follow-ups**: card with owner/timeframe badges per item.
+- **Parking lot**: dashed-border card.
+- **Sections fallback**: when `discussion_points` is empty but `sections[]` (from text+regex path) has content, renders sections as collapsible cards identical to Discussion. Deduplicates sections whose headings match already-rendered cards.
+- **Raw markdown toggle**: button in the top-right switches to the original markdown blob for anyone who wants the flat view.
+
+Card data comes from the new fields in `MinutesResponse`: `sentiment`, `discussion_points`, `risks_and_concerns`, `follow_ups`, `parking_lot`, `key_topics`, `sections`. Fields are populated from `minutes.structured_json` in the DB or falls back to reading the on-disk minutes JSON file.
 
 #### 3.2.5 Transcript Tab
 
@@ -275,8 +284,10 @@ The richest page. Shows everything about a single meeting.
 ```
 
 - **Audio player**: Minimal, at the top. Play/pause, seek bar, current time, volume. Only shown if audio file exists.
-- **Transcript segments**: Each segment shows timestamp (clickable — seeks audio), speaker name (bold, colored per speaker), and text.
+- **Speaker legend bar**: above the segments, shows each unique speaker with a color dot (up to 8 cycling colors). Speaker labels (`SPEAKER_00`) are resolved to real names via the `speakers[].name` mapping in the transcript JSON.
+- **Transcript segments**: Each segment shows timestamp (clickable — seeks audio), speaker name with a colored dot matching the legend, and text.
 - **Active segment highlighting**: The currently playing segment has a tinted background that follows playback.
+- **"✎ Name speakers" button** (top-right of legend bar): when any generic `SPEAKER_XX` labels are present, this button opens an inline editor with one text input per unique speaker. Saving calls `PATCH /api/meetings/:id/transcript/speakers` which rewrites segments and the speakers array in the transcript JSON, updates `data/notes/{id}.json` so reprocess/regenerate use the names, and optionally regenerates minutes with the new names. Use "Save only" to update transcript without regenerating.
 - **Click-to-seek**: Click any timestamp to jump audio to that point.
 
 #### 3.2.6 Action Bar
@@ -513,6 +524,7 @@ Visual config editor. Changes write to `config/config.yaml`.
 | **Recording** | Audio device (dropdown of system devices), sample rate, auto-stop silence threshold |
 | **Transcription** | Engine selector (Faster Whisper / Whisper.cpp) with install status badges, Whisper model (dropdown with size/accuracy descriptions + hardware-recommended model hint), language |
 | **Speaker ID** | Enable/disable diarization, HuggingFace token status |
+| **Performance & Hardware** | MPS CPU fallback toggle (Apple Silicon) — sets `PYTORCH_ENABLE_MPS_FALLBACK=1`. Requires service restart to take effect. Persists to `performance.pytorch_mps_fallback` in config.yaml and is applied at startup via `AppConfig.model_post_init()`. |
 | **Minutes Generation** | LLM provider (Anthropic, OpenAI, OpenRouter, Ollama), model (dynamic dropdown fetched from provider APIs — including Ollama local models with size/family info), Ollama status indicator (running/version/not installed), hardware-aware model recommendations, custom model text input, temperature slider, max tokens |
 | **Pipeline** | Mode selector (automatic / semi-automatic / manual) |
 | **Storage** | Database path, data directory |
@@ -576,8 +588,9 @@ The web UI is powered by a FastAPI backend. All state changes go through the API
 GET    /api/meetings                         # List meetings (paginated, filtered)
        ?q=<search>&type=<type>&after=<date>&before=<date>&person=<email>
        &limit=20&offset=0
-GET    /api/meetings/:id                     # Meeting detail (includes minutes, actions, decisions)
-GET    /api/meetings/:id/transcript          # Full transcript with segments
+GET    /api/meetings/:id                     # Meeting detail (includes minutes, actions, decisions, discussion_points, risks_and_concerns, follow_ups, parking_lot, key_topics, sections)
+GET    /api/meetings/:id/transcript          # Full transcript with segments (id, start, end, speaker, text) + speakers mapping
+PATCH  /api/meetings/:id/transcript/speakers # Rename speakers. Body: {"mapping": {"SPEAKER_00": "Tom"}} or {"ordered_names": ["Tom", "Mary"]}
 GET    /api/meetings/:id/audio               # Stream audio file
 PATCH  /api/meetings/:id                     # Update tags, status
 DELETE /api/meetings/:id                     # Delete meeting + all data

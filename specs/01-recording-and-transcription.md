@@ -216,6 +216,15 @@ Hardware profile and recommendations available via `GET /api/config/hardware`.
 
 - Identify and label distinct speakers in the audio
 - **Local**: `pyannote.audio` speaker diarization pipeline (uses `token=` parameter for HuggingFace authentication, not the deprecated `use_auth_token`)
+- **Hardware acceleration**: Auto-detects best available device for ~5-10× speedup:
+  - Apple Silicon → MPS (Metal GPU). Requires `PYTORCH_ENABLE_MPS_FALLBACK=1` (controlled via Performance settings UI or `performance.pytorch_mps_fallback: true` in config)
+  - NVIDIA → CUDA (via `torch.cuda`)
+  - Fallback → CPU with a log warning
+- **pyannote.audio 3.3+ API support**: The pipeline return type changed from `Annotation` to `DiarizeOutput`; the engine unwraps either format automatically
+- **System dependencies**: Requires `ffmpeg` and `torchcodec` (pyannote 3.3+). Installed automatically by `install.sh` step 2.5/10.
+- **Speaker name mapping**: After diarization produces `SPEAKER_00`, `SPEAKER_01`, etc., the pipeline maps them to user-provided names from `data/notes/{meeting_id}.json` in **first-speaking order**. Segments with no corresponding name keep their `SPEAKER_XX` label. Mapping is reversible via the UI's "✎ Name speakers" editor on the Transcript tab, which calls `PATCH /api/meetings/:id/transcript/speakers`.
+- **Re-diarization** (post-hoc): The `mm rediarize <meeting_id>` command re-runs diarization on the existing audio without re-transcribing. Useful for meetings recorded before ffmpeg/torchcodec/HF_TOKEN were configured.
+- **Graceful failure diagnostics**: Known error strings are pattern-matched in `DiarizationEngine.diarize()` and surfaced with actionable hints (missing ffmpeg → `brew install ffmpeg`; `AudioDecoder` → install torchcodec; 401/403 → accept pyannote license).
 - Map speaker labels to known participants (see metadata enrichment)
 - Support for pre-registering speaker voice profiles for improved identification
 

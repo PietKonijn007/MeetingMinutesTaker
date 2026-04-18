@@ -9,7 +9,7 @@ Record Audio ──► Transcribe ──► Generate Minutes ──► Store & S
   (System 1)      (Whisper)      (Claude / Ollama)     (SQLite + FTS5)
 ```
 
-**System 1 — Recording & Transcription**: Captures audio from virtual and physical meetings via system audio loopback (BlackHole on macOS), transcribes with a pluggable transcription engine — Faster Whisper (CTranslate2, default) or Whisper.cpp (GGML quantized, lower memory) — including Distil-Whisper models with Metal/CUDA acceleration. Identifies speakers with pyannote.audio, enriches with calendar metadata, and supports live note-taking during recording. Hardware auto-detection recommends optimal models for your GPU/RAM.
+**System 1 — Recording & Transcription**: Captures audio from virtual and physical meetings via system audio loopback (BlackHole on macOS), transcribes with a pluggable transcription engine — Faster Whisper (CTranslate2, default) or Whisper.cpp (GGML quantized, lower memory) — including Distil-Whisper models with Metal/CUDA acceleration. Identifies speakers with pyannote.audio (GPU-accelerated via MPS/CUDA), maps speaker labels to user-provided names in first-speaking order, enriches with calendar metadata, and supports live note-taking during recording. Separate `mm rediarize` command can re-run speaker diarization on existing audio without re-transcribing. Hardware auto-detection recommends optimal models for your GPU/RAM.
 
 **System 2 — Minutes Generation**: Auto-detects meeting type using an LLM classifier with meeting type refinement, routes transcripts to meeting-type-specific prompt templates, generates structured minutes via LLM. Supports **four providers**: Anthropic Claude (tool_use for guaranteed JSON), OpenAI, OpenRouter (200+ models), and **Ollama for fully local/offline summarization** (JSON-mode structured generation). Extracts action items and decisions with per-speaker sentiment analysis and meeting effectiveness scoring, and runs quality checks. Supports custom LLM instructions provided during recording.
 
@@ -150,11 +150,13 @@ mm actions complete <action_id>                   # Mark done
 | `mm actions` | List open action items (supports `--owner`, `--overdue`) |
 | `mm actions complete <id>` | Mark action item as done |
 | `mm generate <id>` | Generate minutes from transcript |
-| `mm reprocess <id>` | Re-run full pipeline for a meeting |
+| `mm reprocess <id>` | Re-run generation + ingestion (skips transcription/diarization) |
+| `mm rediarize <id>` | Re-run speaker diarization on existing audio (skips transcription) |
 | `mm delete <id>` | Delete meeting and all associated data |
 | `mm cleanup` | Run retention policy cleanup (delete expired data) |
 | `mm generate-key` | Generate a new encryption key for at-rest encryption |
-| `mm serve` | Start the web UI + API server (supports `--host`, `--port`) |
+| `mm serve` | Start the web UI + API server (supports `--host`, `--port`, `--auto-port/--no-auto-port`) |
+| `mm upgrade` | Pull latest code from main and rebuild (supports `--branch` override) |
 | `mm service install` | Install macOS Launch Agent for auto-start on login |
 | `mm service uninstall` | Remove the macOS Launch Agent |
 | `mm service start` | Start the service now |
@@ -176,7 +178,7 @@ open http://localhost:8080
 
 **Pages**: Meetings (calendar view with day list + inline detail + search with filters), Meeting Detail, Action Items, Decisions, People, Stats (charts), Record (live waveform + concurrent pipeline status + live note-taking), Templates (view/edit/create prompt templates), Settings (LLM provider/model selection with custom model support, Security, Retention, and CORS config).
 
-**Features**: Dark mode, full-text search with `Cmd+K`, in-calendar search with type filter chips, keyboard navigation, responsive layout, meeting type color coding, WebSocket-based real-time updates, concurrent pipeline processing (record a new meeting while the previous one processes in background), auto-detect capture device, auto-save recovery every 5 minutes during recording, live note-taking during recording (speaker names, notes, custom LLM instructions), encryption at rest, retention policies with automatic cleanup.
+**Features**: Dark mode, full-text search with `Cmd+K`, in-calendar search with type filter chips, keyboard navigation, responsive layout, meeting type color coding, WebSocket-based real-time updates, concurrent pipeline processing (record a new meeting while the previous one processes in background), auto-detect capture device, auto-save recovery every 5 minutes during recording, live note-taking during recording (speaker names, notes, custom LLM instructions), structured card-based minutes view with collapsible discussion topics, color-coded transcript per-speaker with inline "Name speakers" editor, Performance & Hardware settings (Apple Silicon MPS toggle), encryption at rest, retention policies with automatic cleanup.
 
 **Development** (with hot reload):
 ```bash

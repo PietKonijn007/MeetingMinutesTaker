@@ -310,6 +310,14 @@ The tool definition includes these fields:
 3. The response is parsed directly into a `StructuredMinutesResponse` Pydantic model
 4. A `StructuredMinutesAdapter` converts the structured response into the standard `ParsedMinutes` format used by the rest of the pipeline
 
+### 4A.3.1 Persistence of structured data
+
+The `MinutesJSONWriter` in `system2/output.py` populates `MinutesJSON.structured_data` with a dict containing all structured fields (sentiment, participants, discussion_points, risks_and_concerns, follow_ups, parking_lot, key_topics, meeting_effectiveness, decisions, action_items). This field is serialised by `StorageEngine.upsert_meeting()` into the `minutes.structured_json` TEXT column, and deserialised by the API route to populate the `MinutesResponse` seen by the frontend. This ensures the structured view in the Minutes tab works end-to-end (before this fix, structured fields existed on disk but were NULL in the DB, so the UI only showed Summary + Decisions + Actions).
+
+### 4A.3.2 Fallback rendering (text+regex path and older meetings)
+
+When the structured LLM call fails and the pipeline falls back to text+regex parsing, the result contains `sections: list[MinutesSection]` (with heading/content/type) but no `discussion_points`. The API route always reads the on-disk minutes JSON to extract `sections[]` — this field is never persisted to the DB. The Minutes tab frontend filter-renders `sections[]` as collapsible cards (identical visual style to `discussion_points`) when `discussion_points` is empty, filtering out sections whose headings duplicate existing dedicated cards (Summary, Decisions, Action Items, Key Topics, Risks, Follow-ups, Parking Lot). This keeps every meeting — structured or text+regex, new or legacy — in the same card-based view.
+
 ### 4A.4 JSON-Mode Structured Generation (Ollama, OpenAI, OpenRouter)
 
 For non-Anthropic providers, the `LLMClient._generate_structured_via_json()` method provides structured output via JSON-mode:

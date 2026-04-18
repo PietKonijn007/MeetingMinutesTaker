@@ -15,6 +15,29 @@ The following local AI features have been implemented:
 - **Hardware detection**: Auto-detects GPU type (CUDA/Metal/CPU), VRAM, RAM and recommends appropriate Whisper and Ollama models. Available via `GET /api/config/hardware`.
 - **Settings UI updates**: Transcription engine selector with install status badges, Ollama status indicator, hardware-aware model recommendations, dynamic Ollama model dropdown.
 
+### Diarization & Speaker Experience (Implemented)
+
+- **MPS acceleration for diarization**: `DiarizationEngine._load_pipeline()` auto-moves the pyannote pipeline to MPS (Apple Silicon), CUDA (NVIDIA), or CPU fallback. Delivers ~5-10× speedup on Apple Silicon.
+- **Performance & Hardware settings**: UI toggle in Settings page for `PYTORCH_ENABLE_MPS_FALLBACK`. Config key: `performance.pytorch_mps_fallback`. Applied to process env vars via `AppConfig.model_post_init()` at startup.
+- **Speaker name mapping**: `DiarizationEngine.apply_speaker_names()` maps `SPEAKER_XX` labels to user-provided names in first-speaking order. Wired into `run_transcription()` and `rediarize()` pipeline steps.
+- **mm rediarize command**: Re-runs diarization only on existing audio without re-transcription; merges new speaker labels into the existing transcript JSON; chains into regeneration.
+- **Speaker rename UI**: Inline editor on the Transcript tab ("✎ Name speakers") with "Save only" and "Save & regenerate minutes" actions. Backed by `PATCH /api/meetings/:id/transcript/speakers`.
+- **pyannote.audio 3.3+ compat**: Handles both `Annotation` and `DiarizeOutput` return types. ffmpeg + torchcodec auto-installed by `install.sh`.
+- **Diagnostic error messages**: `diarize.py` pattern-matches common error strings and surfaces actionable hints (install ffmpeg, accept HF license, install torchcodec).
+
+### Minutes Display & Persistence (Implemented)
+
+- **Structured card-based Minutes tab**: Replaces flat markdown render with Summary + Key topics + collapsible Discussion cards + Outcomes grid (Decisions/Actions) + Risks + Follow-ups + Parking lot.
+- **structured_data persistence fix**: `MinutesJSONWriter` now populates `MinutesJSON.structured_data` so `structured_json` DB column gets written; resolves issue where discussion points etc. existed on disk but weren't returned by the API.
+- **Sections fallback**: API always reads the on-disk minutes JSON to expose `sections[]` from the text+regex fallback path; UI renders them as collapsible cards when `discussion_points` is empty, with dedup against already-rendered sections.
+
+### CLI & Install UX (Implemented)
+
+- **Port conflict handling in `mm serve`**: Detects busy port via `lsof`, prompts to kill the holder, auto-pick the next free port, or abort. Auto-resolves non-interactively under launchd/systemd.
+- **`mm upgrade` defaults to main branch**: No more surprise-stale-branch upgrades. `--branch` override for testing.
+- **Hardware-aware whisper.cpp install**: `install.sh` detects platform and sets the right `WHISPER_*` env vars for source-build to enable Metal / CUDA / OpenBLAS.
+- **ffmpeg auto-install**: New step [2.5/10] in `install.sh` installs ffmpeg via Homebrew.
+
 ---
 
 ## Security

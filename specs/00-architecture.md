@@ -371,10 +371,10 @@ storage:
 - Each meeting has a stable UUID (`meeting_id`) assigned by System 1
 - Re-running any system for the same `meeting_id` overwrites previous output (upsert)
 - CLI commands available:
-  - `mm retranscribe <meeting_id>` — re-run System 1 transcription
-  - `mm regenerate <meeting_id>` — re-run System 2 generation
-  - `mm reindex <meeting_id>` — re-run System 3 indexing
-  - `mm reprocess <meeting_id>` — re-run entire pipeline
+  - `mm rediarize <meeting_id>` — re-run ONLY speaker diarization on existing audio (skips transcription) and merge speaker labels into the transcript JSON. Optionally chains into regeneration.
+  - `mm reprocess <meeting_id>` — re-run System 2 + System 3 (generation + ingestion) using the existing transcript. Skips transcription/diarization for speed.
+  - `mm generate <meeting_id>` — run System 2 only (generate minutes from existing transcript).
+  - `mm upgrade` — pull latest code from `main` (always), install deps, rebuild frontend, restart service. `--branch <name>` overrides the default branch.
 
 ### 5.4 Privacy & Security
 

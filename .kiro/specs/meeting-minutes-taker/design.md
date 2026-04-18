@@ -226,15 +226,35 @@ sequenceDiagram
 - **Backwards compatibility**: `TranscriptionEngine` is aliased to `FasterWhisperEngine`
 
 #### DiarizationEngine
-- **Responsibility**: Identify and label distinct speakers
+- **Responsibility**: Identify and label distinct speakers; map labels to user-provided names
 - **Interface**:
   ```python
   class DiarizationEngine:
       def __init__(self, config: DiarizationConfig) -> None: ...
       def diarize(self, audio_path: Path) -> DiarizationResult:
-          """Identify speakers. Returns speaker segments with labels."""
+          """Identify speakers. Returns speaker segments with labels.
+          Auto-moves pyannote pipeline to MPS (Apple Silicon) or CUDA
+          (NVIDIA) for ~5-10x speedup. Handles both Annotation (pyannote
+          <3.3) and DiarizeOutput (>=3.3) return types.
+          On failure, inspects the error message and logs an actionable
+          hint (missing ffmpeg, missing torchcodec, HF license)."""
+
+      @staticmethod
+      def apply_speaker_names(
+          diarization_result: DiarizationResult,
+          user_names: list[str],
+      ) -> dict[str, str]:
+          """Rewrite SPEAKER_XX labels to user-provided names in
+          first-speaking order. Mutates segments in place. Returns
+          mapping for logging/reporting."""
+
+      @staticmethod
+      def merge_transcript_with_diarization(
+          transcript_segments, diarization_result: DiarizationResult,
+      ) -> list:
+          """Assign speaker labels to transcript segments by time overlap."""
   ```
-- **Dependencies**: `pyannote.audio`, configuration
+- **Dependencies**: `pyannote.audio`, `torch`, `torchcodec`, ffmpeg (system), configuration
 - **Output**: `DiarizationResult` with speaker labels and time ranges
 
 #### TranscriptJSONWriter
@@ -362,7 +382,7 @@ sequenceDiagram
 - **Checks**: Speaker coverage, length ratio (10-30%), hallucination detection (names/dates/numbers not in transcript)
 
 #### MinutesJSONWriter
-- **Responsibility**: Serialize minutes to JSON and Markdown files
+- **Responsibility**: Serialize minutes to JSON and Markdown files. Populates `MinutesJSON.structured_data` with the full structured response so `StorageEngine.upsert_meeting()` can persist it to the `minutes.structured_json` DB column.
 - **Interface**:
   ```python
   class MinutesJSONWriter:
@@ -372,8 +392,16 @@ sequenceDiagram
           quality_report: QualityReport,
           llm_metadata: LLMResponse,
           output_dir: Path,
+          meeting_context: dict | None = None,
       ) -> tuple[Path, Path]:
-          """Write minutes JSON and markdown. Returns (json_path, md_path)."""
+          """Write minutes JSON and markdown. Returns (json_path, md_path).
+
+          The written JSON contains structured_data with all LLM-generated
+          fields (sentiment, participants, discussion_points, decisions,
+          action_items, risks_and_concerns, follow_ups, parking_lot,
+          key_topics, meeting_effectiveness). This enables the API to
+          serve the full structured minutes in the Minutes tab.
+          """
   ```
 
 ### System 3 Components
@@ -462,10 +490,18 @@ sequenceDiagram
   class PipelineOrchestrator:
       def __init__(self, config: AppConfig) -> None: ...
       async def run_full_pipeline(self, meeting_id: str | None = None) -> str: ...
-      async def run_transcription(self, meeting_id: str) -> Path: ...
+      async def run_transcription(self, meeting_id: str) -> Path:
+          """System 1 — transcribe + diarize + apply user-provided speaker
+          names from data/notes/{id}.json in first-speaking order."""
       async def run_generation(self, meeting_id: str) -> Path: ...
       async def run_ingestion(self, meeting_id: str) -> None: ...
-      async def reprocess(self, meeting_id: str) -> None: ...
+      async def reprocess(self, meeting_id: str) -> None:
+          """Re-run System 2 + System 3 from existing transcript. Skips
+          transcription/diarization for speed."""
+      async def rediarize(self, meeting_id: str, regenerate: bool = True) -> None:
+          """Re-run ONLY speaker diarization on existing audio, merge
+          speaker labels into the existing transcript, apply user
+          speaker-name mapping, and optionally regenerate minutes."""
       async def _retry_async(self, func, *args, max_retries=2, base_delay=5, step_name=""):
           """Retry a pipeline step with exponential backoff on failure."""
   ```
