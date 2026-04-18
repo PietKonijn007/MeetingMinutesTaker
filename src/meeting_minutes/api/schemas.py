@@ -70,6 +70,12 @@ class MinutesResponse(BaseModel):
     generated_at: str | None = None
     llm_model: str | None = None
     review_status: str | None = None
+    sentiment: str | None = None
+    discussion_points: list[dict[str, Any]] = []
+    risks_and_concerns: list[dict[str, Any]] = []
+    follow_ups: list[dict[str, Any]] = []
+    parking_lot: list[str] = []
+    key_topics: list[str] = []
 
 
 # ---------------------------------------------------------------------------

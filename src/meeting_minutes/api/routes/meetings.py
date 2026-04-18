@@ -85,6 +85,26 @@ def _meeting_to_detail(m: MeetingORM) -> MeetingDetail:
     ]
     minutes = None
     if m.minutes:
+        # Parse structured JSON to expose discussion points, risks, follow-ups, etc.
+        sentiment = None
+        discussion_points: list[dict] = []
+        risks_and_concerns: list[dict] = []
+        follow_ups: list[dict] = []
+        parking_lot: list[str] = []
+        key_topics: list[str] = []
+        if m.minutes.structured_json:
+            try:
+                import json as _json
+                _s = _json.loads(m.minutes.structured_json)
+                sentiment = _s.get("sentiment")
+                discussion_points = _s.get("discussion_points", []) or []
+                risks_and_concerns = _s.get("risks_and_concerns", []) or []
+                follow_ups = _s.get("follow_ups", []) or []
+                parking_lot = _s.get("parking_lot", []) or []
+                key_topics = _s.get("key_topics", []) or []
+            except Exception:
+                pass
+
         minutes = MinutesResponse(
             minutes_id=m.minutes.minutes_id,
             summary=m.minutes.summary,
@@ -92,6 +112,12 @@ def _meeting_to_detail(m: MeetingORM) -> MeetingDetail:
             generated_at=m.minutes.generated_at.isoformat() if m.minutes.generated_at else None,
             llm_model=m.minutes.llm_model,
             review_status=m.minutes.review_status,
+            sentiment=sentiment,
+            discussion_points=discussion_points,
+            risks_and_concerns=risks_and_concerns,
+            follow_ups=follow_ups,
+            parking_lot=parking_lot,
+            key_topics=key_topics,
         )
     action_items = [
         ActionItemResponse(

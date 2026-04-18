@@ -25,6 +25,40 @@
   let showAllAttendees = $state(false);
   let currentAudioTime = $state(0);
   let audioPlayerRef = $state(null);
+  let expandedTopics = $state(new Set());
+  let showRawMarkdown = $state(false);
+
+  function toggleTopic(idx) {
+    const next = new Set(expandedTopics);
+    if (next.has(idx)) next.delete(idx);
+    else next.add(idx);
+    expandedTopics = next;
+  }
+
+  function expandAllTopics() {
+    expandedTopics = new Set(meeting?.discussion_points?.map((_, i) => i) || []);
+  }
+
+  function collapseAllTopics() {
+    expandedTopics = new Set();
+  }
+
+  function sentimentBadgeClass(sentiment) {
+    switch (sentiment) {
+      case 'positive':
+      case 'constructive':
+        return 'bg-green-500/15 text-green-400 border-green-500/30';
+      case 'negative':
+      case 'tense':
+        return 'bg-red-500/15 text-red-400 border-red-500/30';
+      case 'mixed':
+        return 'bg-yellow-500/15 text-yellow-400 border-yellow-500/30';
+      case 'neutral':
+        return 'bg-blue-500/15 text-blue-400 border-blue-500/30';
+      default:
+        return 'bg-[var(--bg-surface-hover)] text-[var(--text-muted)] border-[var(--border-subtle)]';
+    }
+  }
 
   const tabs = $derived([
     { key: 'minutes', label: 'Minutes' },
@@ -83,7 +117,16 @@
         duration: raw.duration,
         participant_sentiments: raw.participant_sentiments || {},
         effectiveness_score: raw.effectiveness_score || 0,
+        // Structured minutes fields
+        discussion_points: raw.minutes?.discussion_points || [],
+        risks_and_concerns: raw.minutes?.risks_and_concerns || [],
+        follow_ups: raw.minutes?.follow_ups || [],
+        parking_lot: raw.minutes?.parking_lot || [],
+        key_topics: raw.minutes?.key_topics || [],
+        sentiment: raw.minutes?.sentiment || null,
       };
+      // Reset expanded discussion topics on new meeting load
+      expandedTopics = new Set();
     } catch (e) {
       console.error('Failed to load meeting:', e);
       addToast('Failed to load meeting', 'error');
@@ -263,10 +306,269 @@
     <!-- Tab content -->
     <div class="mb-8">
       {#if activeTab === 'minutes'}
-        {#if meeting.minutes_markdown}
-          <div class="bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg p-6">
-            <MarkdownRenderer content={meeting.minutes_markdown} />
+        {#if meeting.minutes_markdown || meeting.summary || meeting.discussion_points?.length}
+          <!-- Toggle: structured view vs raw markdown -->
+          <div class="flex items-center justify-end gap-2 mb-4">
+            {#if meeting.discussion_points?.length}
+              <button
+                onclick={() => expandedTopics.size === meeting.discussion_points.length ? collapseAllTopics() : expandAllTopics()}
+                class="text-xs text-[var(--text-muted)] hover:text-[var(--text-primary)] px-2 py-1"
+              >
+                {expandedTopics.size === meeting.discussion_points.length ? 'Collapse all' : 'Expand all'}
+              </button>
+              <span class="text-[var(--border-subtle)]">·</span>
+            {/if}
+            <button
+              onclick={() => showRawMarkdown = !showRawMarkdown}
+              class="text-xs text-[var(--text-muted)] hover:text-[var(--text-primary)] px-2 py-1"
+            >
+              {showRawMarkdown ? 'Structured view' : 'Raw markdown'}
+            </button>
           </div>
+
+          {#if showRawMarkdown}
+            <!-- Raw markdown fallback for users who prefer it -->
+            <div class="bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg p-6">
+              <MarkdownRenderer content={meeting.minutes_markdown} />
+            </div>
+          {:else}
+            <div class="space-y-5">
+              <!-- Summary card with accent border -->
+              {#if meeting.summary}
+                <div class="bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg overflow-hidden">
+                  <div class="flex">
+                    <div class="w-1 bg-[var(--accent)]"></div>
+                    <div class="flex-1 p-5">
+                      <div class="flex items-center justify-between mb-2">
+                        <h3 class="text-xs font-semibold uppercase tracking-wider text-[var(--text-muted)]">Summary</h3>
+                        {#if meeting.sentiment}
+                          <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-xs font-medium {sentimentBadgeClass(meeting.sentiment)}">
+                            <span class="w-1.5 h-1.5 rounded-full bg-current"></span>
+                            {sentimentLabel(meeting.sentiment)}
+                          </span>
+                        {/if}
+                      </div>
+                      <p class="text-sm text-[var(--text-primary)] leading-relaxed whitespace-pre-wrap">{meeting.summary}</p>
+                    </div>
+                  </div>
+                </div>
+              {/if}
+
+              <!-- Key topics chips -->
+              {#if meeting.key_topics?.length}
+                <div class="flex flex-wrap gap-1.5">
+                  {#each meeting.key_topics as topic}
+                    <span class="inline-flex items-center px-2.5 py-1 bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-full text-xs text-[var(--text-secondary)]">
+                      #{topic}
+                    </span>
+                  {/each}
+                </div>
+              {/if}
+
+              <!-- Discussion topics (collapsible cards) -->
+              {#if meeting.discussion_points?.length}
+                <div>
+                  <h3 class="text-xs font-semibold uppercase tracking-wider text-[var(--text-muted)] mb-3">
+                    Discussion ({meeting.discussion_points.length})
+                  </h3>
+                  <div class="space-y-2">
+                    {#each meeting.discussion_points as topic, idx}
+                      {@const isOpen = expandedTopics.has(idx)}
+                      <div class="bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg overflow-hidden transition-colors hover:border-[var(--text-muted)]">
+                        <button
+                          onclick={() => toggleTopic(idx)}
+                          class="w-full flex items-start gap-3 p-4 text-left"
+                        >
+                          <svg
+                            class="w-4 h-4 mt-0.5 text-[var(--text-muted)] shrink-0 transition-transform {isOpen ? 'rotate-90' : ''}"
+                            fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                          >
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+                          </svg>
+                          <div class="flex-1 min-w-0">
+                            <div class="flex items-center justify-between gap-3 flex-wrap">
+                              <h4 class="text-sm font-semibold text-[var(--text-primary)]">{topic.topic || 'Untitled topic'}</h4>
+                              <div class="flex items-center gap-2">
+                                {#if topic.sentiment}
+                                  <span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full border text-[10px] font-medium {sentimentBadgeClass(topic.sentiment)}">
+                                    {sentimentLabel(topic.sentiment)}
+                                  </span>
+                                {/if}
+                                {#if topic.participants?.length}
+                                  <div class="flex -space-x-1">
+                                    {#each topic.participants.slice(0, 3) as p}
+                                      <div title={p} class="ring-2 ring-[var(--bg-surface)] rounded-full">
+                                        <PersonAvatar name={p} size="sm" />
+                                      </div>
+                                    {/each}
+                                    {#if topic.participants.length > 3}
+                                      <span class="ring-2 ring-[var(--bg-surface)] w-6 h-6 rounded-full bg-[var(--bg-surface-hover)] text-[10px] text-[var(--text-muted)] flex items-center justify-center">
+                                        +{topic.participants.length - 3}
+                                      </span>
+                                    {/if}
+                                  </div>
+                                {/if}
+                              </div>
+                            </div>
+                            {#if !isOpen && topic.summary}
+                              <p class="text-xs text-[var(--text-muted)] mt-1 line-clamp-2">{topic.summary}</p>
+                            {/if}
+                          </div>
+                        </button>
+                        {#if isOpen}
+                          <div class="px-4 pb-4 pl-11">
+                            {#if topic.summary}
+                              <p class="text-sm text-[var(--text-secondary)] leading-relaxed whitespace-pre-wrap">{topic.summary}</p>
+                            {/if}
+                            {#if topic.participants?.length}
+                              <div class="mt-3 flex flex-wrap gap-1.5">
+                                {#each topic.participants as p}
+                                  <span class="inline-flex items-center gap-1 px-2 py-0.5 bg-[var(--bg-surface-hover)] rounded-full text-[11px] text-[var(--text-secondary)]">
+                                    <PersonAvatar name={p} size="sm" />
+                                    {p}
+                                  </span>
+                                {/each}
+                              </div>
+                            {/if}
+                          </div>
+                        {/if}
+                      </div>
+                    {/each}
+                  </div>
+                </div>
+              {/if}
+
+              <!-- Outcomes grid: Decisions + Actions (compact preview, full lists in tabs) -->
+              {#if meeting.decisions?.length || meeting.actions?.length}
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {#if meeting.decisions?.length}
+                    <div class="bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg p-5">
+                      <div class="flex items-center justify-between mb-3">
+                        <h3 class="text-xs font-semibold uppercase tracking-wider text-[var(--text-muted)]">
+                          Decisions ({meeting.decisions.length})
+                        </h3>
+                        <button
+                          onclick={() => activeTab = 'decisions'}
+                          class="text-[11px] text-[var(--accent)] hover:underline"
+                        >
+                          View all →
+                        </button>
+                      </div>
+                      <ul class="space-y-2">
+                        {#each meeting.decisions.slice(0, 3) as d}
+                          <li class="flex gap-2 text-sm text-[var(--text-primary)]">
+                            <span class="text-[var(--accent)] mt-0.5">◆</span>
+                            <span class="flex-1">{d.description}</span>
+                          </li>
+                        {/each}
+                      </ul>
+                    </div>
+                  {/if}
+                  {#if meeting.actions?.length}
+                    <div class="bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg p-5">
+                      <div class="flex items-center justify-between mb-3">
+                        <h3 class="text-xs font-semibold uppercase tracking-wider text-[var(--text-muted)]">
+                          Action items ({meeting.actions.length})
+                        </h3>
+                        <button
+                          onclick={() => activeTab = 'actions'}
+                          class="text-[11px] text-[var(--accent)] hover:underline"
+                        >
+                          View all →
+                        </button>
+                      </div>
+                      <ul class="space-y-2">
+                        {#each meeting.actions.slice(0, 3) as a}
+                          <li class="flex gap-2 text-sm">
+                            <span class="text-[var(--text-muted)] mt-0.5">○</span>
+                            <div class="flex-1 min-w-0">
+                              <span class="text-[var(--text-primary)]">{a.description}</span>
+                              {#if a.owner}
+                                <span class="text-xs text-[var(--text-muted)] ml-1">— {a.owner}</span>
+                              {/if}
+                            </div>
+                          </li>
+                        {/each}
+                      </ul>
+                    </div>
+                  {/if}
+                </div>
+              {/if}
+
+              <!-- Risks & Concerns -->
+              {#if meeting.risks_and_concerns?.length}
+                <div class="bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg overflow-hidden">
+                  <div class="flex">
+                    <div class="w-1 bg-yellow-500"></div>
+                    <div class="flex-1 p-5">
+                      <h3 class="text-xs font-semibold uppercase tracking-wider text-[var(--text-muted)] mb-3">
+                        Risks & Concerns ({meeting.risks_and_concerns.length})
+                      </h3>
+                      <ul class="space-y-2">
+                        {#each meeting.risks_and_concerns as risk}
+                          <li class="flex gap-2 text-sm text-[var(--text-primary)]">
+                            <span class="text-yellow-500 mt-0.5">⚠</span>
+                            <div class="flex-1">
+                              <span>{risk.description}</span>
+                              {#if risk.raised_by}
+                                <span class="text-xs text-[var(--text-muted)] ml-1">— {risk.raised_by}</span>
+                              {/if}
+                            </div>
+                          </li>
+                        {/each}
+                      </ul>
+                    </div>
+                  </div>
+                </div>
+              {/if}
+
+              <!-- Follow-ups -->
+              {#if meeting.follow_ups?.length}
+                <div class="bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg p-5">
+                  <h3 class="text-xs font-semibold uppercase tracking-wider text-[var(--text-muted)] mb-3">
+                    Follow-ups ({meeting.follow_ups.length})
+                  </h3>
+                  <ul class="space-y-2">
+                    {#each meeting.follow_ups as f}
+                      <li class="flex gap-2 text-sm text-[var(--text-primary)]">
+                        <span class="text-[var(--text-muted)] mt-0.5">→</span>
+                        <div class="flex-1">
+                          <span>{f.description}</span>
+                          {#if f.owner}
+                            <span class="text-xs text-[var(--text-muted)] ml-1">— {f.owner}</span>
+                          {/if}
+                          {#if f.timeframe}
+                            <span class="inline-flex items-center px-1.5 py-0.5 ml-2 bg-[var(--bg-surface-hover)] rounded text-[10px] text-[var(--text-muted)]">{f.timeframe}</span>
+                          {/if}
+                        </div>
+                      </li>
+                    {/each}
+                  </ul>
+                </div>
+              {/if}
+
+              <!-- Parking lot -->
+              {#if meeting.parking_lot?.length}
+                <div class="bg-[var(--bg-surface)] border border-[var(--border-subtle)] border-dashed rounded-lg p-5">
+                  <h3 class="text-xs font-semibold uppercase tracking-wider text-[var(--text-muted)] mb-3">
+                    Parking lot ({meeting.parking_lot.length})
+                  </h3>
+                  <ul class="space-y-1.5">
+                    {#each meeting.parking_lot as item}
+                      <li class="text-sm text-[var(--text-secondary)]">• {item}</li>
+                    {/each}
+                  </ul>
+                </div>
+              {/if}
+
+              <!-- Fallback: if no structured data, show markdown -->
+              {#if !meeting.summary && !meeting.discussion_points?.length && meeting.minutes_markdown}
+                <div class="bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg p-6">
+                  <MarkdownRenderer content={meeting.minutes_markdown} />
+                </div>
+              {/if}
+            </div>
+          {/if}
         {:else}
           <p class="text-sm text-[var(--text-muted)] italic">No minutes generated yet.</p>
         {/if}
