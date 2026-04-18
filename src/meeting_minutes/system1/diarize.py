@@ -67,13 +67,28 @@ class DiarizationEngine:
             pipeline = self._load_pipeline()
             diarization = pipeline(str(audio_path))
         except Exception as exc:
-            # Graceful failure — return empty result
+            # Graceful failure — return empty result with actionable diagnostics
             import warnings
 
-            logger.warning("Diarization failed, continuing without speaker labels: %s", exc)
-            warnings.warn(
-                f"Diarization failed, continuing without speaker labels: {exc}"
-            )
+            err_str = str(exc)
+            hint = ""
+            if "AudioDecoder" in err_str or "torchcodec" in err_str.lower():
+                hint = (
+                    " — FIX: pyannote.audio 3.3+ requires torchcodec + ffmpeg. "
+                    "Run: brew install ffmpeg && pip install torchcodec  "
+                    "(or pin: pip install 'pyannote.audio<3.3')"
+                )
+            elif "401" in err_str or "403" in err_str or "gated" in err_str.lower() or "access" in err_str.lower():
+                hint = (
+                    " — FIX: HF_TOKEN missing or you haven't accepted pyannote license. "
+                    "Visit https://huggingface.co/pyannote/speaker-diarization-3.1 and accept terms."
+                )
+            elif "ffmpeg" in err_str.lower():
+                hint = " — FIX: Install ffmpeg. Run: brew install ffmpeg"
+
+            full_msg = f"Diarization failed: {exc}{hint}"
+            logger.warning(full_msg)
+            warnings.warn(full_msg)
             return DiarizationResult(
                 meeting_id="",
                 segments=[],

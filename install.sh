@@ -56,6 +56,20 @@ else
     fi
 fi
 
+# ─── Install ffmpeg (required by pyannote.audio for diarization) ─────
+echo -e "${BOLD}[2.5/10] Checking ffmpeg (required for speaker diarization)...${NC}"
+if command -v ffmpeg &>/dev/null; then
+    echo -e "  ${GREEN}✓${NC} ffmpeg is installed"
+else
+    echo -e "  ${YELLOW}! ffmpeg not found. Installing via Homebrew...${NC}"
+    if command -v brew &>/dev/null; then
+        brew install ffmpeg && echo -e "  ${GREEN}✓${NC} ffmpeg installed" || \
+            echo -e "  ${YELLOW}! ffmpeg install failed (speaker diarization will not work)${NC}"
+    else
+        echo -e "  ${YELLOW}! Homebrew not found. Install ffmpeg manually for diarization to work.${NC}"
+    fi
+fi
+
 # ─── Install BlackHole (audio loopback) ──────────────────────────────
 echo -e "${BOLD}[3/10] Checking BlackHole 2ch...${NC}"
 if system_profiler SPAudioDataType 2>/dev/null | grep -q "BlackHole" || \

@@ -1068,6 +1068,7 @@ Or view the status in the web UI Settings > Retention section.
 |---------|----------|
 | **Diarization fails with 403 or "gated repo" error** | You must accept the license on **all three** HuggingFace model pages: `pyannote/speaker-diarization-3.1`, `pyannote/segmentation-3.0`, and `pyannote/speaker-diarization-community-1`. Missing any one of them causes this error. |
 | **Diarization fails with `use_auth_token` error** | The pyannote.audio pipeline now uses `token=` instead of `use_auth_token`. Make sure your `HF_TOKEN` environment variable is set and you are using a recent version of the app. |
+| **Diarization fails with `name 'AudioDecoder' is not defined`** | pyannote.audio 3.3+ uses `torchcodec`, which requires `ffmpeg`. Run: `brew install ffmpeg && .venv/bin/pip install torchcodec`. As a fallback, you can pin pyannote: `.venv/bin/pip install 'pyannote.audio>=3.1,<3.3'`. |
 | **Native sample rate mismatch** | The app automatically queries the audio device for its native sample rate and uses it for capture. If you see sample rate warnings, check that your audio device supports the detected rate. |
 
 ### Minutes generation issues
