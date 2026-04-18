@@ -889,8 +889,9 @@ def service_logs(
 @app.command("upgrade")
 def upgrade_cmd(
     restart: bool = typer.Option(True, "--restart/--no-restart", help="Restart the service after upgrading"),
+    branch: str = typer.Option("main", "--branch", "-b", help="Branch to pull from (default: main)"),
 ):
-    """Pull latest code from GitHub and rebuild everything."""
+    """Pull latest code from GitHub and rebuild everything. Always upgrades from main by default."""
     import os
     import subprocess
 
@@ -908,20 +909,50 @@ def upgrade_cmd(
         if not typer.confirm("Continue anyway? Local changes will be preserved (git pull may fail if there are conflicts)."):
             raise typer.Exit(code=0)
 
-    # 2. Git pull
-    console.print("[bold][2/5] Pulling latest code...[/bold]")
+    # 2. Pull latest from the target branch
+    console.print(f"[bold][2/5] Pulling latest code from origin/{branch}...[/bold]")
+
+    # Detect current branch
+    cur_branch_result = subprocess.run(
+        ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+        capture_output=True, text=True, cwd=project_root,
+    )
+    current_branch = cur_branch_result.stdout.strip()
+
+    # Switch to target branch if not already on it
+    if current_branch != branch:
+        console.print(f"  [yellow]Currently on '{current_branch}', switching to '{branch}'...[/yellow]")
+        switch_result = subprocess.run(
+            ["git", "checkout", branch],
+            capture_output=True, text=True, cwd=project_root,
+        )
+        if switch_result.returncode != 0:
+            err_console.print(f"[red]Failed to switch to '{branch}': {switch_result.stderr}[/red]")
+            err_console.print(f"[dim]Stay on '{current_branch}' or resolve conflicts manually.[/dim]")
+            raise typer.Exit(code=1)
+        console.print(f"  [green]✓[/green] Switched to '{branch}'")
+
+    # Fetch + fast-forward merge from origin/<branch>
+    fetch_result = subprocess.run(
+        ["git", "fetch", "origin", branch],
+        capture_output=True, text=True, cwd=project_root,
+    )
+    if fetch_result.returncode != 0:
+        err_console.print(f"[red]git fetch failed: {fetch_result.stderr}[/red]")
+        raise typer.Exit(code=1)
+
     result = subprocess.run(
-        ["git", "pull", "--ff-only"],
+        ["git", "merge", "--ff-only", f"origin/{branch}"],
         capture_output=True, text=True, cwd=project_root,
     )
     if result.returncode != 0:
-        if "not possible to fast-forward" in result.stderr.lower() or "divergent" in result.stderr.lower():
-            err_console.print("[red]Cannot fast-forward. You have local commits that diverge from upstream.[/red]")
-            err_console.print("[dim]Resolve manually with: git pull --rebase[/dim]")
+        if "not possible to fast-forward" in result.stderr.lower() or "non-fast-forward" in result.stderr.lower():
+            err_console.print(f"[red]Cannot fast-forward. You have local commits on '{branch}' that diverge from origin/{branch}.[/red]")
+            err_console.print("[dim]Resolve manually with: git pull --rebase origin " + branch + "[/dim]")
         else:
-            err_console.print(f"[red]git pull failed: {result.stderr}[/red]")
+            err_console.print(f"[red]git merge failed: {result.stderr}[/red]")
         raise typer.Exit(code=1)
-    console.print(f"  {result.stdout.strip()}")
+    console.print(f"  {result.stdout.strip() or 'Already up to date.'}")
 
     # 3. Install Python dependencies
     console.print("[bold][3/5] Updating Python dependencies...[/bold]")
