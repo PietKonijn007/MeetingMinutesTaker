@@ -10,6 +10,20 @@
 
 Meeting Minutes Taker is designed as a local-first application. In that context many of its current security gaps are tolerable. However, several findings represent **genuinely dangerous patterns** that could cause data loss, credential theft, or full system compromise if the service is ever exposed beyond localhost — intentionally or accidentally. Three issues are rated CRITICAL and should be fixed before any deployment beyond a developer's own machine.
 
+### Progress at a Glance
+
+| Priority | Total | Resolved | Open | Notes |
+|---|---|---|---|---|
+| CRITICAL | 3 | 2 | 1 | C-1 (auth) remains open |
+| HIGH     | 4 | 3 | 1 | H-3 (encryption by default) remains open |
+| MEDIUM   | 5 | 0 | 5 | — |
+| LOW      | 3 | 0 | 3 | — |
+| INFO/Supply chain | 4 | 0 | 4 | — |
+| **Total** | **19** | **5** | **14** | 5 of 19 findings resolved |
+
+**Resolved:** C-2, C-3, H-1, H-2, H-4  
+**Next up (open CRITICAL/HIGH):** C-1, H-3
+
 ### What Is Already Safe
 
 | Area | Status |
