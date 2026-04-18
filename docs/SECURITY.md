@@ -47,34 +47,19 @@ The frontend must then send `X-Api-Key: <value>` with every request.
 
 ---
 
-### C-2: Path Traversal in Audio File Serving
+### ~~C-2: Path Traversal in Audio File Serving~~ — RESOLVED
 
-**File:** `src/meeting_minutes/api/routes/meetings.py` lines 531–559  
-**Risk:** The audio file path stored in the database is returned directly to `FileResponse` with no boundary check. If the database is compromised or the path column is updated via the API, an attacker can read arbitrary files from the server's filesystem (e.g., `/etc/passwd`, SSH private keys, other users' files).
-
-```python
-# Current (dangerous)
-return FileResponse(meeting.audio_path, ...)
-
-# Fix — validate path is within expected directory
-AUDIO_ROOT = Path(config.storage.audio_dir).resolve()
-audio_path = Path(meeting.audio_path).resolve()
-if not str(audio_path).startswith(str(AUDIO_ROOT)):
-    raise HTTPException(status_code=403, detail="Path not allowed")
-return FileResponse(audio_path, ...)
-```
+> **Fixed:** Audio path is now resolved and validated against `config.data_dir` before serving. Returns 403 if the path escapes the data directory.  
+> **Commit:** `Fix C-2, C-3, H-2 security findings`  
+> **File:** `src/meeting_minutes/api/routes/meetings.py` — `get_audio()` endpoint
 
 ---
 
-### C-3: Encryption Key Stored in Plaintext Config File
+### ~~C-3: Encryption Key Stored in Plaintext Config File~~ — RESOLVED
 
-**File:** `config/config.yaml`, line 54: `encryption_key: ''`  
-**Risk:** When at-rest encryption is enabled, the Fernet key is read from `config.yaml` in plaintext. Anyone who can read the config file (another process, a backup, a leaked dotfile) can decrypt the entire database — defeating the purpose of encryption.
-
-**Fix:**
-- Read encryption key from an environment variable (`MM_ENCRYPTION_KEY`) or the OS keychain (e.g., `keyring` library), never from a config file.
-- Ensure `config.yaml` is in `.gitignore` if it ever holds a real key.
-- Document this in the deployment guide.
+> **Fixed:** `SecurityConfig` now uses a Pydantic `model_validator` that reads `MM_ENCRYPTION_KEY` from the environment. If set, it overrides any value in `config.yaml`.  
+> **Commit:** `Fix C-2, C-3, H-2 security findings`  
+> **File:** `src/meeting_minutes/config.py` — `SecurityConfig._apply_env_key()`
 
 ---
 
@@ -89,17 +74,11 @@ return FileResponse(audio_path, ...)
 
 ---
 
-### H-2: Overpermissive CORS Configuration
+### ~~H-2: Overpermissive CORS Configuration~~ — RESOLVED
 
-**File:** `src/meeting_minutes/api/main.py`  
-```python
-allow_methods=["*"]
-allow_headers=["*"]
-allow_credentials=True  # if set
-```
-With `allow_origins` including broad patterns, this allows any origin to make credentialed cross-site requests. Combined with no auth (C-1), a malicious website visited in the same browser can silently call the API.
-
-**Fix:** Lock `allow_origins` to `["http://localhost:3000"]` (the actual UI origin). Set `allow_methods` to the specific HTTP verbs the UI uses.
+> **Fixed:** `allow_methods` now set to `["GET", "POST", "PUT", "PATCH", "DELETE"]` and `allow_headers` to `["Content-Type", "Accept", "Authorization", "X-Api-Key"]`. Origins still configurable via `config.api.cors_origins` (defaults to localhost:8080 and localhost:3000).  
+> **Commit:** `Fix C-2, C-3, H-2 security findings`  
+> **File:** `src/meeting_minutes/api/main.py`
 
 ---
 
@@ -224,9 +203,9 @@ Meeting transcripts containing adversarial text (e.g., "Ignore previous instruct
 ### Do Now (before any non-localhost use)
 
 1. **C-1** — Add API key authentication to all REST and WebSocket endpoints  
-2. **C-2** — Add path boundary check to audio file serving  
-3. **C-3** — Move encryption key out of config.yaml into an environment variable  
-4. **H-2** — Restrict CORS to `localhost:3000` only  
+2. ~~**C-2** — Add path boundary check to audio file serving~~ **DONE**  
+3. ~~**C-3** — Move encryption key out of config.yaml into an environment variable~~ **DONE**  
+4. ~~**H-2** — Restrict CORS to `localhost:3000` only~~ **DONE**  
 
 ### Do Soon (next sprint)
 

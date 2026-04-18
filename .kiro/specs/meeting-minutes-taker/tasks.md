@@ -352,11 +352,11 @@ Incremental implementation of the three-system meeting minutes pipeline. Each ta
 - [ ] 31. Security hardening — Do Now (before any non-localhost deployment)
   - [ ] 31.1 Add API key authentication to all REST endpoints — read `MM_API_KEY` from environment, implement `require_api_key` FastAPI dependency, apply to all routers in `src/meeting_minutes/api/main.py`
     - _Fixes: C-1 (No authentication on any endpoint)_
-  - [ ] 31.2 Add path boundary check to audio file serving — resolve `meeting.audio_path` and assert it starts with resolved `config.storage.audio_dir` before returning `FileResponse` in `src/meeting_minutes/api/routes/meetings.py` lines 531–559
+  - [x] 31.2 Add path boundary check to audio file serving — resolve `meeting.audio_path` and assert it starts with resolved `config.data_dir` before returning `FileResponse` in `src/meeting_minutes/api/routes/meetings.py`
     - _Fixes: C-2 (Path traversal in audio file serving)_
-  - [ ] 31.3 Move Fernet encryption key out of `config/config.yaml` — read from `MM_ENCRYPTION_KEY` environment variable (fallback: OS keychain via `keyring`); update `src/meeting_minutes/encryption.py` and `config.py`; add `config.yaml` to `.gitignore`
+  - [x] 31.3 Move Fernet encryption key out of `config/config.yaml` — `SecurityConfig` model_validator reads `MM_ENCRYPTION_KEY` env var; overrides YAML value if set
     - _Fixes: C-3 (Encryption key stored in plaintext config file)_
-  - [ ] 31.4 Restrict CORS configuration — set `allow_origins=["http://localhost:3000"]`, replace `allow_methods=["*"]` with explicit list, replace `allow_headers=["*"]` with explicit list in `src/meeting_minutes/api/main.py`
+  - [x] 31.4 Restrict CORS configuration — `allow_methods` set to explicit verb list, `allow_headers` set to `["Content-Type", "Accept", "Authorization", "X-Api-Key"]` in `src/meeting_minutes/api/main.py`
     - _Fixes: H-2 (Overpermissive CORS configuration)_
 
 - [ ] 32. Security hardening — Do Soon (next sprint)
