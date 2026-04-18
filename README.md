@@ -1,6 +1,32 @@
 # Meeting Minutes Taker
 
-A local-first system that records your meetings, generates intelligent meeting minutes using LLMs, and makes them searchable. Works with Zoom, Teams, Slack, Google Meet, and in-person meetings.
+**Stop losing what happened in meetings.** Record any meeting — Zoom, Teams, Slack, Google Meet, or in-person — and get structured, searchable minutes automatically. No cloud recording bots that show up as participants. No monthly SaaS subscriptions. Everything runs locally on your own hardware.
+
+### Why this exists
+
+You spend hours each week in meetings. Key decisions get made, action items get assigned, follow-ups get promised — and most of it evaporates within 24 hours. Generic meeting bots create walls of text nobody reads. This tool produces minutes people actually use: structured by meeting type, with decisions, action items, risks, and follow-ups extracted into dedicated sections.
+
+### What makes it different
+
+- **Private by design** — Audio capture happens at the OS level via system audio loopback. Nothing joins your meeting as a participant. Nothing leaves your machine unless you choose a cloud LLM. Run fully offline with Whisper + Ollama.
+- **Meeting-type intelligence** — A standup gets a per-person Done/Today/Blockers breakdown. A decision meeting gets an options matrix with rationale. A customer call gets client requests and commitments. 9 built-in templates, fully customizable.
+- **Talk to your meetings** — Ask "What did Jon commit to about lead times since April?" and get a synthesized answer with citations to the specific meetings, powered by local semantic search over your entire meeting history.
+- **Speaker identification** — Automatic speaker diarization labels who said what. Enter names once and they propagate through transcripts, minutes, action items, and decisions.
+- **Action item tracking** — Every action item extracted across every meeting, filterable by owner, status, and due date. Mark items complete from anywhere in the app.
+- **Actually searchable** — Full-text keyword search AND semantic vector search across all transcripts, minutes, and structured data. Find meetings by what was discussed, not just when they happened.
+- **Runs on your hardware, optimized for it** — Auto-detects Apple Silicon (Metal), NVIDIA (CUDA), AMD (ROCm), or CPU and configures Whisper and pyannote accordingly. A 13-minute meeting transcribes in under a minute on an M-series Mac or modern GPU.
+
+### Platform support
+
+| Platform | Status | Notes |
+|----------|--------|-------|
+| **macOS** (12+, Apple Silicon or Intel) | ✅ **First-class** | Turnkey: `install.sh` wires up BlackHole audio loopback, launchd auto-start, Metal acceleration. Most tested path. |
+| **Linux** (x86_64 or ARM64) | ✅ Supported | Pipeline works fully. Audio loopback setup is manual (PipeWire/PulseAudio monitor source or `snd-aloop`). CUDA and ROCm auto-detected. |
+| **Windows** | ⚙️ Partial | Pipeline, LLM, and search all work. Audio loopback setup (WASAPI) is manual — no install script yet. |
+
+If you're on macOS, everything works out of the box. On Linux/Windows, the processing pipeline runs great; you'll just need to point the app at the right audio device yourself.
+
+---
 
 ## How It Works
 
