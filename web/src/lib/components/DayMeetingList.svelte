@@ -22,12 +22,34 @@
     });
   }
 
-  function formatDuration(min) {
-    if (!min) return 'N/A';
-    if (min < 60) return `${min} min`;
-    const h = Math.floor(min / 60);
-    const m = min % 60;
-    return m > 0 ? `${h}h ${m}m` : `${h}h`;
+  function formatDuration(value) {
+    if (value == null || value === '') return 'N/A';
+    // Accept either a number (minutes) or a string like "13 minutes" / "1h 5m"
+    let min;
+    if (typeof value === 'number') {
+      min = value;
+    } else if (typeof value === 'string') {
+      // Try direct numeric string first
+      const asNum = Number(value);
+      if (!Number.isNaN(asNum)) {
+        min = asNum;
+      } else {
+        // Extract hours + minutes from strings like "1h 5m", "13 minutes", "1 hour"
+        const h = /([\d.]+)\s*h/i.exec(value);
+        const m = /([\d.]+)\s*m(?!o)/i.exec(value);  // m but not "mo" (month)
+        const minutesWord = /([\d.]+)\s*minutes?/i.exec(value);
+        let total = 0;
+        if (h) total += parseFloat(h[1]) * 60;
+        if (m) total += parseFloat(m[1]);
+        else if (minutesWord) total += parseFloat(minutesWord[1]);
+        min = total || null;
+      }
+    }
+    if (!min || Number.isNaN(min)) return 'N/A';
+    if (min < 60) return `${Math.round(min)} min`;
+    const hr = Math.floor(min / 60);
+    const mn = Math.round(min % 60);
+    return mn > 0 ? `${hr}h ${mn}m` : `${hr}h`;
   }
 </script>
 

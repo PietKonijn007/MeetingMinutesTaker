@@ -447,20 +447,37 @@ class PipelineOrchestrator:
             if parsed_minutes.title:
                 context.title = parsed_minutes.title
 
-            # N11: Meeting type refinement — check if LLM suggests a different type
+            # N11: Meeting type refinement — check if LLM suggests a different type.
+            # Only accept suggestions that match a known MeetingType enum value;
+            # the LLM often returns free-form phrases like "Campaign Kickoff /
+            # Marketing Planning" which would otherwise be stored as a raw string
+            # and render as "Other" (since no badge color matches it).
             if hasattr(structured, 'meeting_type_suggestion') and structured.meeting_type_suggestion:
-                suggested = structured.meeting_type_suggestion
-                if suggested != tj.meeting_type and suggested != "other":
+                from meeting_minutes.models import MeetingType
+                _valid_types = {t.value for t in MeetingType}
+                raw_suggestion = structured.meeting_type_suggestion.strip()
+                # Normalize: lowercase, take first token before any separator
+                normalized = raw_suggestion.lower().split("/")[0].split("(")[0].strip().replace(" ", "_")
+                if normalized in _valid_types and normalized != tj.meeting_type and normalized != "other":
                     self._logger.info(
-                        "Meeting type refinement: classified as '%s' but content suggests '%s'",
-                        tj.meeting_type, suggested,
+                        "Meeting type refinement: classified as '%s' but content suggests '%s' (normalized to '%s')",
+                        tj.meeting_type, raw_suggestion, normalized,
                     )
                     _console(
-                        f"  ℹ Type refinement: classified as '{tj.meeting_type}' but content suggests '{suggested}'",
+                        f"  ℹ Type refinement: classified as '{tj.meeting_type}' but content suggests '{normalized}'",
                         "dim",
                     )
-                    # Update the meeting type for storage
-                    context.meeting_type = suggested
+                    context.meeting_type = normalized
+                elif raw_suggestion and normalized not in _valid_types:
+                    # LLM returned a free-form suggestion — log it but don't use it
+                    self._logger.info(
+                        "Meeting type refinement: LLM suggested '%s' (keeping '%s' — not a known type)",
+                        raw_suggestion, tj.meeting_type,
+                    )
+                    _console(
+                        f"  ℹ LLM suggested free-form type '{raw_suggestion}' — keeping '{tj.meeting_type}'",
+                        "dim",
+                    )
 
             _console(f"  ✓ Structured generation succeeded", "green")
             _console(f"    Title: {parsed_minutes.title}")
