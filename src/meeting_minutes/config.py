@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import yaml
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, ValidationError, model_validator
 
 
 class RecordingConfig(BaseModel):
@@ -71,7 +72,14 @@ class ObsidianConfig(BaseModel):
 
 class SecurityConfig(BaseModel):
     encryption_enabled: bool = False
-    encryption_key: str = ""  # Fernet key — generate with: mm generate-key
+    encryption_key: str = ""  # Prefer setting MM_ENCRYPTION_KEY env var over storing key here
+
+    @model_validator(mode="after")
+    def _apply_env_key(self) -> "SecurityConfig":
+        env_key = os.environ.get("MM_ENCRYPTION_KEY", "").strip()
+        if env_key:
+            self.encryption_key = env_key
+        return self
 
 
 class APIConfig(BaseModel):
