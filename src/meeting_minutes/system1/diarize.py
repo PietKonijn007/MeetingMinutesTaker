@@ -149,6 +149,47 @@ class DiarizationEngine:
         )
 
     @staticmethod
+    def apply_speaker_names(
+        diarization_result: DiarizationResult,
+        user_names: list[str],
+    ) -> dict[str, str]:
+        """Map SPEAKER_XX diarization labels to user-provided names.
+
+        Assumes user_names are given in the order speakers first appear in
+        the audio. The first speaker to talk gets user_names[0], the second
+        gets user_names[1], etc. Mutates diarization_result.segments in place.
+
+        Returns the mapping dict (SPEAKER_XX → name) for logging/reporting.
+        Labels with no corresponding user name stay unchanged (fall back to
+        SPEAKER_XX).
+        """
+        if not user_names or not diarization_result.segments:
+            return {}
+
+        # Find unique labels in order of first appearance (by start time)
+        sorted_segs = sorted(diarization_result.segments, key=lambda s: s.start)
+        first_seen: list[str] = []
+        for seg in sorted_segs:
+            if seg.speaker not in first_seen:
+                first_seen.append(seg.speaker)
+
+        # Build mapping: first N labels → first N user_names
+        label_to_name: dict[str, str] = {}
+        for i, label in enumerate(first_seen):
+            if i < len(user_names):
+                name = (user_names[i] or "").strip()
+                if name:
+                    label_to_name[label] = name
+
+        # Rewrite segment labels in place
+        if label_to_name:
+            for seg in diarization_result.segments:
+                if seg.speaker in label_to_name:
+                    seg.speaker = label_to_name[seg.speaker]
+
+        return label_to_name
+
+    @staticmethod
     def _normalize_label(raw_label: str) -> str:
         """Ensure speaker label matches SPEAKER_XX pattern."""
         if re.match(r"^SPEAKER_\d{2}$", raw_label):

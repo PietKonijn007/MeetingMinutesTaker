@@ -34,6 +34,9 @@ export const api = {
   deleteMeeting: (id) => request(`/meetings/${id}`, { method: 'DELETE' }),
   updateMeeting: (id, data) => request(`/meetings/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   regenerateMeeting: (id) => request(`/meetings/${id}/regenerate`, { method: 'POST' }),
+  updateTranscriptSpeakers: (id, body) => request(`/meetings/${id}/transcript/speakers`, {
+    method: 'PATCH', body: JSON.stringify(body),
+  }),
 
   // Search
   search: (params) => {

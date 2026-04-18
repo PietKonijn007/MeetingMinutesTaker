@@ -27,6 +27,44 @@
   let audioPlayerRef = $state(null);
   let expandedTopics = $state(new Set());
   let showRawMarkdown = $state(false);
+  let showSpeakerEditor = $state(false);
+  let speakerEdits = $state({});  // { "SPEAKER_00": "Tom", ... }
+  let savingSpeakers = $state(false);
+
+  function openSpeakerEditor() {
+    const uniques = [...new Set((transcript?.segments || []).map(s => s.speaker).filter(Boolean))];
+    speakerEdits = Object.fromEntries(uniques.map(label => [label, label.startsWith('SPEAKER_') ? '' : label]));
+    showSpeakerEditor = true;
+  }
+
+  async function saveSpeakerEdits(regenerate = true) {
+    savingSpeakers = true;
+    try {
+      const mapping = {};
+      for (const [label, name] of Object.entries(speakerEdits)) {
+        if (name && name.trim()) mapping[label] = name.trim();
+      }
+      if (Object.keys(mapping).length === 0) {
+        addToast('No speaker names entered', 'warning');
+        return;
+      }
+      await api.updateTranscriptSpeakers(meetingId, { mapping });
+      addToast(`Renamed ${Object.keys(mapping).length} speaker(s)`, 'success');
+      showSpeakerEditor = false;
+      // Reload transcript to show new labels
+      await loadTranscript(meetingId);
+      if (regenerate) {
+        addToast('Regenerating minutes with new names…', 'info');
+        await api.regenerateMeeting(meetingId);
+        await loadMeeting(meetingId);
+        addToast('Minutes updated', 'success');
+      }
+    } catch (e) {
+      addToast(`Failed to update speakers: ${e.message}`, 'error');
+    } finally {
+      savingSpeakers = false;
+    }
+  }
 
   function toggleTopic(idx) {
     const next = new Set(expandedTopics);
@@ -589,16 +627,77 @@
           {@const speakerColors = ['#6366F1', '#0EA5E9', '#22C55E', '#F59E0B', '#EC4899', '#F97316', '#14B8A6', '#A855F7']}
           {@const uniqueSpeakers = [...new Set(transcript.segments.map(s => s.speaker).filter(Boolean))]}
           {@const colorFor = (label) => label ? speakerColors[uniqueSpeakers.indexOf(label) % speakerColors.length] : '#6B7280'}
+          {@const hasGenericLabels = uniqueSpeakers.some(s => /^SPEAKER_\d+$/.test(s))}
 
-          <!-- Speaker legend -->
+          <!-- Speaker legend + edit button -->
           {#if uniqueSpeakers.length > 0}
-            <div class="flex flex-wrap gap-2 mb-3 pb-3 border-b border-[var(--border-subtle)]">
-              {#each uniqueSpeakers as label}
-                <span class="inline-flex items-center gap-1.5 text-xs text-[var(--text-secondary)]">
-                  <span class="w-2 h-2 rounded-full" style="background-color: {colorFor(label)}"></span>
-                  {speakerMap[label] || label}
-                </span>
-              {/each}
+            <div class="flex items-center justify-between flex-wrap gap-2 mb-3 pb-3 border-b border-[var(--border-subtle)]">
+              <div class="flex flex-wrap gap-2">
+                {#each uniqueSpeakers as label}
+                  <span class="inline-flex items-center gap-1.5 text-xs text-[var(--text-secondary)]">
+                    <span class="w-2 h-2 rounded-full" style="background-color: {colorFor(label)}"></span>
+                    {speakerMap[label] || label}
+                  </span>
+                {/each}
+              </div>
+              <button
+                onclick={openSpeakerEditor}
+                class="text-xs text-[var(--accent)] hover:underline"
+                title="Rename speakers and regenerate minutes"
+              >
+                {hasGenericLabels ? '✎ Name speakers' : '✎ Edit names'}
+              </button>
+            </div>
+          {/if}
+
+          <!-- Speaker rename editor -->
+          {#if showSpeakerEditor}
+            <div class="mb-4 p-4 bg-[var(--bg-surface)] border border-[var(--accent)] rounded-lg">
+              <h4 class="text-sm font-semibold text-[var(--text-primary)] mb-1">Rename speakers</h4>
+              <p class="text-xs text-[var(--text-muted)] mb-3">
+                Changes are saved to the transcript and minutes will be regenerated with the new names.
+              </p>
+              <div class="space-y-2 mb-3">
+                {#each uniqueSpeakers as label}
+                  <div class="flex items-center gap-3">
+                    <span class="w-2 h-2 rounded-full shrink-0" style="background-color: {colorFor(label)}"></span>
+                    <span class="text-xs font-mono text-[var(--text-muted)] w-24 shrink-0">{label}</span>
+                    <input
+                      type="text"
+                      bind:value={speakerEdits[label]}
+                      placeholder="e.g. Tom"
+                      class="flex-1 px-2 py-1 bg-[var(--bg-surface-hover)] border border-[var(--border-subtle)] rounded text-sm text-[var(--text-primary)]
+                             focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
+                    />
+                  </div>
+                {/each}
+              </div>
+              <div class="flex items-center gap-2">
+                <button
+                  onclick={() => saveSpeakerEdits(true)}
+                  disabled={savingSpeakers}
+                  class="px-3 py-1.5 bg-[var(--accent)] text-white text-xs font-medium rounded
+                         hover:opacity-90 disabled:opacity-50 transition-opacity"
+                >
+                  {savingSpeakers ? 'Saving...' : 'Save & regenerate minutes'}
+                </button>
+                <button
+                  onclick={() => saveSpeakerEdits(false)}
+                  disabled={savingSpeakers}
+                  class="px-3 py-1.5 text-xs font-medium text-[var(--text-secondary)]
+                         border border-[var(--border-subtle)] rounded
+                         hover:bg-[var(--bg-surface-hover)] disabled:opacity-50"
+                >
+                  Save only
+                </button>
+                <button
+                  onclick={() => showSpeakerEditor = false}
+                  disabled={savingSpeakers}
+                  class="px-3 py-1.5 text-xs text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+                >
+                  Cancel
+                </button>
+              </div>
             </div>
           {/if}
 

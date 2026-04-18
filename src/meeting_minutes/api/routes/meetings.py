@@ -356,6 +356,93 @@ def get_transcript(
     )
 
 
+@router.patch("/{meeting_id}/transcript/speakers")
+def update_transcript_speakers(
+    meeting_id: str,
+    body: dict,
+    config: Annotated[AppConfig, Depends(get_config)],
+    storage: Annotated[StorageEngine, Depends(get_storage)],
+):
+    """Rename speakers in a transcript. Applies to both segment labels and speakers array.
+
+    Request body options (choose one):
+        { "mapping": {"SPEAKER_00": "Tom", "SPEAKER_01": "Mary"} }
+        { "ordered_names": ["Tom", "Mary"] }  # first-appearance order
+
+    Also updates data/notes/{meeting_id}.json so the names persist for
+    regenerate/reprocess.
+    """
+    import json as _json
+
+    m = storage.get_meeting(meeting_id)
+    if m is None:
+        raise HTTPException(status_code=404, detail=f"No meeting with ID {meeting_id}")
+
+    data_dir = Path(config.data_dir).expanduser()
+    transcript_path = data_dir / "transcripts" / f"{meeting_id}.json"
+    if not transcript_path.exists():
+        raise HTTPException(status_code=404, detail="No transcript JSON on disk")
+
+    data = _json.loads(transcript_path.read_text())
+    segments = data.get("transcript", {}).get("segments", []) or []
+
+    # Build mapping from request body
+    mapping: dict[str, str] = {}
+    if body.get("mapping"):
+        mapping = {k: v.strip() for k, v in body["mapping"].items() if v and v.strip()}
+    elif body.get("ordered_names"):
+        ordered = body["ordered_names"]
+        if isinstance(ordered, str):
+            ordered = [n.strip() for n in ordered.split(",") if n.strip()]
+        # First-appearance order from segments
+        seen: list[str] = []
+        for seg in sorted(segments, key=lambda s: s.get("start") or 0):
+            spk = seg.get("speaker")
+            if spk and spk not in seen:
+                seen.append(spk)
+        for i, label in enumerate(seen):
+            if i < len(ordered) and ordered[i]:
+                mapping[label] = ordered[i].strip()
+    else:
+        raise HTTPException(status_code=400, detail="Provide either 'mapping' or 'ordered_names'")
+
+    if not mapping:
+        return {"updated": 0, "mapping": {}}
+
+    # Rewrite segment speakers
+    updated = 0
+    for seg in segments:
+        if seg.get("speaker") in mapping:
+            seg["speaker"] = mapping[seg["speaker"]]
+            updated += 1
+
+    # Rebuild speakers array preserving order from segments
+    seen_labels: list[str] = []
+    for seg in segments:
+        spk = seg.get("speaker")
+        if spk and spk not in seen_labels:
+            seen_labels.append(spk)
+    data["speakers"] = [{"label": l, "name": None, "email": None, "confidence": 0.0} for l in seen_labels]
+    data["transcript"]["segments"] = segments
+
+    transcript_path.write_text(_json.dumps(data, indent=2, default=str))
+
+    # Update the notes file so reprocess/regenerate use these names
+    notes_dir = data_dir / "notes"
+    notes_dir.mkdir(parents=True, exist_ok=True)
+    notes_file = notes_dir / f"{meeting_id}.json"
+    notes_data = {}
+    if notes_file.exists():
+        try:
+            notes_data = _json.loads(notes_file.read_text())
+        except Exception:
+            notes_data = {}
+    notes_data["speakers"] = seen_labels
+    notes_file.write_text(_json.dumps(notes_data, indent=2))
+
+    return {"updated": updated, "mapping": mapping, "speakers": seen_labels}
+
+
 @router.get("/{meeting_id}/analytics", response_model=TalkTimeAnalyticsResponse)
 def get_meeting_analytics(
     meeting_id: str,

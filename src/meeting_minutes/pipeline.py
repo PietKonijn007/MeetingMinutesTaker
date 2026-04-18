@@ -224,6 +224,24 @@ class PipelineOrchestrator:
                 else:
                     self._logger.info("Diarization done in %.1fs — segments=%d speakers=%d", t_diarize, n_segments, n_speakers)
                     _console(f"  ✓ Diarization done in {t_diarize:.1f}s — {n_speakers} speaker(s) detected", "green")
+
+                    # Apply user-provided speaker names (in order of first-speaking)
+                    import json as _json
+                    notes_file = self._data_dir / "notes" / f"{meeting_id}.json"
+                    if notes_file.exists():
+                        try:
+                            _notes = _json.loads(notes_file.read_text())
+                            _user_names = _notes.get("speakers") or []
+                            # Handle comma-separated string or list
+                            if isinstance(_user_names, str):
+                                _user_names = [n.strip() for n in _user_names.split(",") if n.strip()]
+                            if _user_names:
+                                mapping = DiarizationEngine.apply_speaker_names(diarization_result, _user_names)
+                                if mapping:
+                                    self._logger.info("Mapped speakers: %s", mapping)
+                                    _console(f"  ✓ Mapped speakers: {', '.join(f'{k}→{v}' for k,v in mapping.items())}", "green")
+                        except Exception as exc:
+                            self._logger.warning("Could not apply user speaker names: %s", exc)
             except Exception as exc:
                 self._logger.warning("Diarization failed: %s — continuing without", exc)
                 _console(f"  ⚠ Diarization failed: {exc} — continuing without", "yellow")
@@ -648,6 +666,21 @@ class PipelineOrchestrator:
             return
 
         _console(f"  [green]✓[/green] Diarization done in {t_diarize:.1f}s — {n_speakers} speakers, {n_segments} segments")
+
+        # Apply user-provided speaker names (in order of first-speaking)
+        notes_file = self._data_dir / "notes" / f"{meeting_id}.json"
+        if notes_file.exists():
+            try:
+                _notes = _json.loads(notes_file.read_text())
+                _user_names = _notes.get("speakers") or []
+                if isinstance(_user_names, str):
+                    _user_names = [n.strip() for n in _user_names.split(",") if n.strip()]
+                if _user_names:
+                    mapping = DiarizationEngine.apply_speaker_names(diarization_result, _user_names)
+                    if mapping:
+                        _console(f"  [green]✓[/green] Mapped speakers: {', '.join(f'{k}→{v}' for k,v in mapping.items())}")
+            except Exception as exc:
+                _console(f"  [yellow]Could not apply user speaker names: {exc}[/yellow]")
 
         # Load existing transcript JSON
         with open(transcript_path, "r", encoding="utf-8") as f:
