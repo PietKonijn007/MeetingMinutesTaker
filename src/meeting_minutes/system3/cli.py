@@ -393,7 +393,7 @@ def generate_cmd(
 def reprocess_cmd(
     meeting_id: str = typer.Argument(..., help="Meeting ID"),
 ):
-    """Reprocess a meeting through the full pipeline."""
+    """Reprocess a meeting through generation + ingestion (skips transcription/diarization)."""
     config = _load_config()
 
     async def _run():
@@ -405,6 +405,42 @@ def reprocess_cmd(
             console.print(f"[green]Meeting {meeting_id} reprocessed.[/green]")
         except Exception as exc:
             err_console.print(f"[red]Reprocessing failed: {exc}[/red]")
+            raise typer.Exit(code=1)
+
+    asyncio.run(_run())
+
+
+# ---------------------------------------------------------------------------
+# mm rediarize
+# ---------------------------------------------------------------------------
+
+
+@app.command("rediarize")
+def rediarize_cmd(
+    meeting_id: str = typer.Argument(..., help="Meeting ID"),
+    skip_regenerate: bool = typer.Option(False, "--skip-regenerate", help="Only re-diarize, don't re-run generation/ingestion"),
+):
+    """Re-run speaker diarization on existing audio without re-transcribing.
+
+    Useful when diarization failed at recording time (e.g. missing HF_TOKEN
+    or torchcodec) and you want to add speaker labels to an existing
+    meeting without paying the cost of re-transcription.
+
+    By default, also re-runs minutes generation and DB ingestion so the
+    new speaker labels appear everywhere. Use --skip-regenerate to only
+    update the transcript JSON.
+    """
+    config = _load_config()
+
+    async def _run():
+        from meeting_minutes.pipeline import PipelineOrchestrator
+
+        orchestrator = PipelineOrchestrator(config)
+        try:
+            await orchestrator.rediarize(meeting_id, regenerate=not skip_regenerate)
+            console.print(f"[green]Meeting {meeting_id} re-diarized.[/green]")
+        except Exception as exc:
+            err_console.print(f"[red]Re-diarize failed: {exc}[/red]")
             raise typer.Exit(code=1)
 
     asyncio.run(_run())

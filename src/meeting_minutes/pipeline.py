@@ -582,6 +582,106 @@ class PipelineOrchestrator:
         _console(f"    DB: {db_path}")
         _console(f"    Full-text search index updated")
 
+    async def rediarize(self, meeting_id: str, regenerate: bool = True) -> None:
+        """Re-run ONLY speaker diarization on existing audio, merge into existing transcript.
+
+        Skips re-transcription (slow). Useful when diarization was broken at the
+        time of original recording (missing HF_TOKEN, missing torchcodec, etc.)
+        and you want to add speaker labels without re-running the full pipeline.
+
+        If regenerate=True, also re-runs minutes generation and ingestion so the
+        new speaker labels propagate through the database.
+        """
+        import json as _json
+        from datetime import datetime, timezone
+
+        from meeting_minutes.system1.diarize import DiarizationEngine
+        from meeting_minutes.models import TranscriptSegment
+
+        _console(f"\n{'='*60}", "bold")
+        _console(f"  REDIARIZE — Meeting {meeting_id[:12]}...", "bold yellow")
+        _console(f"{'='*60}\n")
+
+        # Locate existing transcript JSON
+        transcript_path = self._transcripts_dir / f"{meeting_id}.json"
+        if not transcript_path.exists():
+            raise FileNotFoundError(f"Transcript not found: {transcript_path}")
+
+        # Locate audio file
+        audio_path = self._recordings_dir / f"{meeting_id}.flac"
+        if not audio_path.exists():
+            for ext in (".wav", ".mp3", ".m4a", ".ogg"):
+                candidate = self._recordings_dir / f"{meeting_id}{ext}"
+                if candidate.exists():
+                    audio_path = candidate
+                    break
+            else:
+                raise FileNotFoundError(
+                    f"No audio file found for meeting {meeting_id}. "
+                    f"Cannot re-diarize without source audio."
+                )
+
+        if not self._config.diarization.enabled:
+            _console("  [yellow]Diarization is disabled in config — enable it first.[/yellow]")
+            return
+
+        if not os.environ.get("HF_TOKEN"):
+            _console("  [yellow]HF_TOKEN not set — diarization will fail.[/yellow]")
+            return
+
+        # Run diarization
+        _console(f"  Audio: {audio_path.name} ({audio_path.stat().st_size / (1024*1024):.1f} MB)")
+        _console(f"  Running speaker diarization (this can take 30s-3min)...")
+        diarize_engine = DiarizationEngine(self._config.diarization)
+        t0 = time.time()
+        diarization_result = await asyncio.get_event_loop().run_in_executor(
+            None, diarize_engine.diarize, audio_path
+        )
+        diarization_result.meeting_id = meeting_id
+        t_diarize = time.time() - t0
+        n_speakers = len(set(s.speaker for s in diarization_result.segments))
+        n_segments = len(diarization_result.segments)
+
+        if n_segments == 0:
+            _console(f"  [red]✗ Diarization returned 0 segments in {t_diarize:.1f}s[/red]")
+            _console(f"  [dim]Check server.err for the underlying error.[/dim]")
+            return
+
+        _console(f"  [green]✓[/green] Diarization done in {t_diarize:.1f}s — {n_speakers} speakers, {n_segments} segments")
+
+        # Load existing transcript JSON
+        with open(transcript_path, "r", encoding="utf-8") as f:
+            transcript_data = _json.load(f)
+
+        # Merge speakers into existing segments
+        old_segments = transcript_data.get("transcript", {}).get("segments", [])
+        segment_objs = [TranscriptSegment(**s) for s in old_segments]
+        merged = DiarizationEngine.merge_transcript_with_diarization(
+            segment_objs, diarization_result
+        )
+
+        # Build new speaker list
+        seen_labels: set[str] = set()
+        new_speakers = []
+        for d_seg in diarization_result.segments:
+            if d_seg.speaker not in seen_labels:
+                seen_labels.add(d_seg.speaker)
+                new_speakers.append({"label": d_seg.speaker, "name": None, "email": None, "confidence": 0.0})
+
+        # Update the transcript JSON in place
+        transcript_data["speakers"] = new_speakers
+        transcript_data["transcript"]["segments"] = [s.model_dump() for s in merged]
+        transcript_data["processing"] = transcript_data.get("processing", {})
+        transcript_data["processing"]["rediarized_at"] = datetime.now(timezone.utc).isoformat()
+
+        with open(transcript_path, "w", encoding="utf-8") as f:
+            _json.dump(transcript_data, f, indent=2, default=str)
+        _console(f"  [green]✓[/green] Transcript updated with speaker labels: {transcript_path.name}")
+
+        if regenerate:
+            _console(f"\n  [bold]Re-running minutes generation with new speaker labels...[/bold]")
+            await self.reprocess(meeting_id)
+
     async def reprocess(self, meeting_id: str) -> None:
         """Re-run System 2 and System 3 for an existing meeting."""
         _console(f"\n{'='*60}", "bold")
