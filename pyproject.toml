@@ -6,6 +6,8 @@ build-backend = "hatchling.build"
 name = "meeting-minutes"
 version = "0.1.0"
 requires-python = ">=3.11"
+license = "AGPL-3.0-or-later"
+license-files = ["LICENSE"]
 dependencies = [
     "sounddevice>=0.4.6",
     "soundfile>=0.12.1",

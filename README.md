@@ -375,4 +375,13 @@ pytest tests/ -v
 
 ## License
 
-Private repository. All rights reserved.
+Copyright © 2026 Jurgen Hofkens. All rights reserved.
+
+This project is licensed under the **GNU Affero General Public License v3.0** (AGPL-3.0) — see [LICENSE](LICENSE) for the full text.
+
+In short:
+- **Personal, research, and non-commercial use** — free, under AGPL-3.0.
+- **Modifications, forks, and network-delivered services** built on this code must also be released under AGPL-3.0, with full source available to users.
+- **Commercial use that cannot comply with AGPL-3.0** (e.g. you want to incorporate this into a closed-source product or service) requires a separate commercial license — see [COMMERCIAL.md](COMMERCIAL.md).
+
+Contributions are welcome under the [Contributor License Agreement](CLA.md) — see [CONTRIBUTING.md](CONTRIBUTING.md) for how to submit a pull request.
