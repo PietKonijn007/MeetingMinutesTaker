@@ -61,6 +61,13 @@ export const api = {
   getPeople: () => request('/people'),
   getPerson: (id) => request(`/people/${id}`),
   getPersonMeetings: (id) => request(`/people/${id}/meetings`),
+  updatePerson: (id, data) => request(`/people/${id}`, {
+    method: 'PATCH', body: JSON.stringify(data),
+  }),
+  deletePerson: (id) => request(`/people/${id}`, { method: 'DELETE' }),
+  mergePerson: (sourceId, targetId, renameActions = true) => request(`/people/${sourceId}/merge`, {
+    method: 'POST', body: JSON.stringify({ target_id: targetId, rename_actions: renameActions }),
+  }),
 
   // Stats
   getStats: () => request('/stats'),
