@@ -146,7 +146,7 @@ class PipelineOrchestrator:
     async def run_transcription(self, meeting_id: str) -> Path:
         """Run System 1: transcribe audio → produce transcript JSON."""
         from meeting_minutes.system1.output import TranscriptJSONWriter
-        from meeting_minutes.system1.transcribe import TranscriptionEngine
+        from meeting_minutes.system1.transcribe import get_transcription_engine
         from meeting_minutes.system1.diarize import DiarizationEngine
 
         self._transcripts_dir.mkdir(parents=True, exist_ok=True)
@@ -175,10 +175,11 @@ class PipelineOrchestrator:
         _console(f"  Audio file: {audio_path.name} ({audio_size_mb:.1f} MB)")
 
         # Transcribe
-        engine = TranscriptionEngine(self._config.transcription)
+        engine = get_transcription_engine(self._config.transcription)
         model_name = self._config.transcription.whisper_model
         lang = self._config.transcription.language
-        _console(f"  Whisper model: {model_name} | Language: {lang}")
+        engine_name = self._config.transcription.primary_engine
+        _console(f"  Engine: {engine_name} | Model: {model_name} | Language: {lang}")
         _console(f"  Transcribing...", "yellow")
 
         t0 = time.time()

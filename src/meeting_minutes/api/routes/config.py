@@ -103,9 +103,51 @@ async def get_provider_models_endpoint(
             detail=f"Unknown provider: {provider}. Must be one of: {', '.join(valid_providers)}",
         )
 
-    if provider == "ollama":
-        return {"provider": "ollama", "models": [], "cached": False, "source": "none"}
-
     from meeting_minutes.api.model_fetcher import get_provider_models
 
     return await get_provider_models(provider, force_refresh=refresh)
+
+
+@router.get("/transcription-engines")
+def get_transcription_engines():
+    """List available transcription engines and their install status."""
+    from meeting_minutes.system1.transcribe import get_available_engines, WHISPER_PRESETS
+
+    return {
+        "engines": get_available_engines(),
+        "presets": WHISPER_PRESETS,
+    }
+
+
+@router.get("/hardware")
+def get_hardware_info():
+    """Detect hardware capabilities and recommend models for local AI."""
+    from meeting_minutes.hardware import detect_hardware, recommend_models, check_ollama_available
+
+    profile = detect_hardware()
+    recommendations = recommend_models(profile)
+    ollama_status = check_ollama_available()
+
+    return {
+        "hardware": {
+            "gpu": {
+                "name": profile.gpu.name,
+                "type": profile.gpu.type,
+                "vram_gb": round(profile.gpu.vram_gb, 1),
+            },
+            "ram_gb": round(profile.total_ram_gb, 1),
+            "available_ram_gb": round(profile.available_ram_gb, 1),
+            "cpu_cores": profile.cpu_cores,
+            "platform": profile.platform,
+            "arch": profile.arch,
+        },
+        "recommendations": {
+            "whisper_model": recommendations.whisper_model,
+            "whisper_device": recommendations.whisper_device,
+            "whisper_compute_type": recommendations.whisper_compute_type,
+            "ollama_models": recommendations.ollama_models,
+            "max_ollama_model_gb": round(recommendations.max_ollama_model_gb, 1),
+            "notes": recommendations.notes,
+        },
+        "ollama": ollama_status,
+    }

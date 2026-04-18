@@ -177,10 +177,48 @@ async def _fetch_openai() -> list[dict[str, Any]]:
     return models
 
 
+async def _fetch_ollama() -> list[dict[str, Any]]:
+    """Fetch available models from a local Ollama instance."""
+    base_url = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
+
+    async with httpx.AsyncClient(timeout=5) as client:
+        resp = await client.get(f"{base_url}/api/tags")
+        resp.raise_for_status()
+        data = resp.json()
+
+    models = []
+    for m in data.get("models", []):
+        model_name = m.get("name", "")
+        size_bytes = m.get("size", 0)
+        size_gb = size_bytes / (1024 ** 3) if size_bytes else None
+        parameter_size = m.get("details", {}).get("parameter_size", "")
+        family = m.get("details", {}).get("family", "")
+        quantization = m.get("details", {}).get("quantization_level", "")
+
+        entry: dict[str, Any] = {
+            "id": model_name,
+            "name": model_name,
+        }
+        if size_gb:
+            entry["size_gb"] = round(size_gb, 1)
+        if parameter_size:
+            entry["parameter_size"] = parameter_size
+        if family:
+            entry["family"] = family
+        if quantization:
+            entry["quantization"] = quantization
+
+        models.append(entry)
+
+    models.sort(key=lambda x: x["name"])
+    return models
+
+
 _FETCHERS = {
     "anthropic": _fetch_anthropic,
     "openrouter": _fetch_openrouter,
     "openai": _fetch_openai,
+    "ollama": _fetch_ollama,
 }
 
 

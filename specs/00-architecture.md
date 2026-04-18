@@ -16,7 +16,8 @@ The Meeting Minutes Taker is a three-system pipeline that captures meeting audio
 │  • Diarization      │               │  • LLM generation   │               │  • REST API (:8080) │
 │                     │               │    (Anthropic /     │               │                     │
 │                     │               │     OpenRouter /    │               │                     │
-│                     │               │     OpenAI)         │               │                     │
+│                     │               │     OpenAI /        │               │                     │
+│                     │               │     Ollama local)   │               │                     │
 │  • Metadata         │               │  • Quality checks   │               │  • Svelte Web UI    │
 │                     │               │                     │               │  • Analytics        │
 └─────────────────────┘               └─────────────────────┘               └─────────────────────┘
@@ -46,7 +47,7 @@ Meeting Occurs
     ├── 1. Capture audio from system audio devices
     │   (virtual loopback for virtual meetings, mic for physical)
     │
-    ├── 2. Run transcription (Whisper local or Amazon Transcribe)
+    ├── 2. Run transcription (Faster Whisper or Whisper.cpp, local)
     │
     ├── 3. Run speaker diarization (pyannote.audio)
     │
@@ -82,10 +83,11 @@ Meeting Occurs
     │
     ├── 3. Construct prompt (system + template + context + transcript)
     │
-    ├── 4. Send to LLM (Claude / GPT / OpenRouter / local model)
-    │      Primary: structured JSON output via Anthropic tool_use
+    ├── 4. Send to LLM (Claude / GPT / OpenRouter / Ollama local)
+    │      Anthropic: structured JSON output via tool_use
+    │      Ollama: JSON-mode structured generation (local, free)
+    │      OpenRouter: 200+ models via unified API
     │      Fallback: text response + regex parsing
-    │      OpenRouter: 200+ models via unified API (OpenAI-compatible)
     │
     ├── 5. Parse response, extract action items & decisions
     │
@@ -392,9 +394,10 @@ storage:
 |-------|-----------|
 | **Language** | Python 3.11+ |
 | **Audio** | `sounddevice`, BlackHole (macOS), WASAPI (Windows) |
-| **Transcription** | `faster-whisper` |
+| **Transcription** | `faster-whisper` (default, CTranslate2), `whisper.cpp` via `pywhispercpp` (GGML, optional) |
 | **Diarization** | `pyannote.audio` |
-| **LLM** | `anthropic` SDK (primary), `openai` SDK (fallback + OpenRouter via OpenAI-compatible API) |
+| **LLM** | `anthropic` SDK (primary), `openai` SDK (fallback + OpenRouter + Ollama via OpenAI-compatible API) |
+| **Local AI** | Ollama (local LLM serving), hardware detection (`psutil`, `torch.cuda`) |
 | **Database** | SQLite + SQLAlchemy |
 | **Search** | SQLite FTS5 |
 | **API** | FastAPI + uvicorn |

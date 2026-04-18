@@ -511,12 +511,18 @@ Visual config editor. Changes write to `config/config.yaml`.
 | Section | Settings |
 |---------|----------|
 | **Recording** | Audio device (dropdown of system devices), sample rate, auto-stop silence threshold |
-| **Transcription** | Whisper model (dropdown with size/accuracy descriptions), language |
+| **Transcription** | Engine selector (Faster Whisper / Whisper.cpp) with install status badges, Whisper model (dropdown with size/accuracy descriptions + hardware-recommended model hint), language |
 | **Speaker ID** | Enable/disable diarization, HuggingFace token status |
-| **Minutes Generation** | LLM provider (Anthropic, OpenAI, OpenRouter, Ollama), model (dropdown with built-in + previously used custom models, plus text input for custom model IDs), temperature slider, max tokens |
+| **Minutes Generation** | LLM provider (Anthropic, OpenAI, OpenRouter, Ollama), model (dynamic dropdown fetched from provider APIs — including Ollama local models with size/family info), Ollama status indicator (running/version/not installed), hardware-aware model recommendations, custom model text input, temperature slider, max tokens |
 | **Pipeline** | Mode selector (automatic / semi-automatic / manual) |
 | **Storage** | Database path, data directory |
 | **Appearance** | Dark mode toggle, accent color (optional) |
+
+**Local AI features in Settings:**
+- **Transcription engine selector**: Dropdown to choose between Faster Whisper (GPU-accelerated, best accuracy) and Whisper.cpp (lower memory, faster on CPU). Install status badges show which engines are available.
+- **Hardware detection**: `GET /api/config/hardware` detects GPU type, VRAM, RAM and recommends optimal Whisper model and Ollama models. Recommendations shown inline in the settings UI.
+- **Ollama integration**: When Ollama is selected as provider, the model dropdown is populated by querying the local Ollama instance (`GET /api/config/provider-models?provider=ollama`). Models show parameter size and disk size. An Ollama status badge shows whether the server is running and its version.
+- **Model refresh**: All providers (including Ollama) support a Refresh button to re-fetch available models.
 
 Each setting has a label, description, and appropriate input control (dropdown, slider, toggle, text input). Changes are saved on blur or via a "Save" button at the bottom.
 
@@ -604,6 +610,10 @@ GET    /api/recording/status                 # Current recording state + elapsed
 GET    /api/config                           # Get current config
 PATCH  /api/config                           # Update config
        { "recording": { "audio_device": "MeetingCapture" } }
+GET    /api/config/provider-models?provider=X  # Fetch models (Anthropic/OpenAI/OpenRouter/Ollama)
+GET    /api/config/custom-models             # Previously used custom models
+GET    /api/config/hardware                  # Detect GPU/RAM, recommend models
+GET    /api/config/transcription-engines     # List available transcription engines + install status
 
 GET    /api/audio-devices                    # List available audio devices
 GET    /api/auto-detect-device               # Auto-select best capture device

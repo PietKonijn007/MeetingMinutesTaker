@@ -6,12 +6,12 @@ A local-first system that records your meetings, generates intelligent meeting m
 
 ```
 Record Audio ──► Transcribe ──► Generate Minutes ──► Store & Search
-  (System 1)      (Whisper)      (Claude / GPT)       (SQLite + FTS5)
+  (System 1)      (Whisper)      (Claude / Ollama)     (SQLite + FTS5)
 ```
 
-**System 1 — Recording & Transcription**: Captures audio from virtual and physical meetings via system audio loopback (BlackHole on macOS), transcribes with Whisper (including Distil-Whisper models with Metal acceleration on Apple Silicon), identifies speakers with pyannote.audio, enriches with calendar metadata, and supports live note-taking (speaker names, notes, custom LLM instructions) during recording.
+**System 1 — Recording & Transcription**: Captures audio from virtual and physical meetings via system audio loopback (BlackHole on macOS), transcribes with a pluggable transcription engine — Faster Whisper (CTranslate2, default) or Whisper.cpp (GGML quantized, lower memory) — including Distil-Whisper models with Metal/CUDA acceleration. Identifies speakers with pyannote.audio, enriches with calendar metadata, and supports live note-taking during recording. Hardware auto-detection recommends optimal models for your GPU/RAM.
 
-**System 2 — Minutes Generation**: Auto-detects meeting type using an LLM classifier (Claude Haiku) with meeting type refinement, routes transcripts to meeting-type-specific prompt templates, generates structured minutes via LLM (Anthropic Claude `claude-sonnet-4-6` by default, with OpenRouter and OpenAI as alternatives) using tool_use for guaranteed JSON output (with text+regex fallback), extracts action items and decisions with per-speaker sentiment analysis and meeting effectiveness scoring, and runs quality checks. Supports custom LLM instructions provided during recording. OpenRouter support provides access to 200+ models from multiple providers (Anthropic, Google, OpenAI, Meta, DeepSeek, Mistral, and more).
+**System 2 — Minutes Generation**: Auto-detects meeting type using an LLM classifier with meeting type refinement, routes transcripts to meeting-type-specific prompt templates, generates structured minutes via LLM. Supports **four providers**: Anthropic Claude (tool_use for guaranteed JSON), OpenAI, OpenRouter (200+ models), and **Ollama for fully local/offline summarization** (JSON-mode structured generation). Extracts action items and decisions with per-speaker sentiment analysis and meeting effectiveness scoring, and runs quality checks. Supports custom LLM instructions provided during recording.
 
 **System 3 — Storage & Search**: Stores everything in SQLite with full-text search (FTS5), provides a CLI for searching, browsing, and managing meetings and action items. Supports encryption at rest, configurable retention policies, and in-calendar search with filters.
 
@@ -88,6 +88,7 @@ export ANTHROPIC_API_KEY="sk-ant-..."    # Required for minutes generation (Anth
 export HF_TOKEN="hf_..."                 # Required for speaker diarization
 export OPENAI_API_KEY="sk-..."           # Optional (OpenAI provider or fallback)
 export OPENROUTER_API_KEY="sk-or-..."    # Optional (OpenRouter provider — access 200+ models)
+# No API key needed for Ollama — it runs locally
 ```
 
 Or create a `.env` file at the project root (takes priority over environment variables):
@@ -97,6 +98,7 @@ ANTHROPIC_API_KEY=sk-ant-...
 HF_TOKEN=hf_...
 OPENAI_API_KEY=sk-...
 OPENROUTER_API_KEY=sk-or-...
+OLLAMA_BASE_URL=http://localhost:11434   # Optional, defaults to localhost
 ```
 
 ### Configure audio
@@ -202,7 +204,8 @@ recording:
   auto_stop_silence_minutes: 5
 
 transcription:
-  whisper_model: medium        # tiny | base | small | medium | large-v3
+  primary_engine: whisper            # whisper | whisper-cpp
+  whisper_model: medium              # tiny | base | small | medium | large-v3
 
 diarization:
   enabled: true
@@ -210,8 +213,11 @@ diarization:
 generation:
   llm:
     primary_provider: anthropic       # anthropic | openai | openrouter | ollama
-    model: claude-sonnet-4-6 # Model ID (provider-specific)
+    model: claude-sonnet-4-6          # Model ID (provider-specific)
     temperature: 0.2
+    ollama:
+      base_url: http://localhost:11434  # Ollama server URL
+      timeout_seconds: 300              # Local models can be slower
 
 storage:
   sqlite_path: db/meetings.db
@@ -246,16 +252,17 @@ MeetingMinutesTaker/
 │   ├── logging.py             # Structured JSON logging
 │   ├── pipeline.py            # Pipeline orchestrator (with retry)
 │   ├── retention.py           # Data retention policy engine
+│   ├── hardware.py            # GPU/RAM detection and model recommendations
 │   ├── system1/               # Audio capture & transcription
 │   │   ├── capture.py         #   AudioCaptureEngine (sounddevice, circular buffer)
-│   │   ├── transcribe.py      #   TranscriptionEngine (faster-whisper)
+│   │   ├── transcribe.py      #   Transcription engine factory (faster-whisper, whisper.cpp)
 │   │   ├── diarize.py         #   DiarizationEngine (pyannote.audio)
 │   │   └── output.py          #   TranscriptJSONWriter
 │   ├── system2/               # Minutes generation
 │   │   ├── ingest.py          #   TranscriptIngester (validation, speaker mapping)
 │   │   ├── router.py          #   PromptRouter (LLM classifier + template selection)
 │   │   ├── prompts.py         #   PromptTemplateEngine (Jinja2)
-│   │   ├── llm_client.py      #   LLMClient (Anthropic/OpenAI/OpenRouter, retry, fallback)
+│   │   ├── llm_client.py      #   LLMClient (Anthropic/OpenAI/OpenRouter/Ollama, retry, fallback)
 │   │   ├── schema.py          #   StructuredMinutesResponse (tool_use JSON schema)
 │   │   ├── parser.py          #   MinutesParser (extract sections, actions, decisions)
 │   │   ├── quality.py         #   QualityChecker (coverage, hallucination, length)
@@ -300,9 +307,9 @@ MeetingMinutesTaker/
 | Component | Technology |
 |-----------|-----------|
 | Audio capture | `sounddevice` + BlackHole (macOS) |
-| Transcription | `faster-whisper` (Whisper, Metal accelerated) |
+| Transcription | `faster-whisper` (default, Metal/CUDA), `whisper.cpp` (GGML, lower memory) |
 | Speaker diarization | `pyannote.audio` |
-| LLM | Anthropic Claude (primary), OpenRouter (200+ models), OpenAI (fallback) |
+| LLM | Anthropic Claude (primary), OpenRouter (200+ models), OpenAI, Ollama (local) |
 | Database | SQLite + SQLAlchemy |
 | Full-text search | SQLite FTS5 with BM25 ranking |
 | CLI | `typer` + `rich` |
