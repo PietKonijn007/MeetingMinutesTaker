@@ -679,6 +679,51 @@ def repair_cmd(
 
 
 # ---------------------------------------------------------------------------
+# mm doctor (ONB-1)
+# ---------------------------------------------------------------------------
+
+
+@app.command("doctor")
+def doctor_cmd(
+    as_json: bool = typer.Option(False, "--json", help="Emit the check list as JSON."),
+):
+    """Run the first-run diagnostic checks. Exits non-zero on any failure."""
+    from meeting_minutes.doctor import run_checks
+
+    config = _load_config()
+    results = run_checks(config)
+
+    if as_json:
+        payload = {
+            "checks": [r.to_dict() for r in results],
+            "overall_status": (
+                "fail" if any(r.status == "fail" for r in results)
+                else "warn" if any(r.status == "warn" for r in results)
+                else "ok"
+            ),
+        }
+        console.print_json(data=payload)
+    else:
+        table = Table(title="mm doctor")
+        table.add_column("#", justify="right", width=3)
+        table.add_column("Check")
+        table.add_column("Status")
+        table.add_column("Detail", overflow="fold")
+        table.add_column("Fix hint", overflow="fold")
+        for i, r in enumerate(results, 1):
+            style = _HEALTH_STATUS_STYLE.get(r.status, "")
+            status_cell = f"[{style}]{r.status}[/{style}]" if style else r.status
+            fix = r.fix_hint
+            if r.fix_command:
+                fix = f"{fix}\n  $ {r.fix_command}" if fix else f"$ {r.fix_command}"
+            table.add_row(str(i), r.name, status_cell, r.detail, fix)
+        console.print(table)
+
+    if any(r.status == "fail" for r in results):
+        raise typer.Exit(code=1)
+
+
+# ---------------------------------------------------------------------------
 # mm init
 # ---------------------------------------------------------------------------
 
