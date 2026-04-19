@@ -221,6 +221,16 @@ Before starting a recording the web UI calls `GET /api/recording/preflight?plann
 
 A watchdog thread polls free disk space every 30 seconds while recording and triggers a graceful stop if free space drops below half of the remaining estimate — this guarantees a valid (possibly truncated) FLAC rather than a corrupted tail. `mm record start` in non-interactive mode (launchd) refuses red-tier preflights; interactive shells always let you override with `--force`.
 
+## Passive speaker identity (SPK-1)
+
+There is no separate "enroll your voice" step. Speaker centroids are learned from real meeting audio: each time you name a speaker (e.g. `SPEAKER_00 → Jon`) in the Transcript tab, the mean embedding for that cluster is saved as a voice sample for Jon. On subsequent meetings, every new cluster is scored against every known person's centroid via cosine similarity:
+
+- **≥ 0.85** — the Transcript tab pre-fills the name with a green **suggested** badge
+- **0.70 – 0.85** — pre-fill with a yellow **? Name** badge; one click to accept, or type a different name to override
+- **below 0.70** — field is blank; if the cluster has more than 30 seconds of speech, an inline "Create new person" row appears (name + optional email, `POST /api/persons`) so you can name them without leaving the page
+
+Corrections are handled explicitly: relabeling a cluster from Jon to Sarah flips Jon's prior sample to `confirmed=false` so it stops contributing to his centroid. Clusters with less than 5 seconds of speech produce no sample at all (too noisy). Only the 20 most recent confirmed samples contribute to any given centroid, so representations stay current even as a voice changes over time. Samples live in `person_voice_samples` and are deleted by `ON DELETE CASCADE` when the person or meeting is removed — nothing extra to configure for retention.
+
 ## Web UI
 
 A browser-based interface built with Svelte + Tailwind CSS at `localhost:8080` with calendar view, action items, decisions, people, stats, recording controls, template manager, and settings.
@@ -245,7 +255,7 @@ cd web && npm install && npm run dev   # Svelte on :3000, proxies /api → :8080
 
 ## REST API
 
-The backend is a FastAPI application serving at `:8080` with 32 routes covering meetings, search, action items, decisions, people, stats, recording, and configuration. Auto-generated interactive API documentation is available at [http://localhost:8080/docs](http://localhost:8080/docs).
+The backend is a FastAPI application serving at `:8080` covering meetings, search, action items, decisions, people (including `POST /api/persons` for inline creation), stats, recording, speaker suggestions (`GET /api/meetings/:id/speaker-suggestions`), and configuration. Auto-generated interactive API documentation is available at [http://localhost:8080/docs](http://localhost:8080/docs).
 
 ## Configuration
 

@@ -37,6 +37,7 @@ export const api = {
   updateTranscriptSpeakers: (id, body) => request(`/meetings/${id}/transcript/speakers`, {
     method: 'PATCH', body: JSON.stringify(body),
   }),
+  getSpeakerSuggestions: (id) => request(`/meetings/${id}/speaker-suggestions`),
 
   // Search
   search: (params) => {
@@ -61,6 +62,9 @@ export const api = {
   getPeople: () => request('/people'),
   getPerson: (id) => request(`/people/${id}`),
   getPersonMeetings: (id) => request(`/people/${id}/meetings`),
+  createPerson: (data) => request('/people', {
+    method: 'POST', body: JSON.stringify(data),
+  }),
   updatePerson: (id, data) => request(`/people/${id}`, {
     method: 'PATCH', body: JSON.stringify(data),
   }),

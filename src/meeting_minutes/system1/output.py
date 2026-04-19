@@ -30,8 +30,15 @@ class TranscriptJSONWriter:
         transcription: TranscriptionResult,
         diarization: DiarizationResult | None,
         output_dir: Path,
+        speaker_suggestions: dict[str, dict] | None = None,
     ) -> Path:
-        """Write transcript JSON to output directory. Returns file path."""
+        """Write transcript JSON to output directory. Returns file path.
+
+        ``speaker_suggestions`` (SPK-1) maps cluster_id to a dict with keys
+        ``suggested_person_id``, ``suggested_name``, ``suggestion_score``,
+        ``suggestion_tier``. It is merged into the ``speakers`` array so
+        the frontend can pre-fill names with the right badge.
+        """
         output_dir.mkdir(parents=True, exist_ok=True)
 
         # Merge diarization into transcript segments
@@ -42,13 +49,23 @@ class TranscriptJSONWriter:
             )
 
         # Build speaker mappings
+        suggestions = speaker_suggestions or {}
         speakers: list[SpeakerMapping] = []
         if diarization and diarization.segments:
             seen_labels: set[str] = set()
             for d_seg in diarization.segments:
                 if d_seg.speaker not in seen_labels:
                     seen_labels.add(d_seg.speaker)
-                    speakers.append(SpeakerMapping(label=d_seg.speaker))
+                    suggestion = suggestions.get(d_seg.speaker) or {}
+                    speakers.append(
+                        SpeakerMapping(
+                            label=d_seg.speaker,
+                            suggested_person_id=suggestion.get("suggested_person_id"),
+                            suggested_name=suggestion.get("suggested_name"),
+                            suggestion_score=float(suggestion.get("suggestion_score", 0.0)),
+                            suggestion_tier=suggestion.get("suggestion_tier"),
+                        )
+                    )
 
         metadata = TranscriptMetadata(
             timestamp_start=recording.start_time,

@@ -28,31 +28,117 @@
   let expandedTopics = $state(new Set());
   let showRawMarkdown = $state(false);
   let showSpeakerEditor = $state(false);
-  let speakerEdits = $state({});  // { "SPEAKER_00": "Tom", ... }
+  let speakerEdits = $state({});          // { "SPEAKER_00": "Tom", ... }
+  let speakerPersonIds = $state({});      // { "SPEAKER_00": "p-jon", ... }
   let savingSpeakers = $state(false);
+  // SPK-1: per-cluster suggestion metadata loaded from the server.
+  let speakerSuggestions = $state({});    // { "SPEAKER_00": {suggested_name, suggestion_tier, score, speech_seconds, suggested_person_id} }
+  // Inline "create new person" form state, keyed by cluster id.
+  let newPersonForms = $state({});        // { "SPEAKER_00": { open, name, email, saving } }
+
+  async function loadSpeakerSuggestions(id) {
+    try {
+      const payload = await api.getSpeakerSuggestions(id);
+      const map = {};
+      for (const s of payload.suggestions || []) {
+        if (s.cluster_id) map[s.cluster_id] = s;
+      }
+      speakerSuggestions = map;
+    } catch (e) {
+      speakerSuggestions = {};
+    }
+  }
 
   function openSpeakerEditor() {
     const uniques = [...new Set((transcript?.segments || []).map(s => s.speaker).filter(Boolean))];
-    speakerEdits = Object.fromEntries(uniques.map(label => [label, label.startsWith('SPEAKER_') ? '' : label]));
+    const edits = {};
+    const personIds = {};
+    for (const label of uniques) {
+      const sugg = speakerSuggestions[label] || {};
+      // Prefill high/medium suggestions; leave unknown ones blank for the
+      // user. If the label is already a human name (not SPEAKER_XX), keep it.
+      if (!label.startsWith('SPEAKER_')) {
+        edits[label] = label;
+      } else if (sugg.suggested_name && (sugg.suggestion_tier === 'high' || sugg.suggestion_tier === 'medium')) {
+        edits[label] = sugg.suggested_name;
+        personIds[label] = sugg.suggested_person_id || '';
+      } else {
+        edits[label] = '';
+      }
+    }
+    speakerEdits = edits;
+    speakerPersonIds = personIds;
+    newPersonForms = {};
     showSpeakerEditor = true;
+  }
+
+  function openNewPersonForm(label) {
+    newPersonForms = {
+      ...newPersonForms,
+      [label]: { open: true, name: '', email: '', saving: false },
+    };
+  }
+
+  function closeNewPersonForm(label) {
+    const next = { ...newPersonForms };
+    delete next[label];
+    newPersonForms = next;
+  }
+
+  async function submitNewPerson(label) {
+    const form = newPersonForms[label];
+    if (!form || !form.name.trim()) {
+      addToast('Name is required', 'warning');
+      return;
+    }
+    newPersonForms = { ...newPersonForms, [label]: { ...form, saving: true } };
+    try {
+      const created = await api.createPerson({
+        name: form.name.trim(),
+        email: form.email.trim() || null,
+      });
+      speakerEdits = { ...speakerEdits, [label]: created.name };
+      speakerPersonIds = { ...speakerPersonIds, [label]: created.person_id };
+      closeNewPersonForm(label);
+      addToast(`Created person: ${created.name}`, 'success');
+    } catch (e) {
+      addToast(`Could not create person: ${e.message}`, 'error');
+      newPersonForms = { ...newPersonForms, [label]: { ...form, saving: false } };
+    }
   }
 
   async function saveSpeakerEdits(regenerate = true) {
     savingSpeakers = true;
     try {
       const mapping = {};
+      const personMapping = {};
       for (const [label, name] of Object.entries(speakerEdits)) {
         if (name && name.trim()) mapping[label] = name.trim();
+      }
+      for (const [label, pid] of Object.entries(speakerPersonIds)) {
+        if (pid && mapping[label]) personMapping[label] = pid;
       }
       if (Object.keys(mapping).length === 0) {
         addToast('No speaker names entered', 'warning');
         return;
       }
-      await api.updateTranscriptSpeakers(meetingId, { mapping });
-      addToast(`Renamed ${Object.keys(mapping).length} speaker(s)`, 'success');
+      const payload = { mapping };
+      if (Object.keys(personMapping).length > 0) {
+        payload.person_mapping = personMapping;
+      }
+      const resp = await api.updateTranscriptSpeakers(meetingId, payload);
+      const renamed = Object.keys(mapping).length;
+      const confirmed = resp?.spk1?.confirmed || 0;
+      addToast(
+        confirmed > 0
+          ? `Renamed ${renamed} speaker(s); ${confirmed} voice sample(s) confirmed`
+          : `Renamed ${renamed} speaker(s)`,
+        'success',
+      );
       showSpeakerEditor = false;
       // Reload transcript to show new labels
       await loadTranscript(meetingId);
+      await loadSpeakerSuggestions(meetingId);
       if (regenerate) {
         addToast('Regenerating minutes with new names…', 'info');
         await api.regenerateMeeting(meetingId);
@@ -251,6 +337,7 @@
       loadMeeting(id);
       loadTranscript(id);
       loadAnalytics(id);
+      loadSpeakerSuggestions(id);
     }
   });
 </script>
@@ -708,20 +795,86 @@
             <div class="mb-4 p-4 bg-[var(--bg-surface)] border border-[var(--accent)] rounded-lg">
               <h4 class="text-sm font-semibold text-[var(--text-primary)] mb-1">Rename speakers</h4>
               <p class="text-xs text-[var(--text-muted)] mb-3">
-                Changes are saved to the transcript and minutes will be regenerated with the new names.
+                Voice samples are learned automatically — suggested names come from previous meetings. Changes are saved to the transcript and minutes are regenerated.
               </p>
               <div class="space-y-2 mb-3">
                 {#each uniqueSpeakers as label}
-                  <div class="flex items-center gap-3">
-                    <span class="w-2 h-2 rounded-full shrink-0" style="background-color: {colorFor(label)}"></span>
-                    <span class="text-xs font-mono text-[var(--text-muted)] w-24 shrink-0">{label}</span>
-                    <input
-                      type="text"
-                      bind:value={speakerEdits[label]}
-                      placeholder="e.g. Tom"
-                      class="flex-1 px-2 py-1 bg-[var(--bg-surface-hover)] border border-[var(--border-subtle)] rounded text-sm text-[var(--text-primary)]
-                             focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
-                    />
+                  {@const sugg = speakerSuggestions[label] || {}}
+                  {@const tier = sugg.suggestion_tier}
+                  {@const speechSec = sugg.speech_seconds || 0}
+                  {@const canCreateNew = speechSec > 30 && !tier}
+                  <div class="space-y-1.5">
+                    <div class="flex items-center gap-3">
+                      <span class="w-2 h-2 rounded-full shrink-0" style="background-color: {colorFor(label)}"></span>
+                      <span class="text-xs font-mono text-[var(--text-muted)] w-24 shrink-0">{label}</span>
+                      <input
+                        type="text"
+                        bind:value={speakerEdits[label]}
+                        placeholder="e.g. Tom"
+                        class="flex-1 px-2 py-1 bg-[var(--bg-surface-hover)] border border-[var(--border-subtle)] rounded text-sm text-[var(--text-primary)]
+                               focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
+                      />
+                      {#if tier === 'high' && sugg.suggested_name}
+                        <span
+                          class="inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded bg-green-500/15 text-green-400 border border-green-500/30 shrink-0"
+                          title="Matched {sugg.suggested_name} with {(sugg.suggestion_score * 100).toFixed(0)}% similarity"
+                        >
+                          suggested
+                        </span>
+                      {:else if tier === 'medium' && sugg.suggested_name}
+                        <span
+                          class="inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded bg-yellow-500/15 text-yellow-400 border border-yellow-500/30 shrink-0"
+                          title="Best guess: {sugg.suggested_name} ({(sugg.suggestion_score * 100).toFixed(0)}% similarity) — confirm or replace"
+                        >
+                          ? {sugg.suggested_name}
+                        </span>
+                      {/if}
+                    </div>
+                    {#if canCreateNew && !newPersonForms[label]?.open}
+                      <div class="ml-[9px] pl-6 text-[11px] text-[var(--text-muted)]">
+                        {Math.round(speechSec)}s of speech, no match.
+                        <button
+                          type="button"
+                          class="text-[var(--accent)] hover:underline"
+                          onclick={() => openNewPersonForm(label)}
+                        >
+                          + Create new person
+                        </button>
+                      </div>
+                    {/if}
+                    {#if newPersonForms[label]?.open}
+                      <div class="ml-[9px] pl-6 flex items-center gap-2">
+                        <input
+                          type="text"
+                          placeholder="Name"
+                          bind:value={newPersonForms[label].name}
+                          class="flex-1 px-2 py-1 bg-[var(--bg-surface-hover)] border border-[var(--border-subtle)] rounded text-xs text-[var(--text-primary)]
+                                 focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
+                        />
+                        <input
+                          type="email"
+                          placeholder="Email (optional)"
+                          bind:value={newPersonForms[label].email}
+                          class="flex-1 px-2 py-1 bg-[var(--bg-surface-hover)] border border-[var(--border-subtle)] rounded text-xs text-[var(--text-primary)]
+                                 focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
+                        />
+                        <button
+                          type="button"
+                          disabled={newPersonForms[label].saving}
+                          onclick={() => submitNewPerson(label)}
+                          class="px-2 py-1 bg-[var(--accent)] text-white text-xs rounded hover:opacity-90 disabled:opacity-50"
+                        >
+                          {newPersonForms[label].saving ? 'Saving…' : 'Add'}
+                        </button>
+                        <button
+                          type="button"
+                          onclick={() => closeNewPersonForm(label)}
+                          class="text-xs text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    {/if}
                   </div>
                 {/each}
               </div>

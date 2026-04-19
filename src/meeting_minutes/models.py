@@ -60,6 +60,11 @@ class SpeakerMapping(BaseModel):
     name: str | None = None
     email: str | None = None
     confidence: float = 0.0
+    # SPK-1: speaker centroid match, when available.
+    suggested_person_id: str | None = None
+    suggested_name: str | None = None
+    suggestion_score: float = 0.0
+    suggestion_tier: str | None = None  # 'high' | 'medium' | 'unknown'
 
 
 class TranscriptMetadata(BaseModel):

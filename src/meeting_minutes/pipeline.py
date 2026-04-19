@@ -94,6 +94,95 @@ class PipelineOrchestrator:
         session_factory = get_session_factory(f"sqlite:///{db_path}")
         return session_factory()
 
+    # -----------------------------------------------------------------------
+    # SPK-1: speaker identity
+    # -----------------------------------------------------------------------
+
+    def _spk1_process(
+        self,
+        *,
+        meeting_id: str,
+        diarize_engine,
+        diarization_result,
+    ) -> dict[str, dict]:
+        """Match diarization clusters against known person centroids and
+        persist unconfirmed voice samples for later confirmation.
+
+        Returns a ``{cluster_id: suggestion_dict}`` map suitable for the
+        transcript writer. Silently skips clusters with < 5 s of speech
+        and clusters the pipeline did not produce embeddings for (either
+        because the pyannote version is too old, or embeddings failed).
+        """
+        from meeting_minutes.system1 import speaker_identity as si
+        from meeting_minutes.system3.db import get_session_factory
+
+        embeddings = getattr(diarize_engine, "last_cluster_embeddings", {}) or {}
+        if not embeddings or not diarization_result or not diarization_result.segments:
+            return {}
+
+        db_path = resolve_db_path(self._config.storage.sqlite_path)
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        session_factory = get_session_factory(f"sqlite:///{db_path}")
+        session = session_factory()
+
+        suggestions_by_cluster: dict[str, dict] = {}
+        try:
+            # Drop clusters below the minimum speech threshold — they get no
+            # sample row and no suggestion.
+            eligible: dict[str, "np.ndarray"] = {}  # type: ignore[name-defined]
+            for cluster_id, vec in embeddings.items():
+                if si.min_speech_duration_ok(
+                    diarization_result.segments, cluster_id,
+                ):
+                    eligible[cluster_id] = vec
+
+            if not eligible:
+                return {}
+
+            matches = si.match_clusters(session, eligible)
+
+            for cluster_id, vec in eligible.items():
+                match = matches.get(cluster_id)
+                if match and match.person_id is not None:
+                    # Persist an *unconfirmed* sample under the suggested
+                    # person; confirm_sample() flips the flag once the
+                    # user accepts.
+                    try:
+                        si.write_sample(
+                            session,
+                            person_id=match.person_id,
+                            meeting_id=meeting_id,
+                            cluster_id=cluster_id,
+                            embedding=vec,
+                            confirmed=False,
+                        )
+                    except Exception as w_exc:
+                        self._logger.warning(
+                            "Could not write unconfirmed sample for cluster %s: %s",
+                            cluster_id, w_exc,
+                        )
+
+                if match is not None:
+                    suggestions_by_cluster[cluster_id] = {
+                        "suggested_person_id": match.person_id,
+                        "suggested_name": match.person_name,
+                        "suggestion_score": round(match.score, 4),
+                        "suggestion_tier": match.tier,
+                    }
+
+            if suggestions_by_cluster:
+                n_high = sum(1 for s in suggestions_by_cluster.values() if s["suggestion_tier"] == "high")
+                n_med = sum(1 for s in suggestions_by_cluster.values() if s["suggestion_tier"] == "medium")
+                if n_high or n_med:
+                    _console(
+                        f"  ✓ Speaker suggestions: {n_high} high-confidence, {n_med} medium-confidence",
+                        "green",
+                    )
+        finally:
+            session.close()
+
+        return suggestions_by_cluster
+
     @contextmanager
     def _track_stage(self, meeting_id: str, stage: Stage):
         """Wrap a stage: mark running, mark succeeded on clean return, mark
@@ -284,6 +373,8 @@ class PipelineOrchestrator:
 
         # Diarize
         diarization_result = None
+        speaker_suggestions: dict[str, dict] = {}
+        diarize_engine: DiarizationEngine | None = None
         if self._config.diarization.enabled:
             _console(f"  Speaker diarization...", "yellow")
             self._logger.info("Speaker diarization starting (engine=%s)", self._config.diarization.engine)
@@ -323,6 +414,17 @@ class PipelineOrchestrator:
                                     _console(f"  ✓ Mapped speakers: {', '.join(f'{k}→{v}' for k,v in mapping.items())}", "green")
                         except Exception as exc:
                             self._logger.warning("Could not apply user speaker names: %s", exc)
+
+                # SPK-1: speaker centroid matching + unconfirmed sample persistence.
+                try:
+                    speaker_suggestions = self._spk1_process(
+                        meeting_id=meeting_id,
+                        diarize_engine=diarize_engine,
+                        diarization_result=diarization_result,
+                    )
+                except Exception as spk_exc:
+                    self._logger.warning("SPK-1 processing failed: %s — continuing without suggestions", spk_exc)
+                    _console(f"  ⚠ Speaker identity step skipped: {spk_exc}", "dim")
             except Exception as exc:
                 self._logger.warning("Diarization failed: %s — continuing without", exc)
                 _console(f"  ⚠ Diarization failed: {exc} — continuing without", "yellow")
@@ -351,6 +453,7 @@ class PipelineOrchestrator:
             transcription=result,
             diarization=diarization_result,
             output_dir=self._transcripts_dir,
+            speaker_suggestions=speaker_suggestions,
         )
 
         _console(f"  ✓ Transcript saved: {transcript_path.name}", "green")
@@ -780,6 +883,17 @@ class PipelineOrchestrator:
             except Exception as exc:
                 _console(f"  [yellow]Could not apply user speaker names: {exc}[/yellow]")
 
+        # SPK-1: recompute suggestions on re-diarization.
+        spk1_suggestions: dict[str, dict] = {}
+        try:
+            spk1_suggestions = self._spk1_process(
+                meeting_id=meeting_id,
+                diarize_engine=diarize_engine,
+                diarization_result=diarization_result,
+            )
+        except Exception as spk_exc:
+            self._logger.warning("SPK-1 processing failed during rediarize: %s", spk_exc)
+
         # Load existing transcript JSON
         with open(transcript_path, "r", encoding="utf-8") as f:
             transcript_data = _json.load(f)
@@ -791,13 +905,23 @@ class PipelineOrchestrator:
             segment_objs, diarization_result
         )
 
-        # Build new speaker list
+        # Build new speaker list — attach SPK-1 suggestions if present.
         seen_labels: set[str] = set()
         new_speakers = []
         for d_seg in diarization_result.segments:
             if d_seg.speaker not in seen_labels:
                 seen_labels.add(d_seg.speaker)
-                new_speakers.append({"label": d_seg.speaker, "name": None, "email": None, "confidence": 0.0})
+                sugg = spk1_suggestions.get(d_seg.speaker, {}) if spk1_suggestions else {}
+                new_speakers.append({
+                    "label": d_seg.speaker,
+                    "name": None,
+                    "email": None,
+                    "confidence": 0.0,
+                    "suggested_person_id": sugg.get("suggested_person_id"),
+                    "suggested_name": sugg.get("suggested_name"),
+                    "suggestion_score": float(sugg.get("suggestion_score", 0.0)),
+                    "suggestion_tier": sugg.get("suggestion_tier"),
+                })
 
         # Update the transcript JSON in place
         transcript_data["speakers"] = new_speakers
