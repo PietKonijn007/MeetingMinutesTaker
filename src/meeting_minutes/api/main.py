@@ -40,6 +40,29 @@ async def lifespan(app: FastAPI):
                 "Reset %d interrupted pipeline stages across %d meetings",
                 len(reset), len(meetings),
             )
+
+        # HLT-1: run the full health check and log results. Do NOT
+        # auto-repair — user opts in via `mm repair` or the UI banner.
+        try:
+            from meeting_minutes.health import check_all
+
+            report = check_all(session, config)
+            health_logger = logging.getLogger("meeting_minutes.health")
+            if report.overall_status == "ok":
+                health_logger.info("Startup health check: all %d checks OK", len(report.checks))
+            else:
+                health_logger.warning(
+                    "Startup health check: overall=%s", report.overall_status,
+                )
+                for c in report.checks:
+                    if c.status != "ok":
+                        health_logger.warning(
+                            "  [%s] %s: %s", c.status, c.name, c.detail,
+                        )
+        except Exception as exc:  # noqa: BLE001
+            logging.getLogger("meeting_minutes.health").warning(
+                "Startup health check failed to run: %s", exc,
+            )
     finally:
         session.close()
 
@@ -79,6 +102,7 @@ from meeting_minutes.api.routes.retention import router as retention_router  # n
 from meeting_minutes.api.routes.security import router as security_router  # noqa: E402
 from meeting_minutes.api.routes.chat import router as chat_router  # noqa: E402
 from meeting_minutes.api.routes.pipeline import router as pipeline_router  # noqa: E402
+from meeting_minutes.api.routes.health import router as health_router  # noqa: E402
 from meeting_minutes.api.ws import router as ws_router  # noqa: E402
 
 app.include_router(meetings_router)
@@ -96,6 +120,7 @@ app.include_router(retention_router)
 app.include_router(security_router)
 app.include_router(chat_router)
 app.include_router(pipeline_router)
+app.include_router(health_router)
 app.include_router(ws_router)
 
 # ── Static files (Svelte SPA) ────────────────────────────────────────────

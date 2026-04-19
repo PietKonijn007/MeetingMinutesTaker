@@ -581,6 +581,79 @@ def resume_cmd(
 
 
 # ---------------------------------------------------------------------------
+# mm repair (HLT-1)
+# ---------------------------------------------------------------------------
+
+
+_HEALTH_STATUS_STYLE = {
+    "ok": "green",
+    "warn": "yellow",
+    "fail": "red",
+}
+
+
+def _render_health_table(report) -> Table:
+    table = Table(title=f"Health check — overall: {report.overall_status.upper()}")
+    table.add_column("Check")
+    table.add_column("Status")
+    table.add_column("Detail", overflow="fold")
+    table.add_column("Fix hint", overflow="fold")
+
+    for r in report.checks:
+        style = _HEALTH_STATUS_STYLE.get(r.status, "")
+        status_cell = f"[{style}]{r.status}[/{style}]" if style else r.status
+        table.add_row(r.name, status_cell, r.detail, r.fix_hint or "")
+    return table
+
+
+@app.command("repair")
+def repair_cmd(
+    dry_run: bool = typer.Option(False, "--dry-run", help="Print the plan, do not write."),
+    check: Optional[str] = typer.Option(None, "--check", help="Repair only this check name."),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip the confirmation prompt."),
+):
+    """Run startup health checks and optionally repair failing ones."""
+    from meeting_minutes.health import check_all, repair as run_repair
+
+    config = _load_config()
+    session = _get_db_session(config)
+
+    try:
+        report = check_all(session, config)
+        console.print(_render_health_table(report))
+
+        repairable = [r for r in report.checks if r.repairable and r.status != "ok"]
+        if check is not None:
+            repairable = [r for r in repairable if r.name == check]
+
+        if not repairable:
+            console.print("[dim]Nothing to repair.[/dim]")
+            return
+
+        if dry_run:
+            log = run_repair(report, session, config, dry_run=True, only=check)
+            console.print("[bold]Dry-run plan:[/bold]")
+            for a in log.actions:
+                console.print(f"  [{a['action']}] {a['check']}: {a['detail']}")
+            return
+
+        if not yes:
+            names = ", ".join(r.name for r in repairable)
+            confirmed = typer.confirm(f"Run repair for: {names}?")
+            if not confirmed:
+                console.print("Aborted.")
+                return
+
+        log = run_repair(report, session, config, dry_run=False, only=check)
+        for a in log.actions:
+            style = "green" if a["action"] not in ("error", "noop") else "yellow"
+            console.print(f"  [{style}][{a['action']}][/{style}] {a['check']}: {a['detail']}")
+        console.print("[green]Repair complete.[/green]")
+    finally:
+        session.close()
+
+
+# ---------------------------------------------------------------------------
 # mm init
 # ---------------------------------------------------------------------------
 
