@@ -180,6 +180,8 @@ mm actions complete <action_id>                   # Mark done
 | `mm rediarize <id>` | Re-run speaker diarization on existing audio (skips transcription) |
 | `mm status <id>` | Show per-stage pipeline state for a meeting (capture → transcribe → diarize → generate → ingest → embed → export) |
 | `mm resume <id>` | Resume pipeline from the first non-succeeded stage (supports `--from-stage`, `--all`) |
+| `mm doctor` | Run ten first-run diagnostic checks (Python, ffmpeg, audio device, tokens, LLM reachability, DB, disk, GPU, models, sqlite-vec). Supports `--json`. Exits non-zero on any failure. |
+| `mm repair` | Run startup health checks and optionally rebuild derived indexes (FTS, embedding vectors, voice samples). Supports `--dry-run`, `--check=<name>`, `--yes`. |
 | `mm embed` | Generate semantic search embeddings for all meetings (run once to backfill) |
 | `mm embed <id>` | Embed a single meeting |
 | `mm delete <id>` | Delete meeting and all associated data |
@@ -204,6 +206,20 @@ Every meeting flows through a seven-stage pipeline: `capture` → `transcribe` �
 - Retention cleanup preserves audio for meetings whose pipeline has not reached a terminal state, so `mm resume` remains possible until the meeting's final stages succeed or are skipped.
 
 REST equivalents: `GET /api/meetings/:id/pipeline`, `POST /api/meetings/:id/resume`, `GET /api/pipeline/interrupted`.
+
+## First-run diagnostics (`/onboarding`)
+
+On first launch with an empty database, `mm serve` routes the browser to `/onboarding`, which calls `GET /api/doctor` and renders each of the ten checks as a green/yellow/red card with a copy-paste fix command. Every failing check has its own **Retry** button so you can fix the underlying issue and re-check without leaving the page. From the command line, `mm doctor` prints the same table; add `--json` for programmatic consumption.
+
+## Disk-space preflight (DSK-1)
+
+Before starting a recording the web UI calls `GET /api/recording/preflight?planned_minutes=<n>` and compares the estimated FLAC size against the free space on the `data_dir` partition. The tier drives a warning modal:
+
+- **green** — silent start
+- **yellow** / **orange** — warning dialog with the twenty oldest audio files eligible for safe deletion (only meetings whose pipeline has reached a terminal state appear), and a "Start anyway" button
+- **red** — same cleanup UI but requires an explicit "Yes, I understand" double-confirm
+
+A watchdog thread polls free disk space every 30 seconds while recording and triggers a graceful stop if free space drops below half of the remaining estimate — this guarantees a valid (possibly truncated) FLAC rather than a corrupted tail. `mm record start` in non-interactive mode (launchd) refuses red-tier preflights; interactive shells always let you override with `--force`.
 
 ## Web UI
 
