@@ -40,8 +40,28 @@
     }
   }
 
+  async function maybeRedirectToOnboarding() {
+    // ONB-1 — only on the root path and only if the user hasn't dismissed
+    // onboarding this session.
+    if (typeof window === 'undefined') return;
+    if (window.location.pathname !== '/') return;
+    try {
+      if (sessionStorage.getItem('mm_onboarding_seen') === '1') return;
+    } catch {}
+    try {
+      const stats = await fetch('/api/stats').then(r => r.ok ? r.json() : null);
+      if (stats && (stats.total_meetings === 0 || stats.meetings_total === 0)) {
+        try { sessionStorage.setItem('mm_onboarding_seen', '1'); } catch {}
+        goto('/onboarding');
+      }
+    } catch {
+      // silent — the onboarding redirect is best-effort
+    }
+  }
+
   onMount(() => {
     recording.connect();
+    maybeRedirectToOnboarding();
 
     const mq = window.matchMedia('(max-width: 1024px)');
     isMobile = mq.matches;
