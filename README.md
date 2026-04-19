@@ -184,6 +184,10 @@ mm actions complete <action_id>                   # Mark done
 | `mm repair` | Run startup health checks and optionally rebuild derived indexes (FTS, embedding vectors, voice samples). Supports `--dry-run`, `--check=<name>`, `--yes`. |
 | `mm embed` | Generate semantic search embeddings for all meetings (run once to backfill) |
 | `mm embed <id>` | Embed a single meeting |
+| `mm series detect` | Detect recurring-meeting series (REC-1) and upsert them |
+| `mm series list` | List all detected series with cadence + member count |
+| `mm series show <id>` | Show detail for a single series |
+| `mm stats rebuild` | Rebuild the topic-clusters cache used by the Stats → Topics panel (ANA-1) |
 | `mm delete <id>` | Delete meeting and all associated data |
 | `mm cleanup` | Run retention policy cleanup (delete expired data) |
 | `mm generate-key` | Generate a new encryption key for at-rest encryption |
@@ -231,9 +235,32 @@ There is no separate "enroll your voice" step. Speaker centroids are learned fro
 
 Corrections are handled explicitly: relabeling a cluster from Jon to Sarah flips Jon's prior sample to `confirmed=false` so it stops contributing to his centroid. Clusters with less than 5 seconds of speech produce no sample at all (too noisy). Only the 20 most recent confirmed samples contribute to any given centroid, so representations stay current even as a voice changes over time. Samples live in `person_voice_samples` and are deleted by `ON DELETE CASCADE` when the person or meeting is removed — nothing extra to configure for retention.
 
+## Recurring-meeting series (REC-1)
+
+Meetings that share the exact attendee set and meeting type across 3+ instances are grouped into a **series** — think "weekly 1:1 with Jon" or "biweekly planning with the core team". Detection runs automatically after every pipeline completion (best-effort, never breaks the pipeline) and on demand via `mm series detect` or `POST /api/series/detect`. The cadence is classified from the median inter-meeting interval (weekly / biweekly / monthly / irregular).
+
+Browse series at `/series` — click through to `/series/:id` for:
+- A chronological timeline of all member meetings
+- Cross-meeting **open action items** with a "first seen" meeting link
+- **Recent decisions** across every instance
+- **Recurring topics** (parking-lot entries + discussion points that appear in ≥ 2 members)
+
+Every meeting detail page shows a "Part of series: {title} →" pill when the meeting belongs to a series. Storage: `meeting_series` + `meeting_series_members`.
+
+## Cross-meeting analytics (ANA-1)
+
+The Stats page adds four tabbed panels backed by pure SQL (no new persistent storage except the topic-cluster cache):
+
+1. **Commitments** — per-person assigned / completed / overdue action-item counts over a rolling 90-day window, with a 12-week completion sparkline.
+2. **Topics** — embedding clusters of `discussion_point` and `parking_lot` chunks that show up in ≥ 3 meetings **without** a decision whose embedding is close (cosine ≥ 0.7). Backed by a `topic_clusters_cache` table rebuilt lazily on page load if older than 24 h or manually via `mm stats rebuild`. Degrades gracefully to an empty state when `sqlite-vec` isn't loadable.
+3. **Sentiment** — numeric timeseries using the mapping `positive=1.0, constructive=0.7, neutral=0.5, tense=0.3, negative=0.0`. Supports per-person or per-type filters via query params.
+4. **Effectiveness** — per meeting type, % of meetings with each `meeting_effectiveness` attribute set (clear agenda, decisions made, actions assigned, unresolved items).
+
+Every endpoint also accepts a `series=<series_id>` query parameter to scope the analytics to a single series's members.
+
 ## Web UI
 
-A browser-based interface built with Svelte + Tailwind CSS at `localhost:8080` with calendar view, action items, decisions, people, stats, recording controls, template manager, and settings.
+A browser-based interface built with Svelte + Tailwind CSS at `localhost:8080` with calendar view, action items, decisions, people, **series** (REC-1), stats (with four ANA-1 tabbed panels), recording controls, template manager, and settings.
 
 ```bash
 # Start the server
@@ -255,7 +282,7 @@ cd web && npm install && npm run dev   # Svelte on :3000, proxies /api → :8080
 
 ## REST API
 
-The backend is a FastAPI application serving at `:8080` covering meetings, search, action items, decisions, people (including `POST /api/persons` for inline creation), stats, recording, speaker suggestions (`GET /api/meetings/:id/speaker-suggestions`), and configuration. Auto-generated interactive API documentation is available at [http://localhost:8080/docs](http://localhost:8080/docs).
+The backend is a FastAPI application serving at `:8080` covering meetings, search, action items, decisions, people (including `POST /api/persons` for inline creation), stats, recording, speaker suggestions (`GET /api/meetings/:id/speaker-suggestions`), series (`GET /api/series`, `GET /api/series/:id`, `POST /api/series/detect`, `GET /api/meetings/:id/series`), analytics panels (`GET /api/stats/commitments`, `/api/stats/sentiment`, `/api/stats/effectiveness`, `/api/stats/unresolved-topics`), and configuration. Auto-generated interactive API documentation is available at [http://localhost:8080/docs](http://localhost:8080/docs).
 
 ## Configuration
 
