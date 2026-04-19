@@ -20,6 +20,9 @@ class DiarizationEngine:
     def __init__(self, config: DiarizationConfig) -> None:
         self._config = config
         self._pipeline = None
+        # Populated by ``diarize()`` when the underlying pipeline exposes
+        # per-cluster speaker embeddings (SPK-1).
+        self._last_cluster_embeddings: dict = {}
 
     def _load_pipeline(self):
         if self._pipeline is not None:
@@ -69,7 +72,16 @@ class DiarizationEngine:
         return self._pipeline
 
     def diarize(self, audio_path: Path) -> DiarizationResult:
-        """Identify speakers. Returns speaker segments with labels."""
+        """Identify speakers. Returns speaker segments with labels.
+
+        Side effect: if the underlying pipeline emits per-cluster speaker
+        embeddings (pyannote >= 4 on DiarizeOutput.speaker_embeddings), they
+        are stashed on ``self._last_cluster_embeddings`` for the caller to
+        persist via the SPK-1 pipeline. Callers that don't care can ignore
+        this attribute.
+        """
+        self._last_cluster_embeddings: dict[str, "np.ndarray"] = {}  # type: ignore[name-defined]
+
         if not self._config.enabled:
             return DiarizationResult(
                 meeting_id="",
@@ -129,10 +141,15 @@ class DiarizationEngine:
 
         segments: list[DiarizationSegment] = []
         speakers: set[str] = set()
+        # Track raw-label → normalized-label so we can align embeddings
+        # (which are keyed by pyannote's original label order).
+        raw_to_norm: dict[str, str] = {}
 
         for turn, _, speaker in annotation.itertracks(yield_label=True):
-            # Ensure SPEAKER_XX format
-            label = self._normalize_label(speaker)
+            raw = str(speaker)
+            if raw not in raw_to_norm:
+                raw_to_norm[raw] = self._normalize_label(raw)
+            label = raw_to_norm[raw]
             segments.append(
                 DiarizationSegment(
                     start=turn.start,
@@ -142,11 +159,35 @@ class DiarizationEngine:
             )
             speakers.add(label)
 
+        # Surface per-cluster embeddings if the pipeline produced them
+        # (pyannote >= 4 DiarizeOutput). We rebuild a normalized-label map
+        # via the same annotation so the SPK-1 layer doesn't need to know
+        # about pyannote's raw label strings.
+        try:
+            from meeting_minutes.system1.speaker_identity import (
+                extract_cluster_embeddings,
+            )
+            raw_embeddings = extract_cluster_embeddings(diarization)
+            if raw_embeddings:
+                self._last_cluster_embeddings = {
+                    raw_to_norm.get(raw, self._normalize_label(raw)): vec
+                    for raw, vec in raw_embeddings.items()
+                }
+        except Exception as embed_exc:  # best-effort; never block diarization
+            logger.warning("Could not extract cluster embeddings: %s", embed_exc)
+
         return DiarizationResult(
             meeting_id="",
             segments=segments,
             num_speakers=len(speakers),
         )
+
+    @property
+    def last_cluster_embeddings(self) -> dict:
+        """Per-cluster (normalized SPEAKER_XX) mean embeddings from the
+        most recent ``diarize()`` call. Empty if the pipeline did not
+        surface embeddings. Used by the SPK-1 pipeline layer."""
+        return dict(self._last_cluster_embeddings)
 
     @staticmethod
     def apply_speaker_names(
