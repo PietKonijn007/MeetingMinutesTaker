@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from sqlalchemy import (
+    Boolean,
     CheckConstraint,
     Column,
     DateTime,
@@ -10,9 +11,11 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    LargeBinary,
     String,
     Table,
     Text,
+    UniqueConstraint,
     event,
 )
 from sqlalchemy.orm import DeclarativeBase, Session, relationship, sessionmaker
@@ -115,6 +118,48 @@ class PersonORM(Base):
     person_id = Column(String, primary_key=True)
     name = Column(String)
     email = Column(String, unique=True, nullable=True)
+
+    voice_samples = relationship(
+        "VoiceSampleORM", back_populates="person", cascade="all, delete-orphan"
+    )
+
+
+class VoiceSampleORM(Base):
+    """Per-cluster speaker embedding captured from a meeting (SPK-1).
+
+    Stores ``np.float32`` vectors as raw bytes; deserialize with
+    ``np.frombuffer(row.embedding, dtype=np.float32)``. A sample is
+    ``confirmed=True`` once the user accepts the auto-label or saves a manual
+    label, and only confirmed samples contribute to the person's centroid.
+    """
+    __tablename__ = "person_voice_samples"
+
+    sample_id = Column(Integer, primary_key=True, autoincrement=True)
+    person_id = Column(
+        String,
+        ForeignKey("persons.person_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    meeting_id = Column(
+        String,
+        ForeignKey("meetings.meeting_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    cluster_id = Column(String, nullable=False)
+    embedding = Column(LargeBinary, nullable=False)
+    embedding_dim = Column(Integer, nullable=False)
+    confirmed = Column(Boolean, nullable=False, default=False)
+    created_at = Column(DateTime, nullable=False)
+
+    person = relationship("PersonORM", back_populates="voice_samples")
+
+    __table_args__ = (
+        UniqueConstraint(
+            "meeting_id", "cluster_id", "person_id",
+            name="uq_voice_samples_meeting_cluster_person",
+        ),
+        Index("idx_voice_samples_person", "person_id", "confirmed"),
+    )
 
 
 class EmbeddingChunkORM(Base):
