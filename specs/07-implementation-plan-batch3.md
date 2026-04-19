@@ -8,11 +8,25 @@ Related documents:
 - `docs/SECURITY.md` — contains six **proposed** security enhancements (P-1 … P-6) deliberately **not** scheduled for implementation in this batch.
 - `specs/05-future-roadmap.md` — existing roadmap; items here replace prior ad-hoc notes on speaker enrollment (N2), analytics (A1), recurring meetings (N9) and health check (R5) with more concrete designs.
 
+## Shipped Status
+
+| Phase | Feature(s) | Status | PR |
+|---|---|---|---|
+| 0 | PIP-1 | **Shipped** | [#3](https://github.com/PietKonijn007/MeetingMinutesTaker/pull/3) |
+| 1 | HLT-1 · DSK-1 · ONB-1 | **Shipped** | [#4](https://github.com/PietKonijn007/MeetingMinutesTaker/pull/4) |
+| 2 | SPK-1 | **Shipped** | [#5](https://github.com/PietKonijn007/MeetingMinutesTaker/pull/5) |
+| 3 | REC-1 · ANA-1 | **Shipped** | [#6](https://github.com/PietKonijn007/MeetingMinutesTaker/pull/6) |
+| 4 | BRF-1 · NOT-1 · EXP-1 | Planned | — |
+
+Individual feature sections below are tagged with a **Status** line; any deviations from the original spec that landed in the shipped code are noted inline.
+
 ---
 
 ## Feature Specifications
 
 ### ONB-1: First-Run Onboarding Wizard (`mm doctor`)
+
+**Status:** Shipped in [PR #4](https://github.com/PietKonijn007/MeetingMinutesTaker/pull/4).
 
 **Problem.** Setup has three independent gates — Anthropic API key, HuggingFace token, BlackHole aggregate device — each with its own failure mode. Errors currently surface only when the user tries to record, far from the root cause.
 
@@ -51,6 +65,8 @@ Related documents:
 ---
 
 ### SPK-1: Passive Speaker Centroid Learning (Modified from prior N2 voice enrollment)
+
+**Status:** Shipped in [PR #5](https://github.com/PietKonijn007/MeetingMinutesTaker/pull/5). Implementation notes: pyannote 4.0.4's `SpeakerDiarization.apply()` exposes `speaker_embeddings` directly aligned with `labels()`, so no separate `Inference` run is needed. `person_id` is a UUID `String` throughout (matches existing schema, not the `INTEGER` placeholder shown in the spec below). Backfilling centroids from pre-SPK-1 meetings is not yet automated — see the "Unshipped follow-ups" appendix at the bottom.
 
 **Change from earlier roadmap.** Replaces the 30-second explicit enrollment flow in prior N2. No dedicated recording step: centroids are **built from real meeting audio** and **improve after every meeting**. This produces better acoustic match (same mics, codecs, rooms) and zero setup friction.
 
@@ -110,6 +126,8 @@ CREATE INDEX idx_voice_samples_person ON person_voice_samples(person_id, confirm
 
 ### NOT-1: Desktop Notifications on Pipeline Events
 
+**Status:** Planned (Phase 4).
+
 **Problem.** Pipeline takes ~2 minutes; users cannot tell when it's done without watching the browser tab.
 
 **Description.** macOS desktop notifications fire on pipeline state transitions:
@@ -134,6 +152,8 @@ Clicking the notification opens the web UI to the meeting (via a `mm://meeting/{
 ---
 
 ### BRF-1: Pre-Meeting Briefing Page (with inline record start)
+
+**Status:** Planned (Phase 4).
 
 **Modification from initial proposal.** The briefing page is **also** the launch point for the next meeting — the user can type speaker names, load context, and hit **Start recording** without leaving the page. This merges the current `/record` flow into `/brief` for recurring-partner meetings.
 
@@ -175,6 +195,8 @@ Clicking the notification opens the web UI to the meeting (via a `mm://meeting/{
 ---
 
 ### PIP-1: Resumable Pipeline with Checkpoints
+
+**Status:** Shipped in [PR #3](https://github.com/PietKonijn007/MeetingMinutesTaker/pull/3). Implementation notes: `PipelineStageORM` lives in `system3/db.py` (where all SQLAlchemy ORM lives), not `models.py` (Pydantic only). `resume_from` treats `CAPTURE` as a no-op inside resume (audio can't be programmatically re-recorded); `TRANSCRIBE` + `DIARIZE` re-run together since they share one pass. API `POST /resume` uses a simple background task with a `job_ref` string — no separate job table.
 
 **Problem.** Pipeline is implicitly resumable today (artifacts live on disk), but the state machine is not explicit. If generation fails twice, the user has to know the right incantation (`mm generate` vs `mm reprocess --from=<stage>`). Crash during stage N leaves no record that stage N was interrupted.
 
@@ -236,6 +258,8 @@ pipeline_stages (
 
 ### DSK-1: Disk-Space Preflight with Advisory Cleanup (Modified)
 
+**Status:** Shipped in [PR #4](https://github.com/PietKonijn007/MeetingMinutesTaker/pull/4). Implementation notes: added `mm record start --planned-minutes` and `--force` CLI flags (not in original spec) to wire the non-interactive red-tier refusal path. Watchdog daemon thread is not joined in `stop()` — relies on process exit.
+
 **Modification from initial proposal.** Do **not** refuse to start recording at the 1.2× margin. Instead, **surface a warning with actionable suggestions** — the user always remains in control.
 
 **Problem.** `mm record start` happily fills the disk with FLAC; if free space runs out mid-recording, `sounddevice` errors can corrupt the tail of the audio file.
@@ -280,6 +304,8 @@ pipeline_stages (
 
 ### HLT-1: Startup Health Check + Self-Repair
 
+**Status:** Shipped in [PR #4](https://github.com/PietKonijn007/MeetingMinutesTaker/pull/4). Implementation notes: `mm repair` rebuilds `meetings_fts` by drop+recreate (destructive if a user ever extended FTS schema manually; guarded by `--yes` prompt). UI banner consuming `/api/health/full` was deliberately deferred to a follow-up.
+
 **Problem.** Corrupted SQLite (rare; happens on unclean shutdown) or drifted indices (FTS5 / sqlite-vec out of sync with main tables after an interrupted migration) are silent until a query returns wrong results.
 
 **Description.** On `mm serve` startup (and as a CLI command `mm repair [--dry-run]`):
@@ -317,6 +343,8 @@ pipeline_stages (
 ---
 
 ### ANA-1: Cross-Meeting Analytics Dashboard
+
+**Status:** Shipped in [PR #6](https://github.com/PietKonijn007/MeetingMinutesTaker/pull/6). Implementation notes: lives in new `stats_analytics.py` module (existing `analytics.py` already holds talk-time analytics). Topic-clusters cache (`topic_clusters_cache` table) was shipped as part of migration 005 rather than left "optional" as the spec suggested — keeps the Panel 2 loader simple. Cluster `topic_summary` is the first chunk's text truncated to 140 chars; LLM-generated summaries are a documented follow-up.
 
 **Problem.** The existing `/stats` page has basic counts (meetings by type/month). The valuable longitudinal views — per-person commitment completion, recurring unresolved topics, sentiment trends, meeting effectiveness trends — are not there, despite the underlying data being present.
 
@@ -362,6 +390,8 @@ pipeline_stages (
 ---
 
 ### REC-1: Recurring-Meeting Threading
+
+**Status:** Shipped in [PR #6](https://github.com/PietKonijn007/MeetingMinutesTaker/pull/6). Implementation notes: v1 requires exact attendee-set match rather than 80% overlap (simpler path per spec guidance; 80% overlap is a follow-up). No cron scheduler — detection fires best-effort after each pipeline completion and on-demand via `mm series detect` / `POST /api/series/detect`.
 
 **Problem.** The weekly 1:1 with Jon is 20 separate rows in `meetings` today. No way to view "Jon's 1:1 series."
 
@@ -420,6 +450,8 @@ meeting_series_members (
 
 ### EXP-1: Export to PDF and DOCX
 
+**Status:** Planned (Phase 4).
+
 **Problem.** Obsidian export is great for Obsidian users. Sharing with non-technical stakeholders means copy-pasting markdown into Word.
 
 **Description.** One-click export per meeting to PDF or DOCX, plus CLI variants.
@@ -460,28 +492,26 @@ meeting_series_members (
 
 ## Implementation Plan
 
-### Phase 0 — Foundation
+### Phase 0 — Foundation ✅ Shipped (PR #3)
 
-Ordered to unblock downstream features.
+1. **PIP-1** ✅ — Pipeline stage state machine. Ships first because HLT-1, DSK-1, and error-surfacing in the UI read from it. *5–7 h.*
 
-1. **PIP-1** — Pipeline stage state machine. Ships first because HLT-1, DSK-1, and error-surfacing in the UI read from it. *5–7 h.*
+### Phase 1 — Stability & Diagnostics ✅ Shipped (PR #4)
 
-### Phase 1 — Stability & Diagnostics
+2. **HLT-1** ✅ — Startup health check + `mm repair`. Gives us confidence to ship migrations for SPK-1, REC-1 later. *3–4 h.*
+3. **DSK-1** ✅ — Disk-space preflight + advisory cleanup + mid-recording watchdog. Closes the single worst failure mode. *3–4 h.*
+4. **ONB-1** ✅ — `mm doctor` + `/onboarding`. Lands after HLT-1 because it reuses the same check infrastructure. *4–6 h.*
 
-2. **HLT-1** — Startup health check + `mm repair`. Gives us confidence to ship migrations for SPK-1, REC-1 later. *3–4 h.*
-3. **DSK-1** — Disk-space preflight + advisory cleanup + mid-recording watchdog. Closes the single worst failure mode. *3–4 h.*
-4. **ONB-1** — `mm doctor` + `/onboarding`. Lands after HLT-1 because it reuses the same check infrastructure. *4–6 h.*
+### Phase 2 — Speaker Identity ✅ Shipped (PR #5)
 
-### Phase 2 — Speaker Identity
+5. **SPK-1** ✅ — Passive speaker centroid learning. Migration + surface embeddings + match + confirm. *6–8 h.*
 
-5. **SPK-1** — Passive speaker centroid learning. Migration + surface embeddings + match + confirm. *6–8 h.*
+### Phase 3 — Analytics & Threading ✅ Shipped (PR #6)
 
-### Phase 3 — Analytics & Threading
+6. **REC-1** ✅ — Recurring-meeting threading. Detector (best-effort per pipeline + on-demand) + series views. *6–8 h.*
+7. **ANA-1** ✅ — Cross-meeting analytics. Lands after REC-1 so the analytics panels can also surface series-level aggregates. *6–8 h.*
 
-6. **REC-1** — Recurring-meeting threading. Nightly detector + series views. *6–8 h.*
-7. **ANA-1** — Cross-meeting analytics. Lands after REC-1 so the analytics panels can also surface series-level aggregates. *6–8 h.*
-
-### Phase 4 — User Experience
+### Phase 4 — User Experience (Planned)
 
 8. **BRF-1** — Pre-meeting briefing page + inline record start. Builds on REC-1 for the "your series with X" card. *5–7 h.*
 9. **NOT-1** — Desktop notifications. Quickly. *2 h.*
@@ -489,11 +519,11 @@ Ordered to unblock downstream features.
 
 ### Phase 5 — Documentation
 
-11. Update `README.md` — new CLI commands (`mm doctor`, `mm resume`, `mm repair`, `mm series`, `mm export`), new pages (`/onboarding`, `/brief`, `/series`), new config keys.
-12. Update `docs/USER_GUIDE.md` — onboarding walkthrough, briefing workflow, series navigation, export options.
+11. Update `README.md` — new CLI commands (`mm doctor`, `mm resume`, `mm repair`, `mm series`, `mm export`), new pages (`/onboarding`, `/brief`, `/series`), new config keys. *Rolling — kept in sync per phase.*
+12. Update `docs/USER_GUIDE.md` — onboarding walkthrough, briefing workflow, series navigation, export options. *Batches 0–3 documented in the post-Phase-3 docs sweep.*
 13. Update `docs/SECURITY.md` — cross-link the P-1 … P-6 proposed enhancements (already added in Batch 3; see Proposed Enhancements section).
 
-**Total estimated effort:** 45–60 hours.
+**Total estimated effort:** 45–60 hours. **Spent so far (Phases 0–3):** ~28–37 h.
 
 ### Dependencies Summary
 
@@ -528,3 +558,32 @@ Each feature should land with:
 - Manual smoke test documented in the PR description (specific UI flow to click through).
 
 No end-to-end audio-through-LLM tests are required for this batch — that harness is deferred (was B2 in the proposal discussion, not selected here).
+
+---
+
+## Appendix — Unshipped Follow-Ups Surfaced During Batches 0–3
+
+Items identified during implementation of Phases 0–3 but deliberately left for separate PRs. Not part of Batch 3 Phase 4.
+
+### Pipeline
+- **Front-end status stepper component wired to `/api/meetings/:id/pipeline`.** Backend is ready; UI banner for interrupted pipelines is not yet surfaced.
+- **Unified session factory** inside `PipelineOrchestrator._track_stage` (currently opens short-lived sessions per call).
+- **DIARIZE becomes its own tracked stage** once SPK-1 matures — today it piggybacks on `run_transcription`.
+
+### Health & disk
+- **UI health banner** consuming `/api/health/full` — backend ships, frontend surface does not.
+- **`AudioCaptureEngine` signature cleanup:** the watchdog only activates when the full `AppConfig` is passed; legacy call sites passing only `config.recording` silently skip it.
+
+### Speaker identity (SPK-1)
+- **`mm spk1 backfill` command** — seed centroids from pre-SPK-1 meetings in one pass instead of the manual `mm rediarize` → click-save loop.
+- **FastAPI `TestClient` coverage** of the augmented `PATCH /transcript/speakers` and `GET /speaker-suggestions` endpoints (currently unit-tested at the function level only).
+- **Cold-start hint on `/onboarding`** explaining "the first ~3 meetings still need manual naming."
+- **Centroid caching** if users ever accumulate thousands of confirmed samples per person (not a concern at MVP scale).
+
+### Series & analytics (REC-1 / ANA-1)
+- **80%-attendee-overlap matching** for REC-1 — v1 requires exact set match. Needs a cluster-merge story.
+- **LLM-generated cluster summaries** for ANA-1 Panel 2 — current implementation truncates the first chunk's text to 140 chars.
+- **Nightly scheduler** — today REC-1 detection and `topic_clusters_cache` rebuild fire per-pipeline + on-demand; there is no cron daemon.
+
+### Security
+- **P-1 through P-6** in `docs/SECURITY.md` remain documented proposals, not implemented.
