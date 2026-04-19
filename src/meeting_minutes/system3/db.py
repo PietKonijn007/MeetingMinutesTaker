@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from sqlalchemy import (
+    CheckConstraint,
     Column,
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     String,
     Table,
@@ -155,6 +157,37 @@ class ChatMessageORM(Base):
     created_at = Column(DateTime)
 
     session = relationship("ChatSessionORM", back_populates="messages")
+
+
+class PipelineStageORM(Base):
+    """Per-(meeting, stage) state for the resumable pipeline (PIP-1)."""
+    __tablename__ = "pipeline_stages"
+
+    meeting_id = Column(
+        String,
+        ForeignKey("meetings.meeting_id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    stage = Column(String, primary_key=True)
+    status = Column(String, nullable=False)
+    started_at = Column(DateTime, nullable=True)
+    finished_at = Column(DateTime, nullable=True)
+    attempt = Column(Integer, nullable=False, default=1)
+    last_error = Column(Text, nullable=True)
+    last_error_at = Column(DateTime, nullable=True)
+    artifact_path = Column(Text, nullable=True)
+
+    __table_args__ = (
+        CheckConstraint(
+            "stage IN ('capture','transcribe','diarize','generate','ingest','embed','export')",
+            name="ck_pipeline_stages_stage",
+        ),
+        CheckConstraint(
+            "status IN ('pending','running','succeeded','failed','skipped')",
+            name="ck_pipeline_stages_status",
+        ),
+        Index("idx_pipeline_stages_status", "status"),
+    )
 
 
 FTS5_CREATE_SQL = """
