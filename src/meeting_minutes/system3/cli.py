@@ -320,13 +320,38 @@ def delete_cmd(
 
 
 @record_app.command("start")
-def record_start_cmd():
+def record_start_cmd(
+    planned_minutes: Optional[int] = typer.Option(None, "--planned-minutes", help="Expected recording length for disk preflight."),
+    force: bool = typer.Option(False, "--force", help="Ignore red-tier preflight refusal."),
+):
     """Start recording a meeting."""
     from meeting_minutes.config import ConfigLoader
-    from meeting_minutes.system1.capture import AudioCaptureEngine
+    from meeting_minutes.system1.capture import AudioCaptureEngine, preflight_disk_check
 
     config = _load_config()
-    engine = AudioCaptureEngine(config.recording)
+
+    # DSK-1 preflight. Interactive users see warnings; non-interactive
+    # mode (e.g. launchd) refuses red-tier starts so we don't fill the
+    # disk mid-meeting with no human around.
+    preflight = preflight_disk_check(config, planned_minutes=planned_minutes)
+    is_interactive = sys.stdin.isatty() and sys.stdout.isatty()
+    if preflight.tier == "red":
+        if not is_interactive and not force:
+            err_console.print(
+                f"[red]Disk preflight RED — refusing to start (non-interactive). "
+                f"free={preflight.free_bytes} estimated={preflight.estimated_bytes}. "
+                f"Re-run interactively or with --force.[/red]"
+            )
+            raise typer.Exit(code=1)
+        console.print(f"[red]{preflight.message}[/red] free={preflight.free_bytes}B estimated={preflight.estimated_bytes}B")
+    elif preflight.tier in ("yellow", "orange"):
+        console.print(f"[yellow]{preflight.message}[/yellow] free={preflight.free_bytes}B estimated={preflight.estimated_bytes}B")
+
+    engine = AudioCaptureEngine(
+        config.recording,
+        app_config=config,
+        planned_minutes=planned_minutes,
+    )
 
     try:
         meeting_id = engine.start()
@@ -577,6 +602,124 @@ def resume_cmd(
         console.print(f"[green]Resume complete.[/green]")
     except Exception as exc:
         err_console.print(f"[red]Resume failed: {exc}[/red]")
+        raise typer.Exit(code=1)
+
+
+# ---------------------------------------------------------------------------
+# mm repair (HLT-1)
+# ---------------------------------------------------------------------------
+
+
+_HEALTH_STATUS_STYLE = {
+    "ok": "green",
+    "warn": "yellow",
+    "fail": "red",
+}
+
+
+def _render_health_table(report) -> Table:
+    table = Table(title=f"Health check — overall: {report.overall_status.upper()}")
+    table.add_column("Check")
+    table.add_column("Status")
+    table.add_column("Detail", overflow="fold")
+    table.add_column("Fix hint", overflow="fold")
+
+    for r in report.checks:
+        style = _HEALTH_STATUS_STYLE.get(r.status, "")
+        status_cell = f"[{style}]{r.status}[/{style}]" if style else r.status
+        table.add_row(r.name, status_cell, r.detail, r.fix_hint or "")
+    return table
+
+
+@app.command("repair")
+def repair_cmd(
+    dry_run: bool = typer.Option(False, "--dry-run", help="Print the plan, do not write."),
+    check: Optional[str] = typer.Option(None, "--check", help="Repair only this check name."),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip the confirmation prompt."),
+):
+    """Run startup health checks and optionally repair failing ones."""
+    from meeting_minutes.health import check_all, repair as run_repair
+
+    config = _load_config()
+    session = _get_db_session(config)
+
+    try:
+        report = check_all(session, config)
+        console.print(_render_health_table(report))
+
+        repairable = [r for r in report.checks if r.repairable and r.status != "ok"]
+        if check is not None:
+            repairable = [r for r in repairable if r.name == check]
+
+        if not repairable:
+            console.print("[dim]Nothing to repair.[/dim]")
+            return
+
+        if dry_run:
+            log = run_repair(report, session, config, dry_run=True, only=check)
+            console.print("[bold]Dry-run plan:[/bold]")
+            for a in log.actions:
+                console.print(f"  [{a['action']}] {a['check']}: {a['detail']}")
+            return
+
+        if not yes:
+            names = ", ".join(r.name for r in repairable)
+            confirmed = typer.confirm(f"Run repair for: {names}?")
+            if not confirmed:
+                console.print("Aborted.")
+                return
+
+        log = run_repair(report, session, config, dry_run=False, only=check)
+        for a in log.actions:
+            style = "green" if a["action"] not in ("error", "noop") else "yellow"
+            console.print(f"  [{style}][{a['action']}][/{style}] {a['check']}: {a['detail']}")
+        console.print("[green]Repair complete.[/green]")
+    finally:
+        session.close()
+
+
+# ---------------------------------------------------------------------------
+# mm doctor (ONB-1)
+# ---------------------------------------------------------------------------
+
+
+@app.command("doctor")
+def doctor_cmd(
+    as_json: bool = typer.Option(False, "--json", help="Emit the check list as JSON."),
+):
+    """Run the first-run diagnostic checks. Exits non-zero on any failure."""
+    from meeting_minutes.doctor import run_checks
+
+    config = _load_config()
+    results = run_checks(config)
+
+    if as_json:
+        payload = {
+            "checks": [r.to_dict() for r in results],
+            "overall_status": (
+                "fail" if any(r.status == "fail" for r in results)
+                else "warn" if any(r.status == "warn" for r in results)
+                else "ok"
+            ),
+        }
+        console.print_json(data=payload)
+    else:
+        table = Table(title="mm doctor")
+        table.add_column("#", justify="right", width=3)
+        table.add_column("Check")
+        table.add_column("Status")
+        table.add_column("Detail", overflow="fold")
+        table.add_column("Fix hint", overflow="fold")
+        for i, r in enumerate(results, 1):
+            style = _HEALTH_STATUS_STYLE.get(r.status, "")
+            status_cell = f"[{style}]{r.status}[/{style}]" if style else r.status
+            fix = r.fix_hint
+            if r.fix_command:
+                fix = f"{fix}\n  $ {r.fix_command}" if fix else f"$ {r.fix_command}"
+            table.add_row(str(i), r.name, status_cell, r.detail, fix)
+        console.print(table)
+
+    if any(r.status == "fail" for r in results):
         raise typer.Exit(code=1)
 
 

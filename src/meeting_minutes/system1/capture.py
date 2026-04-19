@@ -3,17 +3,124 @@
 from __future__ import annotations
 
 import logging
+import shutil
 import threading
+import time
 import uuid
 from collections import deque
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 
-from meeting_minutes.config import RecordingConfig
+from meeting_minutes.config import AppConfig, RecordingConfig
 from meeting_minutes.models import AudioRecordingResult
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# DSK-1: disk-space preflight + mid-recording watchdog
+# ---------------------------------------------------------------------------
+
+
+PreflightTier = str  # "green" | "yellow" | "orange" | "red"
+
+
+@dataclass
+class PreflightResult:
+    tier: PreflightTier
+    free_bytes: int
+    estimated_bytes: int
+    planned_minutes: int
+    data_dir: str
+    message: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+def _estimate_recording_bytes(
+    planned_minutes: int,
+    sample_rate: int,
+    compression_factor: float,
+    channels: int = 1,
+    bytes_per_sample: int = 2,
+) -> int:
+    """Upper-bound byte estimate for a FLAC recording of ``planned_minutes``.
+
+    FLAC is lossless, so we start from raw PCM (16-bit mono by default) and
+    scale by ``compression_factor`` — set > actual ratio so we reserve
+    slack instead of running out.
+    """
+    seconds = planned_minutes * 60
+    raw = seconds * sample_rate * bytes_per_sample * channels
+    return int(raw * compression_factor)
+
+
+def _tier_for(free_bytes: int, estimated_bytes: int) -> PreflightTier:
+    if free_bytes >= 2 * estimated_bytes:
+        return "green"
+    if free_bytes >= 1.2 * estimated_bytes:
+        return "yellow"
+    if free_bytes >= estimated_bytes:
+        return "orange"
+    return "red"
+
+
+_TIER_MESSAGE = {
+    "green": "Plenty of free space.",
+    "yellow": "Disk is getting tight. Consider freeing space.",
+    "orange": "Recording may run out of disk space.",
+    "red": "Recording will likely fail before completion.",
+}
+
+
+def preflight_disk_check(
+    config: AppConfig,
+    planned_minutes: int | None = None,
+    *,
+    _free_bytes_override: int | None = None,
+) -> PreflightResult:
+    """Compute the preflight tier for the configured ``data_dir`` partition.
+
+    ``_free_bytes_override`` lets tests skip touching the real filesystem.
+    """
+    disk_cfg = config.disk
+    planned = planned_minutes if planned_minutes is not None else disk_cfg.default_planned_minutes
+
+    estimated = _estimate_recording_bytes(
+        planned_minutes=planned,
+        sample_rate=config.recording.sample_rate,
+        compression_factor=disk_cfg.flac_compression_factor,
+    )
+
+    data_dir = Path(config.data_dir).expanduser()
+    # Walk up until an existing ancestor is found — new installs may not
+    # have the data_dir created yet.
+    probe = data_dir
+    while not probe.exists() and probe != probe.parent:
+        probe = probe.parent
+
+    if _free_bytes_override is not None:
+        free_bytes = _free_bytes_override
+    else:
+        try:
+            free_bytes = shutil.disk_usage(str(probe)).free
+        except Exception as exc:
+            logger.warning("disk_usage probe failed: %s", exc)
+            free_bytes = estimated * 10  # best-effort: don't block the user
+
+    tier = _tier_for(free_bytes, estimated)
+
+    return PreflightResult(
+        tier=tier,
+        free_bytes=free_bytes,
+        estimated_bytes=estimated,
+        planned_minutes=planned,
+        data_dir=str(data_dir),
+        message=_TIER_MESSAGE[tier],
+    )
 
 
 class CircularAudioBuffer:
@@ -154,8 +261,14 @@ class AudioCaptureEngine:
         config: RecordingConfig,
         output_dir: Path | None = None,
         _stream_factory: Callable | None = None,
+        app_config: AppConfig | None = None,
+        planned_minutes: int | None = None,
+        disk_usage_fn: Callable[[str], Any] | None = None,
     ) -> None:
         self._config = config
+        self._app_config = app_config
+        self._planned_minutes = planned_minutes
+        self._disk_usage_fn = disk_usage_fn or shutil.disk_usage
         self._output_dir = output_dir or Path("recordings")
         self._stream_factory = _stream_factory  # injected for testing
         self._meeting_id: str | None = None
@@ -169,6 +282,13 @@ class AudioCaptureEngine:
         self._actual_sample_rate: int = config.sample_rate
         self._autosave_timer: threading.Timer | None = None
         self._autosave_interval = 300  # 5 minutes
+
+        # DSK-1 watchdog state
+        self._watchdog_thread: threading.Thread | None = None
+        self._watchdog_stop = threading.Event()
+        self._watchdog_fired = False
+        self._early_stop_reason: str | None = None
+        self._on_graceful_stop: Callable[[str], None] | None = None
 
     def start(self) -> str:
         """Begin recording. Returns meeting_id."""
@@ -187,7 +307,12 @@ class AudioCaptureEngine:
         self._output_dir.mkdir(parents=True, exist_ok=True)
         self._start_stream()
         self._start_autosave()
+        self._start_watchdog()
         return self._meeting_id
+
+    # Back-compat alias — API uses ``start()``; older call sites used this.
+    def start_recording(self) -> str:
+        return self.start()
 
     def _start_stream(self) -> None:
         """Start the audio input stream (real or injected mock)."""
@@ -312,6 +437,96 @@ class AudioCaptureEngine:
             self._autosave_timer.cancel()
             self._autosave_timer = None
 
+    # ------------------------------------------------------------------
+    # DSK-1 watchdog
+    # ------------------------------------------------------------------
+
+    def set_graceful_stop_handler(self, fn: Callable[[str], None]) -> None:
+        """Register a callback invoked when the watchdog triggers a stop.
+
+        The callback receives the early-stop reason string. It runs on the
+        watchdog thread — callers should be quick and thread-safe.
+        """
+        self._on_graceful_stop = fn
+
+    @property
+    def early_stop_reason(self) -> str | None:
+        return self._early_stop_reason
+
+    def _start_watchdog(self) -> None:
+        """Spawn a daemon thread that polls free disk space."""
+        if self._app_config is None:
+            return  # preflight disabled — legacy call sites
+
+        disk_cfg = self._app_config.disk
+        interval = max(1, disk_cfg.watchdog_interval_seconds)
+        factor = disk_cfg.watchdog_graceful_stop_factor
+        planned = self._planned_minutes or disk_cfg.default_planned_minutes
+
+        estimated_total = _estimate_recording_bytes(
+            planned_minutes=planned,
+            sample_rate=self._config.sample_rate,
+            compression_factor=disk_cfg.flac_compression_factor,
+        )
+        recording_started_at = time.time()
+        data_dir = str(Path(self._app_config.data_dir).expanduser())
+        probe = data_dir
+        while not Path(probe).exists() and Path(probe).parent != Path(probe):
+            probe = str(Path(probe).parent)
+
+        self._watchdog_stop.clear()
+
+        def _loop() -> None:
+            while not self._watchdog_stop.is_set():
+                if self._watchdog_stop.wait(interval):
+                    return
+                if not self._recording:
+                    return
+                try:
+                    free = self._disk_usage_fn(probe).free
+                except Exception as exc:  # pragma: no cover — defensive
+                    logger.warning("Watchdog disk_usage failed: %s", exc)
+                    continue
+
+                elapsed_seconds = time.time() - recording_started_at
+                elapsed_minutes = elapsed_seconds / 60
+                remaining_minutes = max(0.0, planned - elapsed_minutes)
+                remaining_estimated = _estimate_recording_bytes(
+                    planned_minutes=int(remaining_minutes) or 1,
+                    sample_rate=self._config.sample_rate,
+                    compression_factor=disk_cfg.flac_compression_factor,
+                )
+
+                if free < factor * remaining_estimated:
+                    reason = (
+                        f"Low disk: free={free} < {factor}*remaining_estimate="
+                        f"{int(factor * remaining_estimated)}"
+                    )
+                    logger.warning("Watchdog triggering graceful stop — %s", reason)
+                    self._watchdog_fired = True
+                    self._early_stop_reason = reason
+                    if self._on_graceful_stop is not None:
+                        try:
+                            self._on_graceful_stop(reason)
+                        except Exception as cb_exc:  # pragma: no cover
+                            logger.warning("Graceful-stop handler raised: %s", cb_exc)
+                    else:
+                        # Default path: flip the recording flag so the
+                        # next stop() call closes cleanly. The actual FLAC
+                        # write happens in stop() when the orchestrator
+                        # notices recording == False.
+                        self._recording = False
+                    return
+
+        self._watchdog_thread = threading.Thread(
+            target=_loop, name="mm-disk-watchdog", daemon=True,
+        )
+        self._watchdog_thread.start()
+
+    def _stop_watchdog(self) -> None:
+        self._watchdog_stop.set()
+        # Don't join — thread may be blocked on a shutil call. It's a daemon.
+
     def _do_autosave(self) -> None:
         """Save current audio data to a temporary recovery file."""
         try:
@@ -341,6 +556,7 @@ class AudioCaptureEngine:
             self._recording = False  # callback checks this flag first
 
         self._stop_autosave()
+        self._stop_watchdog()
         end_time = datetime.now(timezone.utc)
         logger.info("Stopping audio stream...")
 

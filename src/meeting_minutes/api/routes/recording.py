@@ -81,7 +81,12 @@ def start_recording(
 
         logger.info("Starting recording — device: %s", rec_config.audio_device)
 
-        engine = AudioCaptureEngine(rec_config, output_dir=recordings_dir)
+        engine = AudioCaptureEngine(
+            rec_config,
+            output_dir=recordings_dir,
+            app_config=config,
+            planned_minutes=body.planned_minutes,
+        )
         meeting_id = engine.start()
 
         _current_recording["state"] = "recording"
@@ -256,6 +261,22 @@ async def _run_pipeline(meeting_id: str, config: AppConfig):
     except (asyncio.CancelledError, KeyboardInterrupt):
         pass
     _pipeline_jobs.pop(meeting_id, None)
+
+
+@router.get("/api/recording/preflight")
+def recording_preflight(
+    config: Annotated[AppConfig, Depends(get_config)],
+    planned_minutes: int | None = None,
+):
+    """Return a disk-space preflight result (DSK-1).
+
+    The frontend calls this before starting a recording; the response drives
+    the warning modal tier and copy.
+    """
+    from meeting_minutes.system1.capture import preflight_disk_check
+
+    result = preflight_disk_check(config, planned_minutes=planned_minutes)
+    return result.to_dict()
 
 
 @router.get("/api/recording/status", response_model=RecordingStatusResponse)
