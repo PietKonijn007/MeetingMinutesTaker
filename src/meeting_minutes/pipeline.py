@@ -6,10 +6,20 @@ import asyncio
 import os
 import time
 import uuid
+from contextlib import contextmanager
 from pathlib import Path
 
 from meeting_minutes.config import AppConfig, resolve_db_path
 from meeting_minutes.logging import get_logger
+from meeting_minutes.pipeline_state import (
+    Stage,
+    Status,
+    get_stages,
+    mark_failed,
+    mark_running,
+    mark_succeeded,
+    next_stage as _state_next_stage,
+)
 
 
 def _console(msg: str, style: str = "") -> None:
@@ -72,6 +82,54 @@ class PipelineOrchestrator:
         self._minutes_dir = self._data_dir / "minutes"
 
     # -----------------------------------------------------------------------
+    # Pipeline state helpers (PIP-1)
+    # -----------------------------------------------------------------------
+
+    def _state_session(self):
+        """Open a short-lived SQLAlchemy session for pipeline_stages writes."""
+        from meeting_minutes.system3.db import get_session_factory
+
+        db_path = resolve_db_path(self._config.storage.sqlite_path)
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        session_factory = get_session_factory(f"sqlite:///{db_path}")
+        return session_factory()
+
+    @contextmanager
+    def _track_stage(self, meeting_id: str, stage: Stage):
+        """Wrap a stage: mark running, mark succeeded on clean return, mark
+        failed on exception (and re-raise).
+
+        Caller can set ``ctx.artifact_path`` on the yielded object to store
+        the artifact path on the succeeded row.
+        """
+
+        class _Ctx:
+            artifact_path: str | None = None
+
+        ctx = _Ctx()
+        session = self._state_session()
+        try:
+            mark_running(session, meeting_id, stage)
+        finally:
+            session.close()
+
+        try:
+            yield ctx
+        except Exception as exc:
+            session = self._state_session()
+            try:
+                mark_failed(session, meeting_id, stage, str(exc))
+            finally:
+                session.close()
+            raise
+        else:
+            session = self._state_session()
+            try:
+                mark_succeeded(session, meeting_id, stage, artifact_path=ctx.artifact_path)
+            finally:
+                session.close()
+
+    # -----------------------------------------------------------------------
     # Retry helper
     # -----------------------------------------------------------------------
 
@@ -108,38 +166,51 @@ class PipelineOrchestrator:
 
         _console("[1/3] Transcription...", "bold cyan")
         self._logger.info("[1/3] Transcription for %s", meeting_id)
-        transcript_path = await self._retry_async(
-            self.run_transcription, meeting_id,
-            max_retries=2, base_delay=5, step_name="Transcription",
-        )
+        with self._track_stage(meeting_id, Stage.TRANSCRIBE) as ctx:
+            transcript_path = await self._retry_async(
+                self.run_transcription, meeting_id,
+                max_retries=2, base_delay=5, step_name="Transcription",
+            )
+            ctx.artifact_path = str(transcript_path)
+        # Diarization runs inside run_transcription; record its state here.
+        with self._track_stage(meeting_id, Stage.DIARIZE) as ctx:
+            ctx.artifact_path = str(transcript_path)
 
         _console("\n[2/3] Minutes generation...", "bold cyan")
         self._logger.info("[2/3] Minutes generation for %s", meeting_id)
-        minutes_path = await self._retry_async(
-            self.run_generation, meeting_id,
-            max_retries=3, base_delay=3, step_name="Generation",
-        )
+        with self._track_stage(meeting_id, Stage.GENERATE) as ctx:
+            minutes_path = await self._retry_async(
+                self.run_generation, meeting_id,
+                max_retries=3, base_delay=3, step_name="Generation",
+            )
+            ctx.artifact_path = str(minutes_path)
 
         _console("\n[3/3] Database ingestion...", "bold cyan")
         self._logger.info("[3/3] Database ingestion for %s", meeting_id)
-        await self._retry_async(
-            self.run_ingestion, meeting_id,
-            max_retries=1, base_delay=2, step_name="Ingestion",
-        )
+        with self._track_stage(meeting_id, Stage.INGEST):
+            await self._retry_async(
+                self.run_ingestion, meeting_id,
+                max_retries=1, base_delay=2, step_name="Ingestion",
+            )
 
-        # Embed for semantic search (best-effort, non-blocking)
+        # Embed for semantic search (best-effort, non-blocking).
         _console("  Indexing for semantic search...", "dim")
         try:
-            await asyncio.get_event_loop().run_in_executor(
-                None, self._embed_meeting, meeting_id
-            )
+            with self._track_stage(meeting_id, Stage.EMBED):
+                await asyncio.get_event_loop().run_in_executor(
+                    None, self._embed_meeting, meeting_id
+                )
         except Exception as exc:
             self._logger.warning("Embedding failed for %s: %s — semantic search may be incomplete", meeting_id, exc)
             _console(f"  ⚠ Embedding failed: {exc}", "yellow")
 
-        # Post-processing: backup and Obsidian export
+        # Post-processing: backup and Obsidian export.
         self._maybe_backup()
-        self._export_to_obsidian_from_file(meeting_id)
+        try:
+            with self._track_stage(meeting_id, Stage.EXPORT):
+                self._export_to_obsidian_from_file(meeting_id)
+        except Exception as exc:
+            self._logger.warning("Obsidian export failed for %s: %s", meeting_id, exc)
 
         # Retention cleanup
         from meeting_minutes.retention import enforce_retention
@@ -741,6 +812,89 @@ class PipelineOrchestrator:
         if regenerate:
             _console(f"\n  [bold]Re-running minutes generation with new speaker labels...[/bold]")
             await self.reprocess(meeting_id)
+
+    async def resume_from(
+        self,
+        meeting_id: str,
+        from_stage: Stage | None = None,
+    ) -> None:
+        """Resume the pipeline from the first non-succeeded stage (or explicit ``from_stage``).
+
+        Stages already in ``succeeded`` are skipped. Runs forward through
+        INGEST / EMBED / EXPORT. CAPTURE is a no-op here (audio is either on
+        disk or it isn't). TRANSCRIBE+DIARIZE are covered by run_transcription.
+        """
+        if from_stage is None:
+            session = self._state_session()
+            try:
+                from_stage = _state_next_stage(session, meeting_id)
+            finally:
+                session.close()
+        if from_stage is None:
+            _console(f"  All stages already succeeded for {meeting_id[:12]}", "dim")
+            return
+
+        # Snapshot current stage states to decide what to skip.
+        session = self._state_session()
+        try:
+            states = {s.stage: s for s in get_stages(session, meeting_id)}
+        finally:
+            session.close()
+
+        _console(f"\n{'='*60}", "bold")
+        _console(f"  RESUME — Meeting {meeting_id[:12]} from {from_stage.value}", "bold yellow")
+        _console(f"{'='*60}\n")
+
+        order = Stage.ordered()
+        start_idx = order.index(from_stage)
+
+        for stage in order[start_idx:]:
+            state = states.get(stage)
+            if state and state.status == Status.SUCCEEDED:
+                _console(f"  ✓ Skipping {stage.value} (already succeeded)", "dim")
+                continue
+
+            if stage == Stage.CAPTURE:
+                # Audio capture can't be resumed programmatically; mark skipped
+                # so downstream stages aren't blocked by a missing row.
+                _console(f"  Skipping CAPTURE stage (manual step)", "dim")
+                continue
+            if stage in (Stage.TRANSCRIBE, Stage.DIARIZE):
+                with self._track_stage(meeting_id, Stage.TRANSCRIBE) as ctx:
+                    path = await self.run_transcription(meeting_id)
+                    ctx.artifact_path = str(path)
+                with self._track_stage(meeting_id, Stage.DIARIZE) as ctx:
+                    ctx.artifact_path = str(path)
+                continue
+            if stage == Stage.GENERATE:
+                with self._track_stage(meeting_id, Stage.GENERATE) as ctx:
+                    path = await self.run_generation(meeting_id)
+                    ctx.artifact_path = str(path)
+                continue
+            if stage == Stage.INGEST:
+                with self._track_stage(meeting_id, Stage.INGEST):
+                    await self.run_ingestion(meeting_id)
+                continue
+            if stage == Stage.EMBED:
+                try:
+                    with self._track_stage(meeting_id, Stage.EMBED):
+                        await asyncio.get_event_loop().run_in_executor(
+                            None, self._embed_meeting, meeting_id
+                        )
+                except Exception as exc:
+                    self._logger.warning("Embedding failed during resume for %s: %s", meeting_id, exc)
+                continue
+            if stage == Stage.EXPORT:
+                try:
+                    with self._track_stage(meeting_id, Stage.EXPORT):
+                        self._export_to_obsidian_from_file(meeting_id)
+                except Exception as exc:
+                    self._logger.warning("Obsidian export failed during resume: %s", exc)
+                continue
+
+        _console(f"\n{'='*60}", "bold")
+        _console(f"  RESUME COMPLETE — {meeting_id[:12]}", "bold green")
+        _console(f"{'='*60}\n")
 
     async def reprocess(self, meeting_id: str) -> None:
         """Re-run System 2 and System 3 for an existing meeting."""
