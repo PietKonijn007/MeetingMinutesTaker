@@ -100,6 +100,20 @@ class RetentionConfig(BaseModel):
     backup_days: int = 30         # -1 = keep forever
 
 
+class DiskConfig(BaseModel):
+    """Disk-space preflight + mid-recording watchdog (DSK-1)."""
+
+    # Assumed recording length when the caller hasn't provided one.
+    default_planned_minutes: int = 60
+    # FLAC typically compresses speech to ~50% of raw PCM. We over-estimate
+    # (0.6) so preflight reserves more headroom than it strictly needs.
+    flac_compression_factor: float = 0.6
+    # Watchdog poll interval while recording.
+    watchdog_interval_seconds: int = 30
+    # Trigger graceful stop when free < factor * remaining_estimate.
+    watchdog_graceful_stop_factor: float = 0.5
+
+
 class PerformanceConfig(BaseModel):
     """Hardware acceleration and performance tuning settings."""
 
@@ -143,6 +157,7 @@ class AppConfig(BaseModel):
     retention: RetentionConfig = RetentionConfig()
     security: SecurityConfig = SecurityConfig()
     performance: PerformanceConfig = PerformanceConfig()
+    disk: DiskConfig = DiskConfig()
 
     def model_post_init(self, __context) -> None:
         """Apply performance settings to process env vars (affects torch, etc.)."""

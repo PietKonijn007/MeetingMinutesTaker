@@ -237,6 +237,7 @@ class TalkTimeAnalyticsResponse(BaseModel):
 class RecordingStartRequest(BaseModel):
     audio_device: str | None = None  # device name, or null for config default
     language: str | None = None  # ISO code ("en", "nl", "fr") or null for auto-detect
+    planned_minutes: int | None = None  # used by DSK-1 preflight/watchdog
 
 
 class RecordingStopRequest(BaseModel):

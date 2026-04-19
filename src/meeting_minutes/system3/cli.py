@@ -320,13 +320,38 @@ def delete_cmd(
 
 
 @record_app.command("start")
-def record_start_cmd():
+def record_start_cmd(
+    planned_minutes: Optional[int] = typer.Option(None, "--planned-minutes", help="Expected recording length for disk preflight."),
+    force: bool = typer.Option(False, "--force", help="Ignore red-tier preflight refusal."),
+):
     """Start recording a meeting."""
     from meeting_minutes.config import ConfigLoader
-    from meeting_minutes.system1.capture import AudioCaptureEngine
+    from meeting_minutes.system1.capture import AudioCaptureEngine, preflight_disk_check
 
     config = _load_config()
-    engine = AudioCaptureEngine(config.recording)
+
+    # DSK-1 preflight. Interactive users see warnings; non-interactive
+    # mode (e.g. launchd) refuses red-tier starts so we don't fill the
+    # disk mid-meeting with no human around.
+    preflight = preflight_disk_check(config, planned_minutes=planned_minutes)
+    is_interactive = sys.stdin.isatty() and sys.stdout.isatty()
+    if preflight.tier == "red":
+        if not is_interactive and not force:
+            err_console.print(
+                f"[red]Disk preflight RED — refusing to start (non-interactive). "
+                f"free={preflight.free_bytes} estimated={preflight.estimated_bytes}. "
+                f"Re-run interactively or with --force.[/red]"
+            )
+            raise typer.Exit(code=1)
+        console.print(f"[red]{preflight.message}[/red] free={preflight.free_bytes}B estimated={preflight.estimated_bytes}B")
+    elif preflight.tier in ("yellow", "orange"):
+        console.print(f"[yellow]{preflight.message}[/yellow] free={preflight.free_bytes}B estimated={preflight.estimated_bytes}B")
+
+    engine = AudioCaptureEngine(
+        config.recording,
+        app_config=config,
+        planned_minutes=planned_minutes,
+    )
 
     try:
         meeting_id = engine.start()
