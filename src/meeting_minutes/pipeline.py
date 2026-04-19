@@ -282,6 +282,13 @@ class PipelineOrchestrator:
                 max_retries=1, base_delay=2, step_name="Ingestion",
             )
 
+        # REC-1: best-effort recurring-meeting detection. Same pattern as
+        # SPK-1 — failures must not break the pipeline.
+        try:
+            self._detect_series()
+        except Exception as exc:
+            self._logger.warning("REC-1 series detection failed: %s", exc)
+
         # Embed for semantic search (best-effort, non-blocking).
         _console("  Indexing for semantic search...", "dim")
         try:
@@ -1067,6 +1074,24 @@ class PipelineOrchestrator:
         except Exception as exc:
             self._logger.warning("Embedding failed: %s", exc)
             raise
+        finally:
+            session.close()
+
+    def _detect_series(self) -> None:
+        """Best-effort recurring-meeting detection after pipeline completion."""
+        from meeting_minutes.system3.db import get_session_factory
+        from meeting_minutes.system3.series import detect_and_upsert
+
+        db_path = resolve_db_path(self._config.storage.sqlite_path)
+        session_factory = get_session_factory(f"sqlite:///{db_path}")
+        session = session_factory()
+        try:
+            summary = detect_and_upsert(session)
+            if summary.created or summary.updated:
+                self._logger.info(
+                    "REC-1 detection: created=%d updated=%d unchanged=%d",
+                    len(summary.created), len(summary.updated), len(summary.unchanged),
+                )
         finally:
             session.close()
 

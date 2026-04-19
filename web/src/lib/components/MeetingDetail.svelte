@@ -35,6 +35,17 @@
   let speakerSuggestions = $state({});    // { "SPEAKER_00": {suggested_name, suggestion_tier, score, speech_seconds, suggested_person_id} }
   // Inline "create new person" form state, keyed by cluster id.
   let newPersonForms = $state({});        // { "SPEAKER_00": { open, name, email, saving } }
+  // REC-1: series this meeting belongs to, if any.
+  let meetingSeries = $state(null);
+
+  async function loadMeetingSeries(id) {
+    try {
+      const payload = await api.getMeetingSeries(id);
+      meetingSeries = payload.series || null;
+    } catch {
+      meetingSeries = null;
+    }
+  }
 
   async function loadSpeakerSuggestions(id) {
     try {
@@ -338,6 +349,7 @@
       loadTranscript(id);
       loadAnalytics(id);
       loadSpeakerSuggestions(id);
+      loadMeetingSeries(id);
     }
   });
 </script>
@@ -381,6 +393,15 @@
             <span class="{i < meeting.effectiveness_score ? 'text-yellow-400' : 'text-[var(--text-muted)]'}">★</span>
           {/each}
         </span>
+      {/if}
+      {#if meetingSeries}
+        <a
+          href="/series/{meetingSeries.series_id}"
+          class="inline-flex items-center gap-1 px-2.5 py-1 bg-[var(--accent)]/10 border border-[var(--accent)]/30 rounded-full text-xs text-[var(--accent)] hover:opacity-90"
+          title="Part of series: {meetingSeries.title}"
+        >
+          Part of series: {meetingSeries.title} →
+        </a>
       {/if}
     </div>
 

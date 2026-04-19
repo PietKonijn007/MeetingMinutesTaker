@@ -17,6 +17,12 @@ from meeting_minutes.api.schemas import (
     TypeDistribution,
     WeeklyCount,
 )
+from meeting_minutes.stats_analytics import (
+    commitments_per_person,
+    effectiveness_by_type,
+    sentiment_trend,
+    unresolved_topics,
+)
 from meeting_minutes.system3.db import ActionItemORM, MeetingORM
 
 router = APIRouter(prefix="/api/stats", tags=["stats"])
@@ -170,3 +176,65 @@ def action_velocity(
         for week in created_buckets
     ]
     return {"series": series}
+
+
+# ---------------------------------------------------------------------------
+# ANA-1 analytics panels
+# ---------------------------------------------------------------------------
+
+
+@router.get("/commitments")
+def stats_commitments(
+    session: Annotated[Session, Depends(get_db_session)],
+    days: int = 90,
+    meeting_type: str | None = None,
+    series: str | None = None,
+):
+    """Panel 1 — commitment completion rate per person."""
+    return commitments_per_person(
+        session, days=days, meeting_type=meeting_type, series_id=series
+    )
+
+
+@router.get("/sentiment")
+def stats_sentiment(
+    session: Annotated[Session, Depends(get_db_session)],
+    days: int = 90,
+    person: str | None = None,
+    meeting_type: str | None = None,
+    series: str | None = None,
+):
+    """Panel 3 — sentiment trend per person or meeting type."""
+    return sentiment_trend(
+        session,
+        days=days,
+        person=person,
+        meeting_type=meeting_type,
+        series_id=series,
+    )
+
+
+@router.get("/effectiveness")
+def stats_effectiveness(
+    session: Annotated[Session, Depends(get_db_session)],
+    days: int | None = None,
+    meeting_type: str | None = None,
+    series: str | None = None,
+):
+    """Panel 4 — % of meetings per type with each effectiveness attribute."""
+    return effectiveness_by_type(
+        session, days=days, meeting_type=meeting_type, series_id=series
+    )
+
+
+@router.get("/unresolved-topics")
+def stats_unresolved_topics(
+    session: Annotated[Session, Depends(get_db_session)],
+    days: int | None = None,
+    min_count: int = 3,
+    series: str | None = None,
+):
+    """Panel 2 — recurring unresolved topics (embedding clusters)."""
+    return unresolved_topics(
+        session, days=days, min_count=min_count, series_id=series
+    )

@@ -204,6 +204,71 @@ class ChatMessageORM(Base):
     session = relationship("ChatSessionORM", back_populates="messages")
 
 
+class MeetingSeriesORM(Base):
+    """Group of meetings sharing attendees and meeting type (REC-1).
+
+    A series row is uniquely identified by (attendee_hash, meeting_type)
+    so ``upsert_series`` can re-run idempotently as new meetings arrive.
+    """
+    __tablename__ = "meeting_series"
+
+    series_id = Column(String, primary_key=True)
+    title = Column(String, nullable=False)
+    meeting_type = Column(String, nullable=False)
+    cadence = Column(String, nullable=True)  # weekly|biweekly|monthly|irregular
+    attendee_hash = Column(String, nullable=False)
+    created_at = Column(DateTime, nullable=False)
+    last_detected_at = Column(DateTime, nullable=False)
+
+    members = relationship(
+        "MeetingSeriesMemberORM",
+        back_populates="series",
+        cascade="all, delete-orphan",
+    )
+
+    __table_args__ = (
+        Index("idx_series_signature", "attendee_hash", "meeting_type", unique=True),
+    )
+
+
+class MeetingSeriesMemberORM(Base):
+    """Join row assigning a meeting to a series (REC-1)."""
+    __tablename__ = "meeting_series_members"
+
+    series_id = Column(
+        String,
+        ForeignKey("meeting_series.series_id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    meeting_id = Column(
+        String,
+        ForeignKey("meetings.meeting_id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+
+    series = relationship("MeetingSeriesORM", back_populates="members")
+
+
+class TopicClusterCacheORM(Base):
+    """Cache of topic clusters produced by ANA-1 Panel 2.
+
+    Rebuilt by `mm stats rebuild` or lazily on page load when the cache is
+    older than 24h. A cluster is a set of rows sharing ``cluster_id``; each
+    row anchors a single chunk to the cluster.
+    """
+    __tablename__ = "topic_clusters_cache"
+
+    cluster_id = Column(String, primary_key=True)
+    chunk_id = Column(Integer, primary_key=True)
+    meeting_id = Column(String, nullable=False)
+    topic_summary = Column(Text, nullable=False)
+    rebuilt_at = Column(DateTime, nullable=False)
+
+    __table_args__ = (
+        Index("idx_topic_clusters_meeting", "meeting_id"),
+    )
+
+
 class PipelineStageORM(Base):
     """Per-(meeting, stage) state for the resumable pipeline (PIP-1)."""
     __tablename__ = "pipeline_stages"

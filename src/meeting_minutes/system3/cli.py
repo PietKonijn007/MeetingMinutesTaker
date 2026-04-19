@@ -30,11 +30,15 @@ record_app = typer.Typer(help="Recording commands.")
 actions_app = typer.Typer(help="Action item commands.")
 backup_app = typer.Typer(help="Database backup commands.")
 service_app = typer.Typer(help="Manage the auto-start service (macOS).")
+series_app = typer.Typer(help="Recurring-meeting series (REC-1).")
+stats_app = typer.Typer(help="Analytics maintenance (ANA-1).")
 
 app.add_typer(record_app, name="record")
 app.add_typer(actions_app, name="actions")
 app.add_typer(backup_app, name="backup")
 app.add_typer(service_app, name="service")
+app.add_typer(series_app, name="series")
+app.add_typer(stats_app, name="stats")
 
 console = Console()
 err_console = Console(stderr=True)
@@ -1495,6 +1499,194 @@ def upgrade_cmd(
         console.print("  [dim]Skipped (no service installed or --no-restart)[/dim]")
 
     console.print("\n[green bold]Upgrade complete![/green bold]")
+
+
+# ---------------------------------------------------------------------------
+# mm series (REC-1)
+# ---------------------------------------------------------------------------
+
+
+@series_app.command("detect")
+def series_detect_cmd():
+    """Run recurring-meeting detection and report changes."""
+    from meeting_minutes.system3.series import detect_and_upsert
+
+    session = _get_db_session()
+    try:
+        summary = detect_and_upsert(session)
+    finally:
+        session.close()
+
+    total = len(summary.created) + len(summary.updated) + len(summary.unchanged)
+    if total == 0:
+        console.print("[dim]No meetings match the recurrence heuristic yet.[/dim]")
+        return
+
+    if summary.created:
+        console.print(f"[green]Created {len(summary.created)} series:[/green]")
+        for t in summary.created:
+            console.print(f"  + {t}")
+    if summary.updated:
+        console.print(f"[yellow]Updated {len(summary.updated)} series:[/yellow]")
+        for t in summary.updated:
+            console.print(f"  ~ {t}")
+    if summary.unchanged:
+        console.print(f"[dim]{len(summary.unchanged)} series unchanged.[/dim]")
+
+
+@series_app.command("list")
+def series_list_cmd():
+    """List all detected series."""
+    from meeting_minutes.system3.db import (
+        MeetingORM,
+        MeetingSeriesMemberORM,
+        MeetingSeriesORM,
+    )
+
+    session = _get_db_session()
+    try:
+        rows = (
+            session.query(MeetingSeriesORM)
+            .order_by(MeetingSeriesORM.last_detected_at.desc())
+            .all()
+        )
+
+        if not rows:
+            console.print("[yellow]No series detected. Run: mm series detect[/yellow]")
+            return
+
+        table = Table(title="Meeting Series")
+        table.add_column("Series ID", style="dim", width=16)
+        table.add_column("Title")
+        table.add_column("Type")
+        table.add_column("Cadence")
+        table.add_column("Members", justify="right")
+        table.add_column("Last meeting")
+
+        for s in rows:
+            member_ids = [
+                m.meeting_id
+                for m in session.query(MeetingSeriesMemberORM).filter_by(series_id=s.series_id).all()
+            ]
+            last_meeting = None
+            if member_ids:
+                last_meeting = (
+                    session.query(MeetingORM)
+                    .filter(MeetingORM.meeting_id.in_(member_ids))
+                    .order_by(MeetingORM.date.desc())
+                    .first()
+                )
+            last_date = (
+                last_meeting.date.strftime("%Y-%m-%d") if last_meeting and last_meeting.date else ""
+            )
+            table.add_row(
+                s.series_id,
+                s.title,
+                s.meeting_type,
+                s.cadence or "",
+                str(len(member_ids)),
+                last_date,
+            )
+
+        console.print(table)
+    finally:
+        session.close()
+
+
+@series_app.command("show")
+def series_show_cmd(
+    series_id: str = typer.Argument(..., help="Series ID"),
+):
+    """Show detail for a single series."""
+    from meeting_minutes.system3.db import (
+        MeetingORM,
+        MeetingSeriesMemberORM,
+        MeetingSeriesORM,
+    )
+    from meeting_minutes.system3.series import series_aggregates
+
+    session = _get_db_session()
+    try:
+        series = session.get(MeetingSeriesORM, series_id)
+        if series is None:
+            err_console.print(f"[red]Series not found: {series_id}[/red]")
+            raise typer.Exit(code=1)
+
+        member_ids = [
+            m.meeting_id
+            for m in session.query(MeetingSeriesMemberORM).filter_by(series_id=series_id).all()
+        ]
+        members = (
+            session.query(MeetingORM)
+            .filter(MeetingORM.meeting_id.in_(member_ids))
+            .order_by(MeetingORM.date.asc())
+            .all()
+        )
+
+        header = [
+            f"[bold]{series.title}[/bold]",
+            f"Type: {series.meeting_type}",
+            f"Cadence: {series.cadence or 'irregular'}",
+            f"Members: {len(members)}",
+        ]
+        console.print(Panel("\n".join(header), title=series.series_id, border_style="blue"))
+
+        if members:
+            table = Table(title="Members")
+            table.add_column("Meeting ID", style="dim", width=38)
+            table.add_column("Title")
+            table.add_column("Date")
+            for m in members:
+                table.add_row(
+                    m.meeting_id,
+                    m.title or "",
+                    m.date.strftime("%Y-%m-%d") if m.date else "",
+                )
+            console.print(table)
+
+        agg = series_aggregates(session, series_id)
+        if agg.open_action_items:
+            console.print(
+                f"\n[bold]Open action items across series: {len(agg.open_action_items)}[/bold]"
+            )
+            for ai in agg.open_action_items[:10]:
+                console.print(f"  ○ {ai['description'][:80]} (owner: {ai['owner'] or '—'})")
+        if agg.recurring_topics:
+            console.print(
+                f"\n[bold]Recurring topics: {len(agg.recurring_topics)}[/bold]"
+            )
+            for t in agg.recurring_topics[:10]:
+                console.print(f"  • {t['topic_summary'][:80]} (×{t['mention_count']})")
+    finally:
+        session.close()
+
+
+# ---------------------------------------------------------------------------
+# mm stats (ANA-1)
+# ---------------------------------------------------------------------------
+
+
+@stats_app.command("rebuild")
+def stats_rebuild_cmd(
+    min_similarity: float = typer.Option(0.8, "--min-similarity", help="Minimum cosine similarity to link chunks."),
+):
+    """Rebuild the topic-clusters cache for the ANA-1 Panel 2 view."""
+    from meeting_minutes.stats_analytics import rebuild_topic_clusters_cache
+
+    session = _get_db_session()
+    try:
+        result = rebuild_topic_clusters_cache(session, min_similarity=min_similarity)
+    finally:
+        session.close()
+
+    if result.get("disabled_reason"):
+        err_console.print(f"[yellow]{result['disabled_reason']}[/yellow]")
+        raise typer.Exit(code=1)
+
+    console.print(
+        f"[green]Rebuilt topic clusters cache:[/green] "
+        f"{result['cluster_count']} clusters across {result['chunk_count']} chunks."
+    )
 
 
 if __name__ == "__main__":

@@ -79,6 +79,30 @@ export const api = {
   getByType: () => request('/stats/by-type'),
   getActionVelocity: () => request('/stats/action-velocity'),
 
+  // ANA-1 analytics panels
+  getStatsCommitments: (params = {}) => {
+    const qs = new URLSearchParams(params).toString();
+    return request(`/stats/commitments${qs ? `?${qs}` : ''}`);
+  },
+  getStatsSentiment: (params = {}) => {
+    const qs = new URLSearchParams(params).toString();
+    return request(`/stats/sentiment${qs ? `?${qs}` : ''}`);
+  },
+  getStatsEffectiveness: (params = {}) => {
+    const qs = new URLSearchParams(params).toString();
+    return request(`/stats/effectiveness${qs ? `?${qs}` : ''}`);
+  },
+  getStatsUnresolvedTopics: (params = {}) => {
+    const qs = new URLSearchParams(params).toString();
+    return request(`/stats/unresolved-topics${qs ? `?${qs}` : ''}`);
+  },
+
+  // REC-1 series
+  getSeriesList: () => request('/series'),
+  getSeries: (id) => request(`/series/${id}`),
+  detectSeries: () => request('/series/detect', { method: 'POST' }),
+  getMeetingSeries: (id) => request(`/meetings/${id}/series`),
+
   // Recording
   autoDetectDevice: () => request('/auto-detect-device'),
   startRecording: (data = {}) => request('/recording/start', { method: 'POST', body: JSON.stringify(data) }),
