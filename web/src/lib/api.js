@@ -108,6 +108,18 @@ export const api = {
   // Retention
   getRetentionStatus: () => request('/retention/status'),
   runRetentionCleanup: () => request('/retention/cleanup', { method: 'POST' }),
+  getOldestAudio: (limit = 20) => request(`/retention/oldest-audio?limit=${limit}`),
+  deleteAudioBulk: (meetingIds) => request('/retention/audio', {
+    method: 'DELETE', body: JSON.stringify({ meeting_ids: meetingIds }),
+  }),
+
+  // DSK-1 recording preflight
+  recordingPreflight: (plannedMinutes = null) => request(
+    `/recording/preflight${plannedMinutes != null ? `?planned_minutes=${plannedMinutes}` : ''}`,
+  ),
+
+  // ONB-1 diagnostic doctor
+  getDoctorChecks: () => request('/doctor'),
 
   // Chat (talk to your notes)
   sendChatMessage: (message, sessionId = null) => request('/chat', {

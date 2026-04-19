@@ -10,6 +10,13 @@
   let startingRecording = $state(false);
   let stoppingRecording = $state(false);
 
+  // DSK-1 preflight modal state
+  let preflightModal = $state(null); // null | { tier, free_bytes, estimated_bytes, message, oldest: [] }
+  let preflightCleanupSelection = $state(new Set());
+  let preflightConfirmRed = $state(false);
+  let preflightPending = $state(false);
+  let plannedMinutes = $state(60);
+
   // Live note-taking during recording
   let speakerNames = $state('');
   let meetingNotes = $state('');
@@ -111,22 +118,122 @@
     return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
   }
 
+  function formatBytes(bytes) {
+    if (!bytes && bytes !== 0) return '—';
+    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+    let n = bytes;
+    let i = 0;
+    while (n >= 1024 && i < units.length - 1) {
+      n /= 1024;
+      i++;
+    }
+    return `${n.toFixed(n >= 10 || i === 0 ? 0 : 1)} ${units[i]}`;
+  }
+
+  async function runPreflight() {
+    try {
+      const result = await api.recordingPreflight(plannedMinutes);
+      if (result.tier === 'green') {
+        return { ok: true };
+      }
+      // For non-green tiers, load oldest-audio so the modal can offer cleanup.
+      let oldest = [];
+      try {
+        const resp = await api.getOldestAudio(20);
+        oldest = resp.files || [];
+      } catch {
+        oldest = [];
+      }
+      preflightModal = { ...result, oldest };
+      preflightCleanupSelection = new Set();
+      preflightConfirmRed = false;
+      return { ok: false };
+    } catch (e) {
+      // Preflight failure shouldn't block the user — record is more important
+      // than the warning.
+      console.warn('Preflight failed', e);
+      return { ok: true };
+    }
+  }
+
+  async function startRecordingActual() {
+    const body = {};
+    if (selectedDevice) body.audio_device = selectedDevice;
+    if (selectedLanguage && selectedLanguage !== 'auto') body.language = selectedLanguage;
+    if (plannedMinutes) body.planned_minutes = plannedMinutes;
+    await api.startRecording(body);
+    recState = 'recording';
+    recElapsed = 0;
+    levelHistory = new Array(24).fill(0);
+    addToast('Recording started', 'success');
+  }
+
   async function startRecording() {
     startingRecording = true;
     try {
-      const body = {};
-      if (selectedDevice) body.audio_device = selectedDevice;
-      if (selectedLanguage && selectedLanguage !== 'auto') body.language = selectedLanguage;
-      await api.startRecording(body);
-      recState = 'recording';
-      recElapsed = 0;
-      levelHistory = new Array(24).fill(0);
-      addToast('Recording started', 'success');
+      const pre = await runPreflight();
+      if (!pre.ok) {
+        // Modal handles the start confirmation.
+        startingRecording = false;
+        return;
+      }
+      await startRecordingActual();
     } catch (e) {
       addToast(`Failed to start recording: ${e.message}`, 'error');
     } finally {
       startingRecording = false;
     }
+  }
+
+  async function startAnyway() {
+    if (preflightModal?.tier === 'red' && !preflightConfirmRed) return;
+    startingRecording = true;
+    try {
+      await startRecordingActual();
+      preflightModal = null;
+    } catch (e) {
+      addToast(`Failed to start recording: ${e.message}`, 'error');
+    } finally {
+      startingRecording = false;
+    }
+  }
+
+  function togglePreflightSelection(mid) {
+    const next = new Set(preflightCleanupSelection);
+    if (next.has(mid)) next.delete(mid);
+    else next.add(mid);
+    preflightCleanupSelection = next;
+  }
+
+  async function deleteSelected() {
+    if (preflightCleanupSelection.size === 0) return;
+    preflightPending = true;
+    try {
+      const ids = Array.from(preflightCleanupSelection);
+      const resp = await api.deleteAudioBulk(ids);
+      addToast(`Deleted ${resp.deleted.length} audio file(s)`, 'success');
+      // Re-run preflight to refresh tier + list.
+      const result = await api.recordingPreflight(plannedMinutes);
+      let oldest = [];
+      try {
+        const r = await api.getOldestAudio(20);
+        oldest = r.files || [];
+      } catch {}
+      if (result.tier === 'green') {
+        preflightModal = null;
+      } else {
+        preflightModal = { ...result, oldest };
+      }
+      preflightCleanupSelection = new Set();
+    } catch (e) {
+      addToast(`Bulk delete failed: ${e.message}`, 'error');
+    } finally {
+      preflightPending = false;
+    }
+  }
+
+  function dismissPreflight() {
+    preflightModal = null;
   }
 
   async function stopRecording() {
@@ -244,6 +351,92 @@
 
 <div class="max-w-xl mx-auto">
   <h1 class="text-2xl font-bold text-[var(--text-primary)] mb-8 text-center">Record</h1>
+
+  {#if preflightModal}
+    {@const tier = preflightModal.tier}
+    {@const tierColor = tier === 'red' ? 'red' : tier === 'orange' ? 'orange' : 'yellow'}
+    <div class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+      <div class="bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-xl shadow-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+        <div class="p-5 border-b border-[var(--border-subtle)]">
+          <h2 class="text-lg font-semibold text-{tierColor}-500">Disk space warning — {tier.toUpperCase()}</h2>
+          <p class="mt-1 text-sm text-[var(--text-secondary)]">{preflightModal.message}</p>
+          <p class="mt-2 text-xs text-[var(--text-muted)]">
+            Free: <span class="font-mono">{formatBytes(preflightModal.free_bytes)}</span>
+            · Estimated need: <span class="font-mono">{formatBytes(preflightModal.estimated_bytes)}</span>
+            · Planned: {preflightModal.planned_minutes} min
+          </p>
+        </div>
+
+        <div class="p-5">
+          <h3 class="text-sm font-medium text-[var(--text-secondary)] mb-2">
+            Oldest audio files you can safely delete
+          </h3>
+          {#if preflightModal.oldest.length === 0}
+            <p class="text-xs text-[var(--text-muted)]">No eligible files found (a meeting is only eligible when its pipeline has finished).</p>
+          {:else}
+            <div class="max-h-64 overflow-y-auto border border-[var(--border-subtle)] rounded-lg">
+              <table class="w-full text-xs">
+                <thead class="bg-[var(--bg-primary)] sticky top-0">
+                  <tr>
+                    <th class="px-3 py-2 text-left w-8"></th>
+                    <th class="px-3 py-2 text-left">Meeting</th>
+                    <th class="px-3 py-2 text-right">Size</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {#each preflightModal.oldest as file}
+                    <tr class="border-t border-[var(--border-subtle)]">
+                      <td class="px-3 py-2">
+                        <input
+                          type="checkbox"
+                          checked={preflightCleanupSelection.has(file.meeting_id)}
+                          onchange={() => togglePreflightSelection(file.meeting_id)}
+                        />
+                      </td>
+                      <td class="px-3 py-2 font-mono truncate max-w-xs">{file.meeting_id.slice(0, 12)}…</td>
+                      <td class="px-3 py-2 text-right font-mono">{formatBytes(file.size_bytes)}</td>
+                    </tr>
+                  {/each}
+                </tbody>
+              </table>
+            </div>
+            <button
+              onclick={deleteSelected}
+              disabled={preflightPending || preflightCleanupSelection.size === 0}
+              class="mt-3 px-4 py-2 text-xs bg-red-500 hover:bg-red-600 text-white rounded-lg disabled:opacity-50"
+            >
+              {preflightPending ? 'Deleting…' : `Delete selected (${preflightCleanupSelection.size})`}
+            </button>
+          {/if}
+        </div>
+
+        <div class="p-5 border-t border-[var(--border-subtle)] flex items-center justify-between gap-3">
+          <button
+            onclick={dismissPreflight}
+            class="px-4 py-2 text-sm text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+          >
+            Cancel
+          </button>
+
+          <div class="flex items-center gap-3">
+            {#if tier === 'red'}
+              <label class="text-xs text-[var(--text-secondary)] flex items-center gap-2">
+                <input type="checkbox" bind:checked={preflightConfirmRed} />
+                Yes, I understand the recording may fail
+              </label>
+            {/if}
+            <button
+              onclick={startAnyway}
+              disabled={startingRecording || (tier === 'red' && !preflightConfirmRed)}
+              class="px-4 py-2 text-sm text-white rounded-lg disabled:opacity-50 bg-{tierColor}-500 hover:bg-{tierColor}-600"
+            >
+              {startingRecording ? 'Starting…' : 'Start anyway'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  {/if}
 
   <!-- Idle state — always show record button when not recording -->
   {#if recState === 'idle'}
