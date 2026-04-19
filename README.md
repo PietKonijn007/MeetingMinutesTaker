@@ -178,6 +178,8 @@ mm actions complete <action_id>                   # Mark done
 | `mm generate <id>` | Generate minutes from transcript |
 | `mm reprocess <id>` | Re-run generation + ingestion (skips transcription/diarization) |
 | `mm rediarize <id>` | Re-run speaker diarization on existing audio (skips transcription) |
+| `mm status <id>` | Show per-stage pipeline state for a meeting (capture → transcribe → diarize → generate → ingest → embed → export) |
+| `mm resume <id>` | Resume pipeline from the first non-succeeded stage (supports `--from-stage`, `--all`) |
 | `mm embed` | Generate semantic search embeddings for all meetings (run once to backfill) |
 | `mm embed <id>` | Embed a single meeting |
 | `mm delete <id>` | Delete meeting and all associated data |
@@ -191,6 +193,17 @@ mm actions complete <action_id>                   # Mark done
 | `mm service stop` | Stop the service |
 | `mm service status` | Show service status and API health |
 | `mm service logs` | Show server logs (supports `--follow`, `--lines`) |
+
+## Pipeline state machine
+
+Every meeting flows through a seven-stage pipeline: `capture` → `transcribe` → `diarize` → `generate` → `ingest` → `embed` → `export`. Each stage's status (`pending` / `running` / `succeeded` / `failed` / `skipped`), attempt count, timestamps, and last error are persisted in the `pipeline_stages` table, so a crash or failure at any stage is visible and recoverable.
+
+- Run `mm status <meeting_id>` to see the current stage table.
+- Run `mm resume <meeting_id>` to re-run from the first non-succeeded stage; pass `--from-stage=<stage>` to override the starting point or `--all` to resume every meeting with a failed stage.
+- **On server restart** (`mm serve` lifespan): any stage still marked `running` beyond the interruption threshold (30 min) is flipped to `failed` with `last_error='interrupted'`. The server does **not** auto-resume — the user decides when to re-run.
+- Retention cleanup preserves audio for meetings whose pipeline has not reached a terminal state, so `mm resume` remains possible until the meeting's final stages succeed or are skipped.
+
+REST equivalents: `GET /api/meetings/:id/pipeline`, `POST /api/meetings/:id/resume`, `GET /api/pipeline/interrupted`.
 
 ## Web UI
 

@@ -20,10 +20,29 @@ load_dotenv()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Create the DB session factory on startup; clean up on shutdown."""
+    import logging
+
     config = ConfigLoader.load_default()
     db_path = resolve_db_path(config.storage.sqlite_path)
     db_path.parent.mkdir(parents=True, exist_ok=True)
     app.state.session_factory = get_session_factory(f"sqlite:///{db_path}")
+
+    # PIP-1: flip any `running` pipeline stages older than the threshold to
+    # `failed` — the process that owned them is no longer alive.
+    from meeting_minutes.pipeline_state import reset_interrupted
+
+    session = app.state.session_factory()
+    try:
+        reset = reset_interrupted(session)
+        if reset:
+            meetings = {mid for mid, _ in reset}
+            logging.getLogger("meeting_minutes.pipeline").info(
+                "Reset %d interrupted pipeline stages across %d meetings",
+                len(reset), len(meetings),
+            )
+    finally:
+        session.close()
+
     yield
     # Nothing to clean up — SQLite handles its own close.
 
@@ -59,6 +78,7 @@ from meeting_minutes.api.routes.backup import router as backup_router  # noqa: E
 from meeting_minutes.api.routes.retention import router as retention_router  # noqa: E402
 from meeting_minutes.api.routes.security import router as security_router  # noqa: E402
 from meeting_minutes.api.routes.chat import router as chat_router  # noqa: E402
+from meeting_minutes.api.routes.pipeline import router as pipeline_router  # noqa: E402
 from meeting_minutes.api.ws import router as ws_router  # noqa: E402
 
 app.include_router(meetings_router)
@@ -75,6 +95,7 @@ app.include_router(backup_router)
 app.include_router(retention_router)
 app.include_router(security_router)
 app.include_router(chat_router)
+app.include_router(pipeline_router)
 app.include_router(ws_router)
 
 # ── Static files (Svelte SPA) ────────────────────────────────────────────

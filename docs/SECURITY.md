@@ -209,6 +209,119 @@ Meeting transcripts containing adversarial text (e.g., "Ignore previous instruct
 
 ---
 
+## Proposed Enhancements (Not Yet Implemented)
+
+The items below are **forward-looking proposals documented for future consideration**. They are **not scheduled** for the current implementation batch (Batch 3 — see `specs/07-implementation-plan-batch3.md`). Each proposal would close or harden one of the findings above; they are recorded here so the shape of the fix is agreed even if the work itself is deferred.
+
+---
+
+### P-1: Static API Key with OS Keychain Bootstrap (closes C-1)
+
+**Target finding:** C-1 (No Authentication on Any Endpoint).
+
+**Proposal.** Generate a random API key on first run. Store in the OS keychain (`Keychain` on macOS, `secret-service` on Linux, `CredentialManager` on Windows) via the `keyring` Python library — not in `config.yaml`, not in an env var users are likely to leak. Require `Authorization: Bearer <token>` on all non-localhost requests. Localhost-origin requests remain unauthenticated by default (current behavior preserved) but become opt-in auth-required via `security.require_localhost_auth: bool` in config for users who want defence-in-depth. The web UI reads the key from keychain on first load and keeps it in memory only (no localStorage).
+
+**Why keychain, not env var.** Env vars leak through `ps`, process dumps, crash reports, and shell history. Keychain is the platform's blessed secret store and integrates with Touch ID / Windows Hello prompts on elevated access.
+
+**Effort estimate:** Medium.
+
+**Status:** Proposed, not scheduled.
+
+---
+
+### P-2: Encryption-by-Default with Key Rotation (closes H-3)
+
+**Target finding:** H-3 (Database Stored in Plaintext by Default).
+
+**Proposal.** After C-3 is resolved (done), enable Fernet encryption on transcripts, minutes, and `structured_json` by default on fresh installs. Key material lives in the OS keychain (same mechanism as P-1), not in an env var. Add a new CLI command `mm rotate-key` that:
+1. Generates a new key.
+2. Decrypts every encrypted field with the old key, re-encrypts with the new one.
+3. Runs an integrity check (decrypt with new key, compare against a hash captured before re-encrypting).
+4. Atomically swaps the keychain entry on success; keeps the old key in an "escrow" slot for N days (configurable, default 7) for emergency recovery.
+
+This gives operational key rotation — currently impossible — and makes encryption the default rather than an opt-in.
+
+**Effort estimate:** Medium.
+
+**Status:** Proposed, not scheduled.
+
+---
+
+### P-3: Ollama / LLM Host Allowlist (closes M-3)
+
+**Target finding:** M-3 (Ollama Remote URL Accepted Without Validation).
+
+**Proposal.** At config load, validate every LLM provider URL:
+- Must be `http://localhost:*`, `http://127.0.0.1:*`, or `http://[::1]:*`, **or**
+- Must match an explicit entry in `security.allowed_llm_hosts` (default empty).
+
+Reject on mismatch with a clear error. Applied uniformly to Ollama, OpenRouter-compatible self-hosted endpoints, and any future local-server LLM backends. The default posture blocks SSRF-by-config-typo without breaking the intended local-first Ollama flow.
+
+**Effort estimate:** Small.
+
+**Status:** Proposed, not scheduled.
+
+---
+
+### P-4: `SecretStr` Sweep for API Keys (closes M-1)
+
+**Target finding:** M-1 (LLM API Keys Potentially Logged).
+
+**Proposal.** Wrap every credential field in Pydantic's `SecretStr`:
+- `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, `HF_TOKEN`
+- `MM_API_KEY` (from P-1), `MM_ENCRYPTION_KEY`
+
+The secret value is only unwrapped via `.get_secret_value()` at the exact provider call site. Configure `logging.Formatter` / structlog processor to refuse to serialize `SecretStr` (renders as `'**********'`). Add a regression test that emits every log line the app produces on a known fixture run and grep-asserts no secret substring leaks. Structural, not behavioural — the point is to make leaks impossible to introduce by mistake in new code.
+
+**Effort estimate:** Small.
+
+**Status:** Proposed, not scheduled.
+
+---
+
+### P-5: Redacted Export Mode
+
+**Target finding:** Structural — no specific finding; complements M-5 and external-sharing safety.
+
+**Proposal.** Optional redaction pipeline for any export path (PDF, DOCX, Markdown, clipboard, Obsidian) that runs regex + NER (spaCy `en_core_web_sm`) and substitutes detected entities with stable placeholders: `[Person A]`, `[Email]`, `[Phone]`, `[Org]`. A per-export `redaction_map` is stored alongside the export file so the user can un-redact later with the mapping file (never sent externally). Exposed as:
+- CLI flag: `mm export <id> --format=pdf --redact=names,emails,phones,orgs`
+- UI: "Share safely" button on the meeting detail page
+
+This is a safety rail for the common case of forwarding minutes to a manager, legal, or compliance — something users will do manually anyway.
+
+**Effort estimate:** Medium.
+
+**Status:** Proposed, not scheduled. Depends on EXP-1 (Batch 3) for the export plumbing.
+
+---
+
+### P-6: Audit Trail for Destructive Operations
+
+**Target finding:** Structural — no specific finding; complements recovery from accidental deletion.
+
+**Proposal.** Append-only `audit_log` table:
+
+```sql
+audit_log (
+  id           INTEGER PRIMARY KEY,
+  timestamp    TIMESTAMP NOT NULL,
+  action       TEXT NOT NULL,      -- 'delete_meeting', 'cleanup_audio', 'rotate_key', 'merge_persons', ...
+  target_type  TEXT NOT NULL,      -- 'meeting', 'person', 'audio_file', 'encryption_key'
+  target_id    TEXT,
+  pre_state_hash TEXT,             -- sha256 of the target's state before the action
+  source       TEXT NOT NULL,      -- 'cli' | 'api' | 'ui' | 'retention'
+  detail       TEXT                -- free-form note, e.g. "ran by mm cleanup; retention=40d"
+)
+```
+
+Not a security log for intrusion detection (single-user scope) — a paper trail for destructive actions. CLI: `mm audit [--since=<duration>]` lists entries. Combined with the existing hourly DB backup, it turns "I think I deleted a meeting I shouldn't have" from a dead end into a recoverable incident.
+
+**Effort estimate:** Small.
+
+**Status:** Proposed, not scheduled.
+
+---
+
 ## Prioritized Fix Roadmap
 
 ### Do Now (before any non-localhost use)
