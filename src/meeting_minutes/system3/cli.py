@@ -447,6 +447,140 @@ def rediarize_cmd(
 
 
 # ---------------------------------------------------------------------------
+# mm status (pipeline state) + mm resume
+# ---------------------------------------------------------------------------
+
+
+_STATUS_STYLE = {
+    "pending": "dim",
+    "running": "yellow",
+    "succeeded": "green",
+    "failed": "red",
+    "skipped": "blue",
+}
+
+
+@app.command("status")
+def status_cmd(
+    meeting_id: str = typer.Argument(..., help="Meeting ID"),
+):
+    """Show per-stage pipeline state for a meeting."""
+    from meeting_minutes.pipeline_state import Stage, get_stages
+
+    session = _get_db_session()
+    try:
+        states = get_stages(session, meeting_id)
+    finally:
+        session.close()
+
+    if not states:
+        console.print(f"[yellow]No pipeline state recorded for {meeting_id}[/yellow]")
+        return
+
+    table = Table(title=f"Pipeline state — {meeting_id[:12]}")
+    table.add_column("Stage")
+    table.add_column("Status")
+    table.add_column("Attempt", justify="right")
+    table.add_column("Started")
+    table.add_column("Finished")
+    table.add_column("Last error")
+
+    for s in states:
+        style = _STATUS_STYLE.get(s.status.value, "")
+        table.add_row(
+            s.stage.value,
+            f"[{style}]{s.status.value}[/{style}]" if style else s.status.value,
+            str(s.attempt),
+            s.started_at.strftime("%Y-%m-%d %H:%M:%S") if s.started_at else "",
+            s.finished_at.strftime("%Y-%m-%d %H:%M:%S") if s.finished_at else "",
+            (s.last_error or "")[:60],
+        )
+    console.print(table)
+
+
+@app.command("resume")
+def resume_cmd(
+    meeting_id: Optional[str] = typer.Argument(None, help="Meeting ID (omit with --all)"),
+    all_meetings: bool = typer.Option(False, "--all", help="Resume every meeting with a failed stage"),
+    from_stage: Optional[str] = typer.Option(None, "--from-stage", help="Start from this stage"),
+):
+    """Resume a meeting's pipeline from the first non-succeeded stage."""
+    from meeting_minutes.pipeline import PipelineOrchestrator
+    from meeting_minutes.pipeline_state import Stage, Status, get_stages
+    from meeting_minutes.system3.db import PipelineStageORM
+
+    config = _load_config()
+    orchestrator = PipelineOrchestrator(config)
+
+    parsed_stage: Stage | None = None
+    if from_stage:
+        try:
+            parsed_stage = Stage(from_stage)
+        except ValueError:
+            err_console.print(f"[red]Unknown stage: {from_stage}[/red]")
+            raise typer.Exit(code=1)
+
+    if all_meetings:
+        session = _get_db_session(config)
+        try:
+            failed_ids = [
+                row[0]
+                for row in session.query(PipelineStageORM.meeting_id)
+                .filter(PipelineStageORM.status == Status.FAILED.value)
+                .distinct()
+                .all()
+            ]
+        finally:
+            session.close()
+
+        if not failed_ids:
+            console.print("[dim]No meetings with failed stages found.[/dim]")
+            return
+
+        console.print(f"[bold]Resuming {len(failed_ids)} meeting(s)...[/bold]")
+        for mid in failed_ids:
+            try:
+                asyncio.run(orchestrator.resume_from(mid, from_stage=parsed_stage))
+            except Exception as exc:
+                err_console.print(f"[red]Resume failed for {mid[:12]}: {exc}[/red]")
+        return
+
+    if not meeting_id:
+        err_console.print("[red]Provide a meeting_id or use --all[/red]")
+        raise typer.Exit(code=1)
+
+    # Report which stages will run.
+    session = _get_db_session(config)
+    try:
+        existing = {s.stage: s for s in get_stages(session, meeting_id)}
+    finally:
+        session.close()
+
+    start = parsed_stage
+    if start is None:
+        for stage in Stage.ordered():
+            state = existing.get(stage)
+            if state is None or state.status != Status.SUCCEEDED:
+                start = stage
+                break
+
+    if start is None:
+        console.print(f"[dim]All stages already succeeded for {meeting_id[:12]}[/dim]")
+        return
+
+    start_idx = Stage.ordered().index(start)
+    plan = [s.value for s in Stage.ordered()[start_idx:]]
+    console.print(f"[bold]Resuming {meeting_id[:12]} — will run: {', '.join(plan)}[/bold]")
+
+    try:
+        asyncio.run(orchestrator.resume_from(meeting_id, from_stage=parsed_stage))
+        console.print(f"[green]Resume complete.[/green]")
+    except Exception as exc:
+        err_console.print(f"[red]Resume failed: {exc}[/red]")
+        raise typer.Exit(code=1)
+
+
+# ---------------------------------------------------------------------------
 # mm init
 # ---------------------------------------------------------------------------
 
