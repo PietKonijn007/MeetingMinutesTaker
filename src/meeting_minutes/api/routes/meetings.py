@@ -405,18 +405,79 @@ def get_transcript(
     )
 
 
+@router.get("/{meeting_id}/speaker-suggestions")
+def get_speaker_suggestions(
+    meeting_id: str,
+    storage: Annotated[StorageEngine, Depends(get_storage)],
+    config: Annotated[AppConfig, Depends(get_config)],
+):
+    """Return per-cluster speaker suggestions produced at diarization time (SPK-1).
+
+    Each entry is ``{cluster_id, suggested_person_id, suggested_name,
+    suggestion_score, suggestion_tier, speech_seconds}``. Clusters without a
+    suggestion are still returned so the UI can decide whether to offer a
+    "create new person" flow for long-enough unknown speakers.
+    """
+    import json as _json
+
+    m = storage.get_meeting(meeting_id)
+    if m is None:
+        raise HTTPException(status_code=404, detail=f"No meeting with ID {meeting_id}")
+
+    data_dir = Path(config.data_dir).expanduser()
+    transcript_path = data_dir / "transcripts" / f"{meeting_id}.json"
+    if not transcript_path.exists():
+        raise HTTPException(status_code=404, detail="No transcript JSON on disk")
+
+    try:
+        data = _json.loads(transcript_path.read_text())
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Could not read transcript: {exc}")
+
+    # Compute cumulative speech seconds per cluster for the "long unknown"
+    # inline-create hint (> 30 s threshold).
+    from meeting_minutes.system1.speaker_identity import cluster_speech_durations
+
+    segments = data.get("transcript", {}).get("segments", []) or []
+    durations = cluster_speech_durations(segments)
+
+    suggestions = []
+    for sp in data.get("speakers", []) or []:
+        if not isinstance(sp, dict):
+            continue
+        label = sp.get("label")
+        suggestions.append({
+            "cluster_id": label,
+            "current_name": sp.get("name"),
+            "suggested_person_id": sp.get("suggested_person_id"),
+            "suggested_name": sp.get("suggested_name"),
+            "suggestion_score": float(sp.get("suggestion_score", 0.0) or 0.0),
+            "suggestion_tier": sp.get("suggestion_tier"),
+            "speech_seconds": round(durations.get(label, 0.0), 2),
+        })
+    return {"meeting_id": meeting_id, "suggestions": suggestions}
+
+
 @router.patch("/{meeting_id}/transcript/speakers")
 def update_transcript_speakers(
     meeting_id: str,
     body: dict,
     config: Annotated[AppConfig, Depends(get_config)],
     storage: Annotated[StorageEngine, Depends(get_storage)],
+    session: Annotated[Session, Depends(get_db_session)],
 ):
     """Rename speakers in a transcript. Applies to both segment labels and speakers array.
 
     Request body options (choose one):
         { "mapping": {"SPEAKER_00": "Tom", "SPEAKER_01": "Mary"} }
         { "ordered_names": ["Tom", "Mary"] }  # first-appearance order
+
+    Optional SPK-1 field to confirm the voice sample under a specific person:
+        { "mapping": {...}, "person_mapping": {"SPEAKER_00": "p-jon"} }
+
+    When ``person_mapping`` is provided, confirm_sample() fires for each
+    cluster-to-person pair, and any prior sample for that cluster under a
+    different person is demoted to confirmed=False (invalidate_contamination).
 
     Also updates data/notes/{meeting_id}.json so the names persist for
     regenerate/reprocess.
@@ -489,7 +550,35 @@ def update_transcript_speakers(
     notes_data["speakers"] = seen_labels
     notes_file.write_text(_json.dumps(notes_data, indent=2))
 
-    return {"updated": updated, "mapping": mapping, "speakers": seen_labels}
+    # SPK-1: when the caller supplies person_mapping, confirm or invalidate
+    # the voice samples for each relabelled cluster.
+    spk1_result: dict = {"confirmed": 0, "invalidated": 0}
+    person_mapping = body.get("person_mapping") or {}
+    if isinstance(person_mapping, dict) and person_mapping:
+        from meeting_minutes.system1 import speaker_identity as si
+
+        for cluster_id, person_id in person_mapping.items():
+            if not cluster_id:
+                continue
+            # Demote any sample previously written for this cluster under a
+            # different person.
+            invalidated = si.invalidate_contamination(
+                session, meeting_id, cluster_id, person_id,
+            )
+            spk1_result["invalidated"] += invalidated
+            if person_id:
+                confirmed = si.confirm_sample(
+                    session, meeting_id, cluster_id, person_id,
+                )
+                if confirmed is not None:
+                    spk1_result["confirmed"] += 1
+
+    return {
+        "updated": updated,
+        "mapping": mapping,
+        "speakers": seen_labels,
+        "spk1": spk1_result,
+    }
 
 
 @router.get("/{meeting_id}/analytics", response_model=TalkTimeAnalyticsResponse)

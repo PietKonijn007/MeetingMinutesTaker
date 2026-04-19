@@ -37,6 +37,11 @@ class PersonUpdate(BaseModel):
     email: Optional[str] = None
 
 
+class PersonCreate(BaseModel):
+    name: str
+    email: Optional[str] = None
+
+
 class PersonMergeRequest(BaseModel):
     target_id: str  # the person to merge INTO (source = person_id in URL)
     rename_actions: bool = True  # if True, rename owner in action_items and decisions
@@ -96,6 +101,36 @@ def list_people(
     items = [_person_detail(session, p).model_dump() for p in people]
 
     return PaginatedResponse(items=items, total=total, limit=limit, offset=offset)
+
+
+@router.post("", response_model=PersonDetailResponse, status_code=201)
+def create_person(
+    body: PersonCreate,
+    session: Annotated[Session, Depends(get_db_session)],
+):
+    """Create a new person. Used by the SPK-1 inline-create flow when the
+    user has a long unknown speaker and wants to name them without leaving
+    the meeting page.
+    """
+    import uuid
+
+    name = body.name.strip() if body.name else ""
+    email = body.email.strip() if body.email else None
+    if not name:
+        raise HTTPException(status_code=400, detail="name is required")
+
+    if email:
+        existing = session.query(PersonORM).filter(PersonORM.email == email).first()
+        if existing:
+            raise HTTPException(
+                status_code=409,
+                detail=f"A person ({existing.name}) already uses that email",
+            )
+
+    person = PersonORM(person_id=f"p-{uuid.uuid4().hex[:8]}", name=name, email=email)
+    session.add(person)
+    session.commit()
+    return _person_detail(session, person)
 
 
 @router.get("/{person_id}", response_model=PersonDetailResponse)
