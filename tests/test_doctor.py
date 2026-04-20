@@ -227,17 +227,72 @@ def test_sqlite_vec_check_runs(config):
 
 
 # ---------------------------------------------------------------------------
+# WeasyPrint (EXP-1, optional PDF export)
+# ---------------------------------------------------------------------------
+
+
+def test_weasyprint_ok(monkeypatch):
+    """Happy path: a dummy weasyprint module that imports and exposes HTML."""
+    fake_weasy = SimpleNamespace(HTML=object)
+    monkeypatch.setitem(sys.modules, "weasyprint", fake_weasy)
+    result = doctor.check_weasyprint()
+    assert result.status == "ok"
+    assert "available" in result.detail.lower()
+
+
+def test_weasyprint_missing_package(monkeypatch):
+    """ImportError path: package not installed — warn (optional feature)."""
+    # Remove any cached module so the import actually runs.
+    monkeypatch.delitem(sys.modules, "weasyprint", raising=False)
+
+    import builtins
+
+    real_import = builtins.__import__
+
+    def fake_import(name, *args, **kwargs):
+        if name == "weasyprint":
+            raise ImportError("No module named 'weasyprint'")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+    result = doctor.check_weasyprint()
+    assert result.status == "warn"
+    assert "pip install weasyprint" in result.fix_command
+
+
+def test_weasyprint_missing_natives(monkeypatch):
+    """OSError path: package present, libpango/cairo missing — warn."""
+    monkeypatch.delitem(sys.modules, "weasyprint", raising=False)
+
+    import builtins
+
+    real_import = builtins.__import__
+
+    def fake_import(name, *args, **kwargs):
+        if name == "weasyprint":
+            raise OSError("cannot load library 'libpango-1.0-0'")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+    result = doctor.check_weasyprint()
+    assert result.status == "warn"
+    assert "brew install" in result.fix_command
+    assert "pango" in result.fix_command
+
+
+# ---------------------------------------------------------------------------
 # Aggregation
 # ---------------------------------------------------------------------------
 
 
-def test_run_checks_returns_ten_in_order(config):
+def test_run_checks_returns_eleven_in_order(config):
     results = doctor.run_checks(config)
-    assert len(results) == 10
+    assert len(results) == 11
     names = [r.name for r in results]
     assert names[0] == "python_version"
     assert names[1] == "ffmpeg"
-    assert names[-1] == "sqlite_vec"
+    assert names[-2] == "sqlite_vec"
+    assert names[-1] == "weasyprint"
 
 
 def test_overall_status_reflects_worst(monkeypatch, config):

@@ -205,10 +205,30 @@ class AppConfig(BaseModel):
     def model_post_init(self, __context) -> None:
         """Apply performance settings to process env vars (affects torch, etc.)."""
         import os
+        import sys
+        from pathlib import Path as _Path
+
         if self.performance.pytorch_mps_fallback:
             os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
         else:
             os.environ.pop("PYTORCH_ENABLE_MPS_FALLBACK", None)
+
+        # EXP-1: WeasyPrint's ctypes.util.find_library() can't locate the
+        # Homebrew-installed pango/cairo/gdk-pixbuf/libffi without
+        # DYLD_FALLBACK_LIBRARY_PATH pointing at the brew prefix. Set it
+        # here so it's in place before anyone imports weasyprint (which is
+        # deferred to first PDF export). Runs for every entry point that
+        # loads config — mm serve, mm export, mm doctor, mm repair, etc.
+        # Apple Silicon puts brew at /opt/homebrew, Intel at /usr/local.
+        if sys.platform == "darwin":
+            for brew_lib in ("/opt/homebrew/lib", "/usr/local/lib"):
+                if _Path(brew_lib).is_dir():
+                    existing = os.environ.get("DYLD_FALLBACK_LIBRARY_PATH", "")
+                    if brew_lib not in existing.split(":"):
+                        os.environ["DYLD_FALLBACK_LIBRARY_PATH"] = (
+                            f"{brew_lib}:{existing}" if existing else brew_lib
+                        )
+                    break
 
 
 class ConfigLoader:
