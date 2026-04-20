@@ -414,6 +414,139 @@ def generate_cmd(
 
 
 # ---------------------------------------------------------------------------
+# mm export — EXP-1 (per-meeting or bulk series)
+# ---------------------------------------------------------------------------
+
+
+@app.command("export")
+def export_cmd(
+    meeting_id: Optional[str] = typer.Argument(
+        None,
+        help="Meeting ID to export (omit when using --series)",
+    ),
+    format: str = typer.Option("pdf", "--format", "-f", help="pdf | docx | md"),
+    with_transcript: bool = typer.Option(
+        False, "--with-transcript", help="Append the full transcript",
+    ),
+    out: Optional[Path] = typer.Option(
+        None, "--out", "-o",
+        help="Output file (single) or directory (--series). Defaults under data/exports/.",
+    ),
+    series: Optional[str] = typer.Option(
+        None, "--series", help="Export every meeting in this series as a ZIP bundle",
+    ),
+):
+    """Export a meeting (or a whole series) to PDF / DOCX / Markdown."""
+    from meeting_minutes.export import (
+        ExportDependencyMissing,
+        default_filename,
+        export as render_export,
+        slugify,
+    )
+    from meeting_minutes.export.bundle import make_zip
+    from meeting_minutes.system3.db import (
+        MeetingORM,
+        MeetingSeriesMemberORM,
+        MeetingSeriesORM,
+    )
+
+    if format not in ("pdf", "docx", "md"):
+        err_console.print("[red]--format must be one of: pdf, docx, md[/red]")
+        raise typer.Exit(code=2)
+    if series is None and meeting_id is None:
+        err_console.print("[red]Provide either a meeting_id or --series=<id>[/red]")
+        raise typer.Exit(code=2)
+    if series is not None and meeting_id is not None:
+        err_console.print("[red]Pass a meeting_id or --series, not both[/red]")
+        raise typer.Exit(code=2)
+
+    config = _load_config()
+    session = _get_db_session(config)
+
+    # Default output directory under the project data dir.
+    default_dir = Path(config.data_dir).expanduser() / "exports"
+
+    try:
+        if meeting_id is not None:
+            m = session.get(MeetingORM, meeting_id)
+            if m is None:
+                err_console.print(f"[red]No meeting with ID {meeting_id}[/red]")
+                raise typer.Exit(code=1)
+            try:
+                result = render_export(m, format=format, with_transcript=with_transcript)
+            except ExportDependencyMissing as exc:
+                err_console.print(f"[red]{exc}[/red]")
+                raise typer.Exit(code=1)
+
+            out_path = out
+            if out_path is None:
+                default_dir.mkdir(parents=True, exist_ok=True)
+                out_path = default_dir / result.filename
+            elif out_path.is_dir():
+                out_path = out_path / result.filename
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            out_path.write_bytes(result.content)
+            console.print(f"[green]Exported:[/green] {out_path}")
+            return
+
+        # Bulk series export.
+        series_row = session.get(MeetingSeriesORM, series)
+        if series_row is None:
+            err_console.print(f"[red]No series with ID {series}[/red]")
+            raise typer.Exit(code=1)
+
+        member_ids = [
+            r.meeting_id
+            for r in session.query(MeetingSeriesMemberORM)
+            .filter_by(series_id=series)
+            .all()
+        ]
+        members = (
+            session.query(MeetingORM)
+            .filter(MeetingORM.meeting_id.in_(member_ids))
+            .order_by(MeetingORM.date.asc())
+            .all()
+        )
+        if not members:
+            err_console.print(f"[red]Series {series} has no meetings[/red]")
+            raise typer.Exit(code=1)
+
+        results = []
+        for m in members:
+            if m.minutes is None or not (m.minutes.markdown_content or "").strip():
+                console.print(f"[yellow]Skipping {m.meeting_id}: no minutes yet[/yellow]")
+                continue
+            try:
+                results.append(
+                    render_export(m, format=format, with_transcript=with_transcript)
+                )
+            except ExportDependencyMissing as exc:
+                err_console.print(f"[red]{exc}[/red]")
+                raise typer.Exit(code=1)
+        if not results:
+            err_console.print("[red]No member meetings had minutes to export[/red]")
+            raise typer.Exit(code=1)
+
+        zip_bytes = make_zip(results)
+        zip_name = f"{slugify(series_row.title or series)}.zip"
+        if out is None:
+            default_dir.mkdir(parents=True, exist_ok=True)
+            out_path = default_dir / zip_name
+        elif out.is_dir() or not out.suffix:
+            out.mkdir(parents=True, exist_ok=True)
+            out_path = out / zip_name
+        else:
+            out_path = out
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_bytes(zip_bytes)
+        console.print(
+            f"[green]Exported {len(results)} meetings →[/green] {out_path}"
+        )
+    finally:
+        session.close()
+
+
+# ---------------------------------------------------------------------------
 # mm reprocess
 # ---------------------------------------------------------------------------
 
