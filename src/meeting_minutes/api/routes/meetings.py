@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Annotated, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from sqlalchemy.orm import Session
 
 from meeting_minutes.api.deps import get_config, get_db_session, get_search, get_storage
@@ -784,6 +784,42 @@ async def regenerate_meeting(
     return {"status": "regenerated", "meeting_id": meeting_id}
 
 
+def _export_meeting_to_response(
+    m: MeetingORM,
+    *,
+    format: str,
+    with_transcript: bool,
+) -> Response:
+    """Shared helper used by both the POST and GET export endpoints.
+
+    Delegates rendering to ``meeting_minutes.export.export`` and wraps the
+    result in a ``Response`` with an ``attachment`` Content-Disposition.
+    Converts ``ExportDependencyMissing`` into a 501.
+    """
+    from meeting_minutes.export import ExportDependencyMissing, export as render_export
+
+    if format not in ("pdf", "md", "docx"):
+        raise HTTPException(
+            status_code=400,
+            detail="Unsupported format. Use 'pdf', 'docx' or 'md'.",
+        )
+    if m.minutes is None or not (m.minutes.markdown_content or "").strip():
+        raise HTTPException(status_code=400, detail="No minutes to export for this meeting")
+
+    try:
+        result = render_export(m, format=format, with_transcript=with_transcript)
+    except ExportDependencyMissing as exc:
+        raise HTTPException(status_code=501, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    return Response(
+        content=result.content,
+        media_type=result.content_type,
+        headers={"Content-Disposition": f'attachment; filename="{result.filename}"'},
+    )
+
+
 @router.post("/{meeting_id}/export")
 def export_meeting(
     meeting_id: str,
@@ -791,33 +827,26 @@ def export_meeting(
     storage: Annotated[StorageEngine, Depends(get_storage)],
     config: Annotated[AppConfig, Depends(get_config)],
 ):
-    """Export meeting minutes in the requested format."""
+    """Export meeting minutes in the requested format (POST — legacy/body shape)."""
     m = storage.get_meeting(meeting_id)
     if m is None:
         raise HTTPException(status_code=404, detail=f"No meeting with ID {meeting_id}")
+    return _export_meeting_to_response(
+        m, format=body.format, with_transcript=False,
+    )
 
-    if body.format not in ("pdf", "md"):
-        raise HTTPException(status_code=400, detail="Unsupported format. Use 'pdf' or 'md'.")
 
-    if m.minutes is None or not m.minutes.markdown_content:
-        raise HTTPException(status_code=400, detail="No minutes to export for this meeting")
-
-    if body.format == "md":
-        data_dir = Path(config.data_dir).expanduser()
-        export_dir = data_dir / "exports"
-        export_dir.mkdir(parents=True, exist_ok=True)
-        filename = f"{meeting_id}.md"
-        export_path = export_dir / filename
-        export_path.write_text(m.minutes.markdown_content, encoding="utf-8")
-        return FileResponse(
-            path=str(export_path),
-            media_type="text/markdown",
-            filename=filename,
-        )
-
-    # PDF export — basic placeholder that returns markdown wrapped in a note
-    # A full PDF implementation would use a library like weasyprint or reportlab.
-    raise HTTPException(
-        status_code=501,
-        detail="PDF export is not yet implemented. Use 'md' format instead.",
+@router.get("/{meeting_id}/export")
+def export_meeting_get(
+    meeting_id: str,
+    storage: Annotated[StorageEngine, Depends(get_storage)],
+    format: str = Query("md"),
+    with_transcript: bool = Query(False),
+):
+    """Export meeting minutes in the requested format (GET — browser download)."""
+    m = storage.get_meeting(meeting_id)
+    if m is None:
+        raise HTTPException(status_code=404, detail=f"No meeting with ID {meeting_id}")
+    return _export_meeting_to_response(
+        m, format=format, with_transcript=with_transcript,
     )
