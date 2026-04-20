@@ -1,4 +1,5 @@
 <script>
+  import { tick } from 'svelte';
   import { addToast } from '$lib/stores/toasts.js';
 
   /**
@@ -12,8 +13,35 @@
   let open = $state(false);
   let busy = $state(false);
   let withTranscript = $state(false);
+  let triggerRef = $state();
+  // 'bottom' opens below the button; 'top' flips upward when there isn't
+  // enough room below the trigger (e.g. when the Export button sits near
+  // the bottom of the viewport).
+  let placement = $state('bottom');
 
-  function toggle() { open = !open; }
+  // Rough menu height: ~44px per row × up to 5 rows (transcript toggle +
+  // PDF + DOCX + MD + optional Obsidian) + padding = ~240px. Keep this as
+  // an upper bound for the flip heuristic.
+  const APPROX_MENU_HEIGHT = 240;
+
+  async function toggle() {
+    open = !open;
+    if (open) {
+      await tick();
+      updatePlacement();
+    }
+  }
+
+  function updatePlacement() {
+    if (!triggerRef) return;
+    const rect = triggerRef.getBoundingClientRect();
+    const spaceBelow = window.innerHeight - rect.bottom;
+    const spaceAbove = rect.top;
+    // Flip up only if below is tight AND above has more room; otherwise
+    // stay below so the menu scrolls if absolutely necessary.
+    placement = spaceBelow < APPROX_MENU_HEIGHT && spaceAbove > spaceBelow ? 'top' : 'bottom';
+  }
+
   function close() { open = false; }
 
   function slug(s) {
@@ -61,6 +89,7 @@
 
 <div class="relative inline-block">
   <button
+    bind:this={triggerRef}
     type="button"
     onclick={toggle}
     disabled={busy}
@@ -77,8 +106,10 @@
   {#if open}
     <div
       role="menu"
-      class="absolute left-0 mt-1 w-56 rounded-lg border border-[var(--border-subtle)]
-             bg-[var(--bg-surface)] shadow-lg z-20"
+      class="absolute left-0 w-56 rounded-lg border border-[var(--border-subtle)]
+             bg-[var(--bg-surface)] shadow-lg z-20
+             max-h-[calc(100vh-7rem)] overflow-y-auto
+             {placement === 'top' ? 'bottom-full mb-1' : 'top-full mt-1'}"
     >
       <label class="flex items-center gap-2 px-3 py-2 text-xs text-[var(--text-secondary)] border-b border-[var(--border-subtle)]">
         <input type="checkbox" bind:checked={withTranscript} />
