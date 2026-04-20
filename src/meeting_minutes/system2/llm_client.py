@@ -146,13 +146,16 @@ class LLMClient:
 
         messages = [{"role": "user", "content": prompt}]
 
-        response = await client.messages.create(
+        kwargs: dict = dict(
             model=model,
             max_tokens=self._config.max_output_tokens,
-            temperature=self._config.temperature,
             system=system_prompt if system_prompt else "You are a helpful assistant.",
             messages=messages,
         )
+        if not model.startswith("claude-opus"):
+            kwargs["temperature"] = self._config.temperature
+
+        response = await client.messages.create(**kwargs)
 
         text = response.content[0].text if response.content else ""
         input_tokens = response.usage.input_tokens
@@ -223,15 +226,18 @@ class LLMClient:
         client = anthropic.AsyncAnthropic(api_key=api_key)
 
         start = time.time()
-        response = await client.messages.create(
+        kwargs: dict = dict(
             model=model,
             max_tokens=self._config.max_output_tokens,
-            temperature=self._config.temperature,
             system=system_prompt if system_prompt else "You are a helpful assistant.",
             messages=[{"role": "user", "content": prompt}],
             tools=[tool_definition],
             tool_choice={"type": "tool", "name": tool_definition["name"]},
         )
+        if not model.startswith("claude-opus"):
+            kwargs["temperature"] = self._config.temperature
+
+        response = await client.messages.create(**kwargs)
         elapsed = time.time() - start
 
         # Extract structured data from tool_use block
