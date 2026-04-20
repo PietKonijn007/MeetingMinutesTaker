@@ -210,6 +210,12 @@ class PipelineOrchestrator:
                 mark_failed(session, meeting_id, stage, str(exc))
             finally:
                 session.close()
+            # NOT-1: fire a desktop notification on stage failure. Wrap
+            # defensively — notifications must never break the pipeline.
+            try:
+                self._notify_failed(meeting_id, stage.value, str(exc))
+            except Exception as notif_exc:  # pragma: no cover - defensive
+                self._logger.debug("Failure notification dispatch failed: %s", notif_exc)
             raise
         else:
             session = self._state_session()
@@ -217,6 +223,70 @@ class PipelineOrchestrator:
                 mark_succeeded(session, meeting_id, stage, artifact_path=ctx.artifact_path)
             finally:
                 session.close()
+
+    # -----------------------------------------------------------------------
+    # NOT-1: desktop notification helpers
+    # -----------------------------------------------------------------------
+
+    def _meeting_summary_for_notification(self, meeting_id: str) -> tuple[str, str | None, int | None]:
+        """Return ``(title, duration, open_action_count)`` for a meeting, best-effort.
+
+        All values degrade to short placeholders if the DB row is missing.
+        """
+        from meeting_minutes.system3.db import ActionItemORM, MeetingORM, get_session_factory
+
+        db_path = resolve_db_path(self._config.storage.sqlite_path)
+        session_factory = get_session_factory(f"sqlite:///{db_path}")
+        session = session_factory()
+        try:
+            m = session.get(MeetingORM, meeting_id)
+            if m is None:
+                return (f"Meeting {meeting_id[:8]}", None, None)
+            action_count = (
+                session.query(ActionItemORM)
+                .filter(ActionItemORM.meeting_id == meeting_id)
+                .count()
+            )
+            return (m.title or f"Meeting {meeting_id[:8]}", m.duration, action_count)
+        finally:
+            session.close()
+
+    def _notify_complete(self, meeting_id: str) -> None:
+        """Fire a pipeline-complete desktop notification. Never raises."""
+        try:
+            from meeting_minutes.notifications import notify_pipeline_complete
+
+            title, duration, action_count = self._meeting_summary_for_notification(meeting_id)
+            notify_pipeline_complete(
+                meeting_id,
+                title,
+                duration=duration,
+                action_count=action_count,
+                config=self._config.notifications,
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            self._logger.debug("Completion notification failed: %s", exc)
+
+    def _notify_failed(self, meeting_id: str, stage: str, error: str) -> None:
+        """Fire a pipeline-failed desktop notification. Never raises."""
+        try:
+            from meeting_minutes.notifications import notify_pipeline_failed
+
+            # The meeting may not yet exist in the DB (e.g. ingest failed
+            # on the first run), so fall back to the id short form.
+            try:
+                title, _, _ = self._meeting_summary_for_notification(meeting_id)
+            except Exception:
+                title = f"Meeting {meeting_id[:8]}"
+            notify_pipeline_failed(
+                meeting_id,
+                title,
+                stage=stage,
+                error=error,
+                config=self._config.notifications,
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            self._logger.debug("Failure notification failed: %s", exc)
 
     # -----------------------------------------------------------------------
     # Retry helper
@@ -318,6 +388,10 @@ class PipelineOrchestrator:
         _console(f"  PIPELINE COMPLETE — {elapsed:.1f}s total", "bold green")
         _console(f"  Meeting ID: {meeting_id}", "dim")
         _console(f"{'='*60}\n")
+
+        # NOT-1: fire a "meeting ready" desktop notification. Defensive —
+        # notifications must never break the pipeline.
+        self._notify_complete(meeting_id)
 
         return meeting_id
 
