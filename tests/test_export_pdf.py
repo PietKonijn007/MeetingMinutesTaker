@@ -20,11 +20,19 @@ from meeting_minutes.system3.db import (
 )
 
 
-# Skip all tests in this module if weasyprint isn't importable (native libs
-# not installed on this host). This keeps CI green on Linux/Windows runners
-# where the native deps are missing while still exercising the code path
-# locally on the maintainer's machine.
-weasyprint = pytest.importorskip("weasyprint")
+# Skip all tests in this module if weasyprint isn't fully usable on this
+# host. WeasyPrint raises OSError (not ImportError) when its native libs
+# libpango / cairo are missing, and importorskip only handles ImportError —
+# so we widen to both. Keeps the suite green on CI and on bare-macOS runs
+# while still exercising the code path on a fully provisioned maintainer box.
+try:
+    import weasyprint  # type: ignore  # noqa: F401
+except (ImportError, OSError) as _exc:
+    pytest.skip(
+        f"weasyprint unavailable ({_exc.__class__.__name__}: {_exc}); "
+        "install native deps (brew install pango cairo gdk-pixbuf libffi) to run PDF export tests",
+        allow_module_level=True,
+    )
 
 
 @pytest.fixture
