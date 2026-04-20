@@ -145,6 +145,7 @@ def _meeting_to_detail(m: MeetingORM) -> MeetingDetail:
                         "type": s.get("type"),
                     })
 
+        detailed_notes = ""
         if structured:
             sentiment = structured.get("sentiment")
             discussion_points = structured.get("discussion_points", []) or []
@@ -152,10 +153,17 @@ def _meeting_to_detail(m: MeetingORM) -> MeetingDetail:
             follow_ups = structured.get("follow_ups", []) or []
             parking_lot = structured.get("parking_lot", []) or []
             key_topics = structured.get("key_topics", []) or []
+            detailed_notes = structured.get("detailed_notes") or ""
+
+        # detailed_notes may live at the top level of the on-disk MinutesJSON
+        # (new persistence path); fall back to that if structured_data didn't have it.
+        if not detailed_notes and file_data:
+            detailed_notes = file_data.get("detailed_notes") or ""
 
         minutes = MinutesResponse(
             minutes_id=m.minutes.minutes_id,
             summary=m.minutes.summary,
+            detailed_notes=detailed_notes or None,
             markdown_content=m.minutes.markdown_content,
             generated_at=m.minutes.generated_at.isoformat() if m.minutes.generated_at else None,
             llm_model=m.minutes.llm_model,

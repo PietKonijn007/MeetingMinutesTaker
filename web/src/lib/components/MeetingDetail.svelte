@@ -249,6 +249,7 @@
         decisions: raw.decisions || [],
         minutes_markdown: raw.minutes?.markdown_content || null,
         summary: raw.minutes?.summary || raw.summary || null,
+        detailed_notes: raw.minutes?.detailed_notes || null,
         duration: raw.duration,
         participant_sentiments: raw.participant_sentiments || {},
         effectiveness_score: raw.effectiveness_score || 0,
@@ -453,7 +454,7 @@
     <!-- Tab content -->
     <div class="mb-8">
       {#if activeTab === 'minutes'}
-        {#if meeting.minutes_markdown || meeting.summary || meeting.discussion_points?.length || meeting.sections?.length}
+        {#if meeting.minutes_markdown || meeting.summary || meeting.detailed_notes || meeting.discussion_points?.length || meeting.sections?.length}
           <!-- Toggle: structured view vs raw markdown -->
           <div class="flex items-center justify-end gap-2 mb-4">
             {#if meeting.discussion_points?.length}
@@ -499,6 +500,21 @@
                     </div>
                   </div>
                 </div>
+              {/if}
+
+              <!-- Detailed narrative notes -->
+              {#if meeting.detailed_notes}
+                <details class="bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg overflow-hidden group" open>
+                  <summary class="cursor-pointer px-5 py-3 flex items-center justify-between hover:bg-[var(--bg-hover)]">
+                    <h3 class="text-xs font-semibold uppercase tracking-wider text-[var(--text-muted)]">Detailed Notes</h3>
+                    <svg class="w-4 h-4 text-[var(--text-muted)] transition-transform group-open:rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+                    </svg>
+                  </summary>
+                  <div class="px-5 pb-5 pt-1 border-t border-[var(--border-subtle)]">
+                    <MarkdownRenderer content={meeting.detailed_notes} />
+                  </div>
+                </details>
               {/if}
 
               <!-- Key topics chips -->

@@ -73,6 +73,7 @@ class MinutesJSONWriter:
 
         structured_data = {
             "sentiment": getattr(minutes, "sentiment", None),
+            "detailed_notes": getattr(minutes, "detailed_notes", "") or "",
             "participants": [p.model_dump() for p in participants],
             "discussion_points": [dp.model_dump() for dp in discussion_points],
             "decisions": [d.model_dump() for d in minutes.decisions],
@@ -90,6 +91,7 @@ class MinutesJSONWriter:
             meeting_type=meeting_type,
             metadata=metadata,
             summary=minutes.summary,
+            detailed_notes=getattr(minutes, "detailed_notes", "") or "",
             sections=minutes.sections,
             action_items=minutes.action_items,
             decisions=minutes.decisions,
@@ -139,6 +141,12 @@ class MinutesJSONWriter:
             lines.append(minutes.summary)
             lines.append("")
 
+        if getattr(minutes, "detailed_notes", None):
+            lines.append("## Detailed Notes")
+            lines.append("")
+            lines.append(minutes.detailed_notes)
+            lines.append("")
+
         # Render discussion points if available (from structured path)
         if getattr(minutes, "discussion_points", None):
             lines.append("## Discussion")
@@ -153,7 +161,7 @@ class MinutesJSONWriter:
         else:
             # Fallback: render sections from text+regex path
             for section in minutes.sections:
-                if section.type in ("summary",):
+                if section.type in ("summary", "detailed_notes"):
                     continue  # already rendered above
                 lines.append(f"## {section.heading}")
                 lines.append("")

@@ -66,6 +66,7 @@ class DecisionResponse(BaseModel):
 class MinutesResponse(BaseModel):
     minutes_id: str | None = None
     summary: str | None = None
+    detailed_notes: str | None = None
     markdown_content: str | None = None
     generated_at: str | None = None
     llm_model: str | None = None

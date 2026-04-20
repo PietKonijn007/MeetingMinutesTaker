@@ -190,6 +190,7 @@ class StructuredMinutesResponse(BaseModel):
     """The complete schema the LLM fills via tool_use."""
     title: str = ""
     summary: str = ""
+    detailed_notes: str = ""
     meeting_type_suggestion: str | None = None
     sentiment: str | None = None  # constructive, positive, neutral, tense, negative
     participants: list[ParticipantInfo] = []
@@ -211,6 +212,7 @@ class MinutesJSON(BaseModel):
     meeting_type: str
     metadata: MinutesMetadata
     summary: str
+    detailed_notes: str = ""
     sections: list[MinutesSection]
     action_items: list[ActionItem]
     decisions: list[Decision]
@@ -313,6 +315,7 @@ class ParsedMinutes(BaseModel):
     meeting_id: str
     title: str = ""
     summary: str
+    detailed_notes: str = ""
     sections: list[MinutesSection]
     action_items: list[ActionItem]
     decisions: list[Decision]

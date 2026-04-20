@@ -39,6 +39,7 @@ class MinutesParser:
         """Extract title, summary, sections, action_items, decisions, key_topics."""
         title = self._extract_title(llm_response)
         summary = self._extract_summary(llm_response)
+        detailed_notes = self._extract_detailed_notes(llm_response)
         sections = self._extract_sections(llm_response)
         action_items = self._extract_action_items(llm_response)
         decisions = self._extract_decisions(llm_response)
@@ -48,6 +49,7 @@ class MinutesParser:
             meeting_id=meeting_context.meeting_id,
             title=title,
             summary=summary,
+            detailed_notes=detailed_notes,
             sections=sections,
             action_items=action_items,
             decisions=decisions,
@@ -116,6 +118,15 @@ class MinutesParser:
             paragraphs.append(" ".join(current_para))
         return paragraphs[0] if paragraphs else ""
 
+    def _extract_detailed_notes(self, text: str) -> str:
+        """Extract the narrative block under ## Detailed Notes / ## Extensive Notes / ## Meeting Notes."""
+        match = re.search(
+            r"^#{1,3}\s+(?:Detailed\s+Notes|Extensive\s+Notes|Meeting\s+Notes)\s*\n(.*?)(?=^#{1,3}\s|\Z)",
+            text,
+            re.MULTILINE | re.DOTALL | re.IGNORECASE,
+        )
+        return match.group(1).strip() if match else ""
+
     def _extract_sections(self, text: str) -> list[MinutesSection]:
         """Extract all ## headings and their content."""
         sections: list[MinutesSection] = []
@@ -149,6 +160,8 @@ class MinutesParser:
         heading_lower = heading.lower()
         if "summary" in heading_lower:
             return "summary"
+        if "detailed notes" in heading_lower or "extensive notes" in heading_lower or "meeting notes" in heading_lower:
+            return "detailed_notes"
         if "action" in heading_lower:
             return "action_items"
         if "decision" in heading_lower:
@@ -320,6 +333,7 @@ class StructuredMinutesAdapter:
             meeting_id=meeting_context.meeting_id,
             title=structured.title,
             summary=structured.summary,
+            detailed_notes=structured.detailed_notes,
             sections=sections,
             action_items=action_items,
             decisions=decisions,
