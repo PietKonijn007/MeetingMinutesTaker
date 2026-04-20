@@ -17,6 +17,7 @@
   const navItems = [
     { label: 'Meetings', icon: 'clipboard', href: '/' },
     { label: 'Chat', icon: 'chat', href: '/chat' },
+    { label: 'Brief', icon: 'brief', href: '/brief' },
     { label: 'Action Items', icon: 'check', href: '/actions' },
     { label: 'Decisions', icon: 'pin', href: '/decisions' },
     { label: 'People', icon: 'user', href: '/people' },
@@ -139,6 +140,8 @@
               <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h8m0 0l-3-3m3 3l-3 3M20 12h-8m0 0l3-3m-3 3l3 3M4 18h8m0 0l-3-3m3 3l-3 3"/></svg>
             {:else if item.icon === 'template'}
               <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+            {:else if item.icon === 'brief'}
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"/></svg>
             {/if}
             {item.label}
           </a>

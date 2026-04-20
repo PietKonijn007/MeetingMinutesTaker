@@ -182,6 +182,14 @@
             Cancel
           </button>
         {:else}
+          <a
+            href={`/brief?person=${id}`}
+            class="px-3 py-1.5 text-sm text-white bg-[var(--accent)] rounded-lg
+                   hover:opacity-90 transition-opacity"
+            title="Open the pre-meeting briefing for this person"
+          >
+            Start a briefing →
+          </a>
           <button
             onclick={() => { editing = true; }}
             class="px-3 py-1.5 text-sm text-[var(--text-secondary)] border border-[var(--border-subtle)] rounded-lg
