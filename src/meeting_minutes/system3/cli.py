@@ -1693,6 +1693,41 @@ def upgrade_cmd(
     # re-apply user values on top of the (possibly updated) shipped defaults.
     _preserve_user_config_through_upgrade(project_root, _do_merge)
 
+    # 2b. Refresh macOS native deps for WeasyPrint (idempotent; Homebrew-only).
+    # Needed for PDF export (EXP-1) — existing installs predate this requirement.
+    import platform as _platform
+
+    if _platform.system() == "Darwin":
+        import shutil as _shutil
+
+        if _shutil.which("brew"):
+            console.print("[bold][2b/5] Checking WeasyPrint native libs (PDF export)...[/bold]")
+            weasy_deps = ("pango", "cairo", "gdk-pixbuf", "libffi")
+            missing = []
+            for dep in weasy_deps:
+                probe = subprocess.run(
+                    ["brew", "list", "--formula", dep],
+                    capture_output=True, text=True,
+                )
+                if probe.returncode != 0:
+                    missing.append(dep)
+            if not missing:
+                console.print("  [green]✓[/green] pango, cairo, gdk-pixbuf, libffi already installed")
+            else:
+                console.print(f"  [dim]Installing: {', '.join(missing)}[/dim]")
+                install_result = subprocess.run(
+                    ["brew", "install", *missing],
+                    capture_output=True, text=True,
+                )
+                if install_result.returncode == 0:
+                    console.print("  [green]✓[/green] WeasyPrint native libs installed")
+                else:
+                    console.print(
+                        "  [yellow]! brew install failed — PDF export may not work. "
+                        f"Error: {install_result.stderr.strip()[:200]}[/yellow]"
+                    )
+        # else: silently skip — non-brew macOS users manage their own libs.
+
     # 3. Install Python dependencies
     console.print("[bold][3/5] Updating Python dependencies...[/bold]")
     venv_pip = project_root / ".venv" / "bin" / "pip"
