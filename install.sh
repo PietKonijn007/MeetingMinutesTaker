@@ -70,6 +70,32 @@ else
     fi
 fi
 
+# ─── Install WeasyPrint native deps (required for PDF export) ────────
+echo -e "${BOLD}[2.7/10] Checking WeasyPrint native libs (required for PDF export)...${NC}"
+if [ "$(uname -s)" = "Darwin" ]; then
+    if command -v brew &>/dev/null; then
+        WEASY_DEPS=(pango cairo gdk-pixbuf libffi)
+        MISSING_DEPS=()
+        for dep in "${WEASY_DEPS[@]}"; do
+            if ! brew list --formula "$dep" &>/dev/null; then
+                MISSING_DEPS+=("$dep")
+            fi
+        done
+        if [ ${#MISSING_DEPS[@]} -eq 0 ]; then
+            echo -e "  ${GREEN}✓${NC} pango, cairo, gdk-pixbuf, libffi already installed"
+        else
+            echo -e "  ${YELLOW}! Installing: ${MISSING_DEPS[*]}${NC}"
+            brew install "${MISSING_DEPS[@]}" && \
+                echo -e "  ${GREEN}✓${NC} WeasyPrint native libs installed" || \
+                echo -e "  ${YELLOW}! WeasyPrint native libs install failed (PDF export will not work)${NC}"
+        fi
+    else
+        echo -e "  ${YELLOW}! Homebrew not found. Install pango/cairo/gdk-pixbuf/libffi manually for PDF export.${NC}"
+    fi
+else
+    echo -e "  ${YELLOW}! Non-macOS: PDF export needs native libs (pango/cairo/gdk-pixbuf/libffi). See WeasyPrint docs for your OS.${NC}"
+fi
+
 # ─── Install BlackHole (audio loopback) ──────────────────────────────
 echo -e "${BOLD}[3/10] Checking BlackHole 2ch...${NC}"
 if system_profiler SPAudioDataType 2>/dev/null | grep -q "BlackHole" || \

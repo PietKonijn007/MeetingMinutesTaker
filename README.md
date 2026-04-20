@@ -188,6 +188,8 @@ mm actions complete <action_id>                   # Mark done
 | `mm series list` | List all detected series with cadence + member count |
 | `mm series show <id>` | Show detail for a single series |
 | `mm stats rebuild` | Rebuild the topic-clusters cache used by the Stats → Topics panel (ANA-1) |
+| `mm export <id>` | Export a meeting to PDF / DOCX / Markdown (supports `--format`, `--with-transcript`, `--out`) |
+| `mm export --series=<id>` | Bulk-export every meeting in a series as a ZIP bundle |
 | `mm delete <id>` | Delete meeting and all associated data |
 | `mm cleanup` | Run retention policy cleanup (delete expired data) |
 | `mm generate-key` | Generate a new encryption key for at-rest encryption |
@@ -258,6 +260,43 @@ The Stats page adds four tabbed panels backed by pure SQL (no new persistent sto
 
 Every endpoint also accepts a `series=<series_id>` query parameter to scope the analytics to a single series's members.
 
+## Pre-meeting briefings (BRF-1)
+
+The `/brief` page pulls together everything you already know about a set of attendees before you walk in: last meeting, cadence, matching series, open commitments (with overdue flagged), unresolved topics, recent sentiment sparklines, recent decisions, and the top relevant transcript excerpts. A pinned "Start recording" footer lets you kick off a session with a pre-filled title, meeting type, attendee list, and a carry-forward note built from the overdue commitments.
+
+Deep-links:
+- `/people/:id` has a **Start a briefing →** button.
+- `/series/:id` has a **Start a briefing for the next one →** button that passes all attendees + the meeting type through to `/brief`.
+
+All six sections are pure SQL queries over existing tables — no LLM call by default. Flip `brief.summarize_with_llm: true` in `config.yaml` to attach a two-sentence synthesis built from the aggregates.
+
+## Desktop notifications (NOT-1)
+
+macOS Notification Center alerts fire on two pipeline events: every successful completion (`Meeting ready: <title>` with duration and action-item count) and any stage failure (`Pipeline failed: <title>` with stage + short error). Clicking the banner opens the meeting in the web UI. Ships disabled on non-macOS (via `pync`, which is macOS-only). Toggle in `config.yaml`:
+
+```yaml
+notifications:
+  enabled: true             # defaults to platform detection (true on darwin)
+  sound: true
+  click_url_base: http://localhost:8080/meeting
+```
+
+## Exports (EXP-1)
+
+Export meeting minutes to PDF, DOCX, or Markdown — with an optional `--with-transcript` flag to append the full diarized transcript. The meeting detail page has an **Export ▾** menu; the series page has an **Export all meetings (ZIP)** button that bundles every member meeting into one archive.
+
+```bash
+mm export <meeting_id> --format=pdf --with-transcript
+mm export <meeting_id> --format=docx --out ~/Downloads/minutes.docx
+mm export --series=<series_id> --format=pdf --out ~/Documents/
+```
+
+The HTTP surface mirrors the CLI: `GET /api/meetings/:id/export?format=pdf|docx|md[&with_transcript=true]` and `GET /api/series/:id/export?format=...`. A missing native dep (WeasyPrint requires libpango, python-docx is pure-Python) yields a clean `501` with an install hint instead of a crash.
+
+On macOS the WeasyPrint native libs (`pango`, `cairo`, `gdk-pixbuf`, `libffi`) install automatically via `install.sh` and `mm upgrade`, and `DYLD_FALLBACK_LIBRARY_PATH` is set at process startup — fresh installs don't need any manual steps. `mm doctor` check #11 flags the dependency as warn (PDF export is optional) if anything is missing.
+
+DOCX users can drop a styled template at `templates/export/docx_template.docx`; python-docx inherits its heading + paragraph styles.
+
 ## Web UI
 
 A browser-based interface built with Svelte + Tailwind CSS at `localhost:8080` with calendar view, action items, decisions, people, **series** (REC-1), stats (with four ANA-1 tabbed panels), recording controls, template manager, and settings.
@@ -270,7 +309,7 @@ mm serve
 open http://localhost:8080
 ```
 
-**Pages**: Meetings (calendar view with day list + inline detail + search with filters), **Chat** (talk to your meetings — ask natural-language questions across all meeting history with citations), Meeting Detail, Action Items, Decisions, People, Stats (charts), Record (live waveform + concurrent pipeline status + live note-taking), Templates (view/edit/create prompt templates), Settings (LLM provider/model selection with custom model support, Performance & Hardware, Security, Retention, and CORS config).
+**Pages**: Meetings (calendar view with day list + inline detail + search with filters), **Chat** (talk to your meetings — ask natural-language questions across all meeting history with citations), **Brief** (BRF-1 pre-meeting briefing with six data sections + inline Start Recording panel), Meeting Detail, Action Items, Decisions, People, Stats (charts), Record (live waveform + concurrent pipeline status + live note-taking), Templates (view/edit/create prompt templates), Settings (LLM provider/model selection with custom model support, Performance & Hardware, Security, Retention, and CORS config).
 
 **Features**: Dark mode, full-text search with `Cmd+K`, in-calendar search with type filter chips, keyboard navigation, responsive layout, meeting type color coding, WebSocket-based real-time updates, concurrent pipeline processing (record a new meeting while the previous one processes in background), auto-detect capture device, auto-save recovery every 5 minutes during recording, live note-taking during recording (speaker names, notes, custom LLM instructions), structured card-based minutes view with collapsible discussion topics, color-coded transcript per-speaker with inline "Name speakers" editor, people management (edit / delete / merge duplicate entities with automatic historical attribution updates), Performance & Hardware settings (Apple Silicon MPS toggle), encryption at rest, retention policies with automatic cleanup.
 

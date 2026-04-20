@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
 from meeting_minutes.api.deps import get_db_session
@@ -42,8 +43,10 @@ def _series_summary(session: Session, series: MeetingSeriesORM) -> dict:
     # Resolve current attendee names from the attendee_hash — we stored
     # the hash not the names. Pull them from the most recent member.
     attendee_names: list[str] = []
+    attendee_ids: list[str] = []
     if last_meeting is not None:
         attendee_names = [a.name for a in last_meeting.attendees]
+        attendee_ids = [a.person_id for a in last_meeting.attendees]
 
     return {
         "series_id": series.series_id,
@@ -52,6 +55,7 @@ def _series_summary(session: Session, series: MeetingSeriesORM) -> dict:
         "cadence": series.cadence,
         "member_count": len(member_ids),
         "attendee_names": attendee_names,
+        "attendee_ids": attendee_ids,
         "last_meeting_date": last_meeting.date.isoformat() if last_meeting and last_meeting.date else None,
         "created_at": series.created_at.isoformat() if series.created_at else None,
         "last_detected_at": series.last_detected_at.isoformat() if series.last_detected_at else None,
@@ -124,6 +128,65 @@ def get_series(
             "recurring_topics": agg.recurring_topics,
         },
     }
+
+
+@router.get("/{series_id}/export")
+def export_series(
+    series_id: str,
+    session: Annotated[Session, Depends(get_db_session)],
+    format: str = Query("pdf"),
+    with_transcript: bool = Query(False),
+):
+    """Bundle every member meeting in the series into a single ZIP (EXP-1)."""
+    from meeting_minutes.export import (
+        ExportDependencyMissing,
+        export as render_export,
+        slugify,
+    )
+    from meeting_minutes.export.bundle import make_zip
+
+    series = session.get(MeetingSeriesORM, series_id)
+    if series is None:
+        raise HTTPException(status_code=404, detail=f"Series {series_id} not found")
+    if format not in ("pdf", "docx", "md"):
+        raise HTTPException(
+            status_code=400,
+            detail="Unsupported format. Use 'pdf', 'docx' or 'md'.",
+        )
+
+    member_ids = [
+        m.meeting_id
+        for m in session.query(MeetingSeriesMemberORM).filter_by(series_id=series_id).all()
+    ]
+    members = (
+        session.query(MeetingORM)
+        .filter(MeetingORM.meeting_id.in_(member_ids))
+        .order_by(MeetingORM.date.asc())
+        .all()
+    )
+    if not members:
+        raise HTTPException(status_code=400, detail="Series has no meetings to export")
+
+    results = []
+    for m in members:
+        if m.minutes is None or not (m.minutes.markdown_content or "").strip():
+            continue
+        try:
+            results.append(
+                render_export(m, format=format, with_transcript=with_transcript)
+            )
+        except ExportDependencyMissing as exc:
+            raise HTTPException(status_code=501, detail=str(exc))
+    if not results:
+        raise HTTPException(status_code=400, detail="No member meetings had minutes to export")
+
+    zip_bytes = make_zip(results)
+    zip_name = f"{slugify(series.title or series.series_id)}.zip"
+    return Response(
+        content=zip_bytes,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{zip_name}"'},
+    )
 
 
 # ---------------------------------------------------------------------------

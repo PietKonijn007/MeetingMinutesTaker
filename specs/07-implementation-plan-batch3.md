@@ -110,6 +110,8 @@ CREATE INDEX idx_voice_samples_person ON person_voice_samples(person_id, confirm
 
 ### NOT-1: Desktop Notifications on Pipeline Events
 
+**Status:** Shipped in [PR #TBD]. Click URL uses the plain `http://localhost:8080/meeting/{id}` form; the `mm://` URL handler is deferred (it requires an `install.sh` Info.plist registration step that's disproportionate for the win). `pync` import is deferred and platform-gated; missing dep logs once at INFO and becomes a no-op.
+
 **Problem.** Pipeline takes ~2 minutes; users cannot tell when it's done without watching the browser tab.
 
 **Description.** macOS desktop notifications fire on pipeline state transitions:
@@ -134,6 +136,8 @@ Clicking the notification opens the web UI to the meeting (via a `mm://meeting/{
 ---
 
 ### BRF-1: Pre-Meeting Briefing Page (with inline record start)
+
+**Status:** Shipped in [PR #TBD]. All six sections are pure-query; the LLM summary path is gated behind `brief.summarize_with_llm` (default false). Context-excerpts reuse the existing embedding engine and fall back to newest summary/discussion chunks if semantic search is unavailable. Deep-links wired from `/people/:id` and `/series/:id`.
 
 **Modification from initial proposal.** The briefing page is **also** the launch point for the next meeting — the user can type speaker names, load context, and hit **Start recording** without leaving the page. This merges the current `/record` flow into `/brief` for recurring-partner meetings.
 
@@ -420,6 +424,8 @@ meeting_series_members (
 
 ### EXP-1: Export to PDF and DOCX
 
+**Status:** Shipped in [PR #TBD]. PDF renders the stored markdown through markdown-it-py + WeasyPrint; DOCX builds paragraphs from the same markdown and adds the Action Items table from `action_items` rows. `GET /api/meetings/:id/export?format=…` supplements the existing POST endpoint for browser downloads. Bulk series export lives at `GET /api/series/:id/export` and zips the results. Missing native deps yield 501 with an install hint. WeasyPrint's native deps (pango/cairo/gdk-pixbuf/libffi) are installed automatically by `install.sh` and `mm upgrade` on macOS, and `AppConfig.model_post_init()` sets `DYLD_FALLBACK_LIBRARY_PATH` at runtime so the user never has to export it manually. A new `mm doctor` check (#11) reports warn (PDF export is optional) when either the Python package or the native libs are missing.
+
 **Problem.** Obsidian export is great for Obsidian users. Sharing with non-technical stakeholders means copy-pasting markdown into Word.
 
 **Description.** One-click export per meeting to PDF or DOCX, plus CLI variants.
@@ -481,7 +487,7 @@ Ordered to unblock downstream features.
 6. **REC-1** — Recurring-meeting threading. Nightly detector + series views. *6–8 h.*
 7. **ANA-1** — Cross-meeting analytics. Lands after REC-1 so the analytics panels can also surface series-level aggregates. *6–8 h.*
 
-### Phase 4 — User Experience
+### Phase 4 — User Experience ✅ Shipped in [PR #TBD]
 
 8. **BRF-1** — Pre-meeting briefing page + inline record start. Builds on REC-1 for the "your series with X" card. *5–7 h.*
 9. **NOT-1** — Desktop notifications. Quickly. *2 h.*

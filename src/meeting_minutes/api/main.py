@@ -108,6 +108,7 @@ from meeting_minutes.api.routes.series import (  # noqa: E402
     meeting_lookup_router as series_meeting_router,
     router as series_router,
 )
+from meeting_minutes.api.routes.brief import router as brief_router  # noqa: E402
 from meeting_minutes.api.ws import router as ws_router  # noqa: E402
 
 app.include_router(meetings_router)
@@ -129,6 +130,7 @@ app.include_router(health_router)
 app.include_router(doctor_router)
 app.include_router(series_router)
 app.include_router(series_meeting_router)
+app.include_router(brief_router)
 app.include_router(ws_router)
 
 # ── Static files (Svelte SPA) ────────────────────────────────────────────

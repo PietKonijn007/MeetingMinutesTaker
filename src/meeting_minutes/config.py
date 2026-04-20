@@ -124,6 +124,46 @@ class PerformanceConfig(BaseModel):
     pytorch_mps_fallback: bool = True
 
 
+class NotificationsConfig(BaseModel):
+    """Desktop notifications on pipeline events (NOT-1).
+
+    ``enabled`` defaults to ``True`` on macOS (where ``pync`` ships desktop
+    notifications via the Notification Center) and ``False`` elsewhere —
+    pync is macOS-only. ``sound`` toggles the default notification sound.
+    ``click_url_base`` is prepended to the meeting id when a user clicks
+    the notification; defaults to the local ``mm serve`` host.
+    """
+
+    enabled: bool | None = None  # resolved in model_validator
+    sound: bool = True
+    click_url_base: str = "http://localhost:8080/meeting"
+
+    @model_validator(mode="after")
+    def _default_enabled(self) -> "NotificationsConfig":
+        if self.enabled is None:
+            import sys
+
+            self.enabled = sys.platform == "darwin"
+        return self
+
+
+class BriefConfig(BaseModel):
+    """Pre-meeting briefing page settings (BRF-1)."""
+
+    # When True, the briefing endpoint runs a single two-sentence LLM
+    # synthesis over the aggregated sections and attaches it as
+    # ``summary``. Off by default — default briefings are purely DB-sourced.
+    summarize_with_llm: bool = False
+
+
+class ExportConfig(BaseModel):
+    """Export settings (EXP-1)."""
+
+    # Optional output directory override for the CLI; relative paths
+    # resolve against ``data_dir`` when the CLI builds a default path.
+    default_out_dir: str = "data/exports"
+
+
 def resolve_db_path(sqlite_path: str) -> Path:
     """Resolve the sqlite_path config value to an absolute Path.
 
@@ -158,14 +198,37 @@ class AppConfig(BaseModel):
     security: SecurityConfig = SecurityConfig()
     performance: PerformanceConfig = PerformanceConfig()
     disk: DiskConfig = DiskConfig()
+    notifications: NotificationsConfig = NotificationsConfig()
+    brief: BriefConfig = BriefConfig()
+    export: ExportConfig = ExportConfig()
 
     def model_post_init(self, __context) -> None:
         """Apply performance settings to process env vars (affects torch, etc.)."""
         import os
+        import sys
+        from pathlib import Path as _Path
+
         if self.performance.pytorch_mps_fallback:
             os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
         else:
             os.environ.pop("PYTORCH_ENABLE_MPS_FALLBACK", None)
+
+        # EXP-1: WeasyPrint's ctypes.util.find_library() can't locate the
+        # Homebrew-installed pango/cairo/gdk-pixbuf/libffi without
+        # DYLD_FALLBACK_LIBRARY_PATH pointing at the brew prefix. Set it
+        # here so it's in place before anyone imports weasyprint (which is
+        # deferred to first PDF export). Runs for every entry point that
+        # loads config — mm serve, mm export, mm doctor, mm repair, etc.
+        # Apple Silicon puts brew at /opt/homebrew, Intel at /usr/local.
+        if sys.platform == "darwin":
+            for brew_lib in ("/opt/homebrew/lib", "/usr/local/lib"):
+                if _Path(brew_lib).is_dir():
+                    existing = os.environ.get("DYLD_FALLBACK_LIBRARY_PATH", "")
+                    if brew_lib not in existing.split(":"):
+                        os.environ["DYLD_FALLBACK_LIBRARY_PATH"] = (
+                            f"{brew_lib}:{existing}" if existing else brew_lib
+                        )
+                    break
 
 
 class ConfigLoader:

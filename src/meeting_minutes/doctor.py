@@ -1,6 +1,6 @@
 """First-run onboarding diagnostic (ONB-1).
 
-Ten independent checks the user can run via ``mm doctor`` or the
+Eleven independent checks the user can run via ``mm doctor`` or the
 ``/onboarding`` web page. Each check is a pure function returning a
 ``CheckResult`` with an ``ok | warn | fail`` status and a copy-pasteable
 fix hint for the failure case.
@@ -428,13 +428,46 @@ def check_sqlite_vec() -> CheckResult:
     )
 
 
+def check_weasyprint() -> CheckResult:
+    """Check 11 — WeasyPrint importable and its native libs loadable (EXP-1).
+
+    PDF export is optional, so both failure modes (missing Python package,
+    missing native libs) surface as ``warn``, not ``fail``.
+    """
+    try:
+        from weasyprint import HTML  # type: ignore  # noqa: F401
+    except ImportError as exc:
+        return CheckResult(
+            name="weasyprint",
+            status="warn",
+            detail=f"weasyprint package not installed: {exc}",
+            fix_hint="PDF export unavailable. Run: pip install weasyprint",
+            fix_command="pip install weasyprint",
+        )
+    except OSError as exc:
+        # WeasyPrint raises OSError when libpango / cairo / gdk-pixbuf /
+        # libffi can't be located by ctypes.util.find_library().
+        return CheckResult(
+            name="weasyprint",
+            status="warn",
+            detail=f"WeasyPrint native libs not loadable: {exc}",
+            fix_hint="PDF export unavailable — install native libs: brew install pango cairo gdk-pixbuf libffi",
+            fix_command="brew install pango cairo gdk-pixbuf libffi",
+        )
+    return CheckResult(
+        name="weasyprint",
+        status="ok",
+        detail="WeasyPrint available",
+    )
+
+
 # ---------------------------------------------------------------------------
 # Public entry point
 # ---------------------------------------------------------------------------
 
 
 def run_checks(config: AppConfig) -> list[CheckResult]:
-    """Run all ten diagnostic checks in order."""
+    """Run all eleven diagnostic checks in order."""
     return [
         check_python_version(),
         check_ffmpeg(),
@@ -446,4 +479,5 @@ def run_checks(config: AppConfig) -> list[CheckResult]:
         check_gpu(),
         check_whisper_model(config),
         check_sqlite_vec(),
+        check_weasyprint(),
     ]

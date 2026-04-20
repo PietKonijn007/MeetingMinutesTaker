@@ -103,6 +103,34 @@ export const api = {
   detectSeries: () => request('/series/detect', { method: 'POST' }),
   getMeetingSeries: (id) => request(`/meetings/${id}/series`),
 
+  // BRF-1 briefing
+  getBriefing: (peopleIds, type = null) => {
+    const params = new URLSearchParams();
+    for (const pid of peopleIds) params.append('people', pid);
+    if (type) params.set('type', type);
+    return request(`/brief?${params.toString()}`);
+  },
+
+  // EXP-1 export
+  exportMeeting: (meetingId, format = 'md', withTranscript = false) => {
+    const qs = new URLSearchParams({ format, with_transcript: String(withTranscript) }).toString();
+    return fetch(`/api/meetings/${meetingId}/export?${qs}`).then(res => {
+      if (!res.ok) {
+        return res.json().then(err => { throw new Error(err.detail || res.statusText); });
+      }
+      return res.blob();
+    });
+  },
+  exportSeries: (seriesId, format = 'pdf', withTranscript = false) => {
+    const qs = new URLSearchParams({ format, with_transcript: String(withTranscript) }).toString();
+    return fetch(`/api/series/${seriesId}/export?${qs}`).then(res => {
+      if (!res.ok) {
+        return res.json().then(err => { throw new Error(err.detail || res.statusText); });
+      }
+      return res.blob();
+    });
+  },
+
   // Recording
   autoDetectDevice: () => request('/auto-detect-device'),
   startRecording: (data = {}) => request('/recording/start', { method: 'POST', body: JSON.stringify(data) }),
