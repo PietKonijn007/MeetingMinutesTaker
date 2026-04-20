@@ -1356,6 +1356,134 @@ def service_logs(
 # ---------------------------------------------------------------------------
 
 
+def _deep_merge_user_into_shipped(user: dict, shipped: dict) -> tuple[dict, list[str]]:
+    """Overlay user values onto the shipped config. User values win for keys the
+    user set; keys that exist only in the shipped config are added.
+
+    Returns (merged, added_keys) where added_keys is a dotted-path list of keys
+    that were new in the shipped config — surfaced to the user so they know what
+    new knobs are available after the upgrade.
+    """
+    added: list[str] = []
+
+    def _merge(u: object, s: object, path: str) -> object:
+        if isinstance(u, dict) and isinstance(s, dict):
+            out: dict = {}
+            for k, uv in u.items():
+                if k in s:
+                    out[k] = _merge(uv, s[k], f"{path}.{k}" if path else k)
+                else:
+                    out[k] = uv  # user-only key — preserve as-is
+            for k, sv in s.items():
+                if k not in u:
+                    out[k] = sv
+                    added.append(f"{path}.{k}" if path else k)
+            return out
+        # Leaf or type-mismatched node: user wins.
+        return u
+
+    merged = _merge(user, shipped, "")
+    if not isinstance(merged, dict):
+        merged = {}
+    return merged, added
+
+
+def _preserve_user_config_through_upgrade(project_root, run_merge):
+    """Run `run_merge()` with the user's config/config.yaml protected.
+
+    If config/config.yaml has uncommitted local edits:
+    1. Read the user's version, reset the file to HEAD so the merge can fast-forward.
+    2. Call `run_merge()`.
+    3. Deep-merge the user's values on top of whatever config is on disk after
+       the merge and write the result back. Report any new keys from upstream.
+
+    If the file is clean, just run the merge — there's nothing to preserve.
+    """
+    import subprocess
+    from pathlib import Path
+
+    import yaml
+
+    config_path = Path(project_root) / "config" / "config.yaml"
+    rel_path = "config/config.yaml"
+
+    # Detect dirty state.
+    status = subprocess.run(
+        ["git", "status", "--porcelain", "--", rel_path],
+        capture_output=True, text=True, cwd=project_root,
+    )
+    dirty = bool(status.stdout.strip())
+
+    if not dirty or not config_path.exists():
+        run_merge()
+        return
+
+    try:
+        with open(config_path, "r", encoding="utf-8") as f:
+            user_yaml_text = f.read()
+        user_cfg = yaml.safe_load(user_yaml_text) or {}
+    except Exception as exc:
+        err_console.print(f"[yellow]Could not read {rel_path} ({exc}). Proceeding without preservation.[/yellow]")
+        run_merge()
+        return
+
+    # Keep a timestamped backup in case the merge goes sideways.
+    from datetime import datetime
+    backup_path = config_path.with_suffix(
+        f".yaml.user-backup-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+    )
+    try:
+        with open(backup_path, "w", encoding="utf-8") as f:
+            f.write(user_yaml_text)
+    except Exception:
+        backup_path = None
+
+    # Reset the tracked file so `git merge --ff-only` won't trip on it.
+    reset = subprocess.run(
+        ["git", "checkout", "--", rel_path],
+        capture_output=True, text=True, cwd=project_root,
+    )
+    if reset.returncode != 0:
+        err_console.print(f"[red]Could not reset {rel_path} for merge: {reset.stderr}[/red]")
+        raise typer.Exit(code=1)
+
+    try:
+        run_merge()
+    except Exception:
+        # Merge failed — restore the user's file so we leave no worse state behind.
+        try:
+            with open(config_path, "w", encoding="utf-8") as f:
+                f.write(user_yaml_text)
+        except Exception:
+            pass
+        raise
+
+    # Merge user values back on top of the (possibly updated) shipped config.
+    try:
+        with open(config_path, "r", encoding="utf-8") as f:
+            shipped_cfg = yaml.safe_load(f) or {}
+    except Exception:
+        shipped_cfg = {}
+
+    merged, added = _deep_merge_user_into_shipped(user_cfg, shipped_cfg)
+
+    try:
+        with open(config_path, "w", encoding="utf-8") as f:
+            yaml.safe_dump(merged, f, sort_keys=False, default_flow_style=False)
+        console.print("  [green]✓[/green] User config preserved in config/config.yaml")
+        if added:
+            console.print(
+                f"  [dim]New config keys from upstream: {', '.join(added)} — review defaults in config/config.yaml[/dim]"
+            )
+        if backup_path:
+            console.print(f"  [dim]Pre-upgrade backup: {backup_path.name}[/dim]")
+    except Exception as exc:
+        err_console.print(f"[red]Failed to write merged config: {exc}[/red]")
+        if backup_path:
+            err_console.print(f"[dim]Your original is at {backup_path}[/dim]")
+        raise typer.Exit(code=1)
+
+
 @app.command("upgrade")
 def upgrade_cmd(
     restart: bool = typer.Option(True, "--restart/--no-restart", help="Restart the service after upgrading"),
@@ -1373,9 +1501,12 @@ def upgrade_cmd(
         ["git", "status", "--porcelain"],
         capture_output=True, text=True, cwd=project_root,
     )
-    if result.stdout.strip():
+    dirty_lines = [line for line in result.stdout.splitlines() if line.strip()]
+    # User edits to config/config.yaml are preserved automatically — no need to warn.
+    non_config_dirty = [line for line in dirty_lines if line[3:].strip() != "config/config.yaml"]
+    if non_config_dirty:
         console.print("[yellow]Warning: You have uncommitted local changes.[/yellow]")
-        console.print(result.stdout)
+        console.print("\n".join(non_config_dirty))
         if not typer.confirm("Continue anyway? Local changes will be preserved (git pull may fail if there are conflicts)."):
             raise typer.Exit(code=0)
 
@@ -1411,18 +1542,23 @@ def upgrade_cmd(
         err_console.print(f"[red]git fetch failed: {fetch_result.stderr}[/red]")
         raise typer.Exit(code=1)
 
-    result = subprocess.run(
-        ["git", "merge", "--ff-only", f"origin/{branch}"],
-        capture_output=True, text=True, cwd=project_root,
-    )
-    if result.returncode != 0:
-        if "not possible to fast-forward" in result.stderr.lower() or "non-fast-forward" in result.stderr.lower():
-            err_console.print(f"[red]Cannot fast-forward. You have local commits on '{branch}' that diverge from origin/{branch}.[/red]")
-            err_console.print("[dim]Resolve manually with: git pull --rebase origin " + branch + "[/dim]")
-        else:
-            err_console.print(f"[red]git merge failed: {result.stderr}[/red]")
-        raise typer.Exit(code=1)
-    console.print(f"  {result.stdout.strip() or 'Already up to date.'}")
+    def _do_merge() -> None:
+        result = subprocess.run(
+            ["git", "merge", "--ff-only", f"origin/{branch}"],
+            capture_output=True, text=True, cwd=project_root,
+        )
+        if result.returncode != 0:
+            if "not possible to fast-forward" in result.stderr.lower() or "non-fast-forward" in result.stderr.lower():
+                err_console.print(f"[red]Cannot fast-forward. You have local commits on '{branch}' that diverge from origin/{branch}.[/red]")
+                err_console.print("[dim]Resolve manually with: git pull --rebase origin " + branch + "[/dim]")
+            else:
+                err_console.print(f"[red]git merge failed: {result.stderr}[/red]")
+            raise typer.Exit(code=1)
+        console.print(f"  {result.stdout.strip() or 'Already up to date.'}")
+
+    # Protect the user's config/config.yaml: stash any local edits, merge, then
+    # re-apply user values on top of the (possibly updated) shipped defaults.
+    _preserve_user_config_through_upgrade(project_root, _do_merge)
 
     # 3. Install Python dependencies
     console.print("[bold][3/5] Updating Python dependencies...[/bold]")
