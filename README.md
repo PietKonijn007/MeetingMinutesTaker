@@ -293,6 +293,8 @@ mm export --series=<series_id> --format=pdf --out ~/Documents/
 
 The HTTP surface mirrors the CLI: `GET /api/meetings/:id/export?format=pdf|docx|md[&with_transcript=true]` and `GET /api/series/:id/export?format=...`. A missing native dep (WeasyPrint requires libpango, python-docx is pure-Python) yields a clean `501` with an install hint instead of a crash.
 
+On macOS the WeasyPrint native libs (`pango`, `cairo`, `gdk-pixbuf`, `libffi`) install automatically via `install.sh` and `mm upgrade`, and `DYLD_FALLBACK_LIBRARY_PATH` is set at process startup — fresh installs don't need any manual steps. `mm doctor` check #11 flags the dependency as warn (PDF export is optional) if anything is missing.
+
 DOCX users can drop a styled template at `templates/export/docx_template.docx`; python-docx inherits its heading + paragraph styles.
 
 ## Web UI

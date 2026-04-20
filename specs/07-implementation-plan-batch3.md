@@ -424,7 +424,7 @@ meeting_series_members (
 
 ### EXP-1: Export to PDF and DOCX
 
-**Status:** Shipped in [PR #TBD]. PDF renders the stored markdown through markdown-it-py + WeasyPrint; DOCX builds paragraphs from the same markdown and adds the Action Items table from `action_items` rows. `GET /api/meetings/:id/export?format=…` supplements the existing POST endpoint for browser downloads. Bulk series export lives at `GET /api/series/:id/export` and zips the results. Missing native deps yield 501 with an install hint.
+**Status:** Shipped in [PR #TBD]. PDF renders the stored markdown through markdown-it-py + WeasyPrint; DOCX builds paragraphs from the same markdown and adds the Action Items table from `action_items` rows. `GET /api/meetings/:id/export?format=…` supplements the existing POST endpoint for browser downloads. Bulk series export lives at `GET /api/series/:id/export` and zips the results. Missing native deps yield 501 with an install hint. WeasyPrint's native deps (pango/cairo/gdk-pixbuf/libffi) are installed automatically by `install.sh` and `mm upgrade` on macOS, and `AppConfig.model_post_init()` sets `DYLD_FALLBACK_LIBRARY_PATH` at runtime so the user never has to export it manually. A new `mm doctor` check (#11) reports warn (PDF export is optional) when either the Python package or the native libs are missing.
 
 **Problem.** Obsidian export is great for Obsidian users. Sharing with non-technical stakeholders means copy-pasting markdown into Word.
 
