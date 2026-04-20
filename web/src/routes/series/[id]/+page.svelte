@@ -50,7 +50,7 @@
       <a href="/series" class="text-xs text-[var(--text-muted)] hover:text-[var(--accent)]">← All series</a>
     </div>
 
-    <div class="flex items-start justify-between mb-4">
+    <div class="flex items-start justify-between mb-4 gap-4 flex-wrap">
       <div>
         <h1 class="text-2xl font-bold text-[var(--text-primary)] mb-2">{detail.title}</h1>
         <div class="flex items-center gap-2 flex-wrap">
@@ -69,6 +69,48 @@
             {detail.attendee_names.join(', ')}
           </div>
         {/if}
+      </div>
+      <div class="flex items-center gap-2">
+        {#if detail.attendee_ids?.length}
+          {@const briefUrl = `/brief?${detail.attendee_ids.map(id => `person=${encodeURIComponent(id)}`).join('&')}&type=${encodeURIComponent(detail.meeting_type)}`}
+          <a
+            href={briefUrl}
+            class="px-3 py-1.5 text-sm text-white bg-[var(--accent)] rounded-lg hover:opacity-90 transition-opacity"
+            title="Prepare for the next meeting in this series"
+          >
+            Start a briefing for the next one →
+          </a>
+        {/if}
+        <button
+          type="button"
+          onclick={async () => {
+            try {
+              const res = await fetch(`/api/series/${seriesId}/export?format=pdf`);
+              if (!res.ok) {
+                let msg = `Export failed (${res.status})`;
+                try { msg = (await res.json()).detail || msg; } catch {}
+                throw new Error(msg);
+              }
+              const blob = await res.blob();
+              const disp = res.headers.get('content-disposition') || '';
+              const m = /filename="?([^"]+)"?/.exec(disp);
+              const filename = m ? m[1] : `${seriesId}.zip`;
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement('a');
+              a.href = url; a.download = filename;
+              document.body.appendChild(a); a.click(); a.remove();
+              URL.revokeObjectURL(url);
+              addToast('Series exported as ZIP', 'success');
+            } catch (e) {
+              addToast(e.message || 'Export failed', 'error');
+            }
+          }}
+          class="px-3 py-1.5 text-sm text-[var(--text-secondary)] border border-[var(--border-subtle)] rounded-lg
+                 hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] transition-colors"
+          title="Download all meetings in this series as a ZIP"
+        >
+          Export all meetings (ZIP)
+        </button>
       </div>
     </div>
 

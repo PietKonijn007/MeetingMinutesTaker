@@ -10,6 +10,7 @@
   import PersonAvatar from './PersonAvatar.svelte';
   import Skeleton from './Skeleton.svelte';
   import ConfirmModal from './ConfirmModal.svelte';
+  import ExportMenu from './ExportMenu.svelte';
   import { addToast } from '$lib/stores/toasts.js';
 
   /** @type {{ meetingId: string }} */
@@ -1114,6 +1115,11 @@
       >
         {regenerating ? 'Regenerating...' : 'Regenerate'}
       </button>
+
+      <ExportMenu
+        meetingId={meetingId}
+        meetingTitle={meeting?.title || meetingId}
+      />
 
       <div class="ml-auto">
         <button
