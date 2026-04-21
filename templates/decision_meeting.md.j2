@@ -1,47 +1,47 @@
-You are an expert meeting minutes assistant specializing in decision-making meetings. Pay special attention to capturing all decisions, the context that led to them, who made them, and any dissenting opinions.
+Summarize a decision-making meeting. Capture every decision, the options considered, who approved, and any dissent.
 
 ---
-# Decision Meeting: {{ title }}
-
-**Date:** {{ date }}
-**Duration:** {{ duration }}
-**Attendees:** {{ attendees | join(', ') }}
-{% if organizer %}**Organizer:** {{ organizer }}{% endif %}
-
-## Transcript
-{{ transcript_text }}
+{% import '_shared.md.j2' as m %}
+{{ m.meeting_header('Decision Meeting', title, date, duration, attendees, organizer) }}
 
 ---
 
-Please produce meeting minutes using the following structure:
+{{ m.omission_rule() }}
+
+{{ m.length_guidance(length_mode) }}
+
+{{ m.tldr_block() }}
 
 ## Title
-[A short, descriptive title for this meeting — 3 to 10 words that capture the main topic or purpose. Do NOT use generic names like "Team Meeting" or "Weekly Sync" — be specific about what was discussed.]
+[Specific — 3 to 10 words — name the decision itself, not the meeting.]
 
 ## Summary
-[Brief summary of the meeting purpose and key outcomes]
+2-4 sentences: what was decided, who drove, and the most consequential trade-off.
 
 ## Detailed Notes
-[A comprehensive narrative write-up of the decision meeting (~400–1200 words). Walk through how the discussion unfolded: how the problem was framed, how options were compared, the arguments for and against each, points of dissent or hesitation, and how the group converged (or failed to converge) on a decision. Attribute positions to named participants. Capture the reasoning, trade-offs, and constraints — this is the record future readers will use to understand why the decision was made. Include concrete details (numbers, dates, systems, constraints). Use subheadings, paragraphs, and bullets for readability. Do not duplicate the Decisions/Rationale lists verbatim — weave the narrative around them. Only include information actually present in the transcript.]
+Narrative of how the problem was framed, options compared, arguments for and against, hesitation or dissent, and the path to convergence.
 
 ## Context and Background
-[What problem or situation triggered this meeting]
+The problem or trigger that led to this meeting (omit if the transcript does not establish one).
 
 ## Options Considered
-[List all options or alternatives that were discussed]
+Every alternative discussed. Note which were rejected and why.
 
 ## Decisions
-[ALL decisions made, clearly stated. Include who made or approved the decision.]
-- [Decision description] (Decision by: [Name/Group])
+For each: **Decision** / **Rationale** / **Approved by** / **Dissent** (if any) / **Scope or constraints** / **Reversibility** (easy / hard / one-way door) (populate the `decisions` structured field).
 
-## Rationale
-[The reasoning behind key decisions]
+{{ m.risks_block() }}
 
-## Discussion
-[Key discussion points, arguments for and against options]
+{{ m.open_questions_block() }}
 
 ## Action Items
-- [ ] [Description] — Owner: [Name] (Due: [Date if mentioned])
+Verb-driven tasks with owner and due date (populate `action_items`).
+
+{{ m.prior_actions_block(prior_actions) }}
 
 ## Key Topics
-[Main topics discussed]
+3-7 short labels.
+
+{{ m.email_draft_block() }}
+
+{{ m.confidentiality_block() }}

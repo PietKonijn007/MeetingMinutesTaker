@@ -1,0 +1,61 @@
+Summarize a leadership/staff meeting — a peer exec team sync (not a broader team meeting and not a board meeting). Focus on cross-functional trade-offs, alignment, commitments between peer leaders, and company-level priorities.
+
+---
+{% import '_shared.md.j2' as m %}
+{{ m.meeting_header('Leadership Meeting', title, date, duration, attendees, organizer) }}
+
+---
+
+{{ m.omission_rule() }}
+
+{{ m.length_guidance(length_mode) }}
+
+{{ m.tldr_block() }}
+
+## Title
+[Specific — 3 to 10 words — name the priorities/trade-offs covered. Do NOT use "Staff Meeting".]
+
+## Summary
+3-5 sentences: key cross-functional decisions, biggest unresolved tension between teams, top-priority company-wide action.
+
+## Detailed Notes
+Narrative — who pushed for what, where alignment held, where peers disagreed, what was deferred. Attribute positions by name and function.
+
+## Cross-Functional Decisions
+For each: **Decision** / **Rationale** / **Teams affected** / **Approved by**. Populate `decisions`.
+
+## Priority & Resource Trade-offs
+Headcount, budget, or focus trade-offs discussed across functions.
+
+## Cross-Team Commitments
+For each: team A / team B / what's being delivered / committed date / escalation path. Populate as `action_items` with the relevant function owner.
+
+## Strategic Alignment
+Where peer leaders aligned on strategy / where gaps remain.
+
+## Organizational Signals
+Hiring posture across functions, departures, reorg hints, leadership development.
+
+{{ m.vendor_feedback_block(vendors) }}
+
+## Financial & Commercial Signals
+Revenue, pipeline, customer health, margin, cost-cutting directives.
+
+## Action Items
+Populate `action_items` with a single owner per item, deadline where stated.
+
+{{ m.risks_block() }}
+
+{{ m.open_questions_block() }}
+
+{{ m.prior_actions_block(prior_actions) }}
+
+## Parking Lot
+Topics deferred with when to revisit.
+
+## Key Topics
+5-10 short labels.
+
+{{ m.email_draft_block() }}
+
+{{ m.confidentiality_block() }}

@@ -265,6 +265,25 @@ diarization:
 # ─── Minutes Generation (System 2) ─────────────────────
 generation:
   templates_dir: templates                # Directory containing .md.j2 template files
+  # Vendors rendered as per-vendor service-feedback sub-sections inside templates
+  # that include a vendor-feedback block. Empty list = single generic block.
+  vendors: [AWS, NetApp]
+  # Length of the `detailed_notes` narrative. `concise` targets ~150-400 words
+  # (recommended for executive readers), `standard` ~400-900, `verbose` ~900-1500.
+  length_mode: concise                    # concise | standard | verbose
+  # Emit a ready-to-send follow-up email draft as a structured field + markdown
+  # section. Set false to suppress.
+  generate_email_draft: true
+  # Confidentiality handling. `auto` asks the LLM to classify
+  # (public | internal | confidential | restricted); set to a fixed value to
+  # force a floor.
+  confidentiality_default: auto
+  # Prior-action carryover: pull still-open action items from recent meetings
+  # that share attendees and inject them into the prompt. The LLM can mark
+  # any that were acknowledged-closed in this meeting; matching DB rows are
+  # then set to `done` / `in_progress` / `cancelled` during ingestion.
+  close_acknowledged_actions: true
+  prior_actions_lookback_meetings: 5      # How many prior meetings to scan
   llm:
     primary_provider: anthropic           # anthropic | openai | openrouter | ollama
     model: claude-sonnet-4-6              # Model for minutes generation
@@ -1008,21 +1027,54 @@ mm ingest <meeting_id>               # Store in database
 
 ## 9. Customizing Templates
 
-Meeting minutes are generated using Jinja2 templates in the `templates/` directory. Each meeting type has its own template.
+Meeting minutes are generated using Jinja2 templates in the `templates/` directory. Each meeting type has its own template. A shared `_shared.md.j2` macro file provides cross-cutting blocks (TL;DR, omit-empty rule, length guidance, vendor feedback injection, risks, open questions, prior-action carryover, email draft, confidentiality) that every template imports.
 
 ### 9.1 Built-in templates
+
+**Team & cadence**
 
 | File | Meeting Type | When Used |
 |------|-------------|-----------|
 | `standup.md.j2` | Daily standup | Per-person Done/Today/Blockers |
-| `one_on_one.md.j2` | 1:1 meeting | Mood check-in, accomplishments, objectives progress, blockers, feedback (SBI), career development, coaching notes, engagement signals, action items |
-| `customer_meeting.md.j2` | Client/external call | Client requests, commitments, timeline |
-| `decision_meeting.md.j2` | Decision meeting | Options, pros/cons, decision, rationale |
+| `team_meeting.md.j2` | Team meeting | Decisions, financial review, blockers, strategic updates, action items |
+| `retrospective.md.j2` | Retrospective | Went well, didn't go well, stop/start/continue, improvements |
+| `planning.md.j2` | Sprint/project planning | Scope, priorities, assignments, timeline, risks |
 | `brainstorm.md.j2` | Brainstorming session | Ideas generated, themes, top ideas |
-| `retrospective.md.j2` | Retrospective | Went well, didn't go well, improvements |
-| `team_meeting.md.j2` | Team meeting | Prior action items, decisions, financial review, blockers, strategic updates, action items |
-| `planning.md.j2` | Sprint/project planning | Goals, tasks, estimates, risks |
-| `general.md.j2` | Other / fallback | Summary, discussion points, decisions, actions |
+| `decision_meeting.md.j2` | Decision meeting | Options, pros/cons, decision, rationale, reversibility |
+
+**1:1 (perspective-aware)**
+
+| File | Meeting Type | When Used |
+|------|-------------|-----------|
+| `one_on_one_direct_report.md.j2` | 1:1 with a direct report | Manager perspective: mood, wins, objectives, blockers, feedback, coaching, engagement |
+| `one_on_one_leader.md.j2` | 1:1 with own manager / skip-level | User is the report: direction received, leader commitments, political/strategic context |
+| `one_on_one_peer.md.j2` | Peer 1:1 (no reporting line) | Alignment, disagreements, cross-team dependencies, commitments both ways |
+| `one_on_one.md.j2` | Generic 1:1 fallback | When the perspective isn't identifiable |
+
+**Exec & cross-functional**
+
+| File | Meeting Type | When Used |
+|------|-------------|-----------|
+| `leadership_meeting.md.j2` | Peer-exec staff meeting | Cross-functional decisions, priority trade-offs, resource allocation |
+| `board_meeting.md.j2` | Board / investor update | Formal resolutions, management update, financials, asks of the board |
+| `architecture_review.md.j2` | Architecture / design review | ADR-style: problem, options matrix, decision, reversibility, migration plan |
+| `incident_review.md.j2` | Incident / post-mortem | Blameless timeline, contributing factors, prevent/detect/mitigate actions |
+
+**External**
+
+| File | Meeting Type | When Used |
+|------|-------------|-----------|
+| `customer_meeting.md.j2` | Client / external call | Requirements, service feedback, blockers, commitments both ways, next steps |
+| `vendor_meeting.md.j2` | Vendor / partner / procurement | Vendor commitments, roadmap, SLA, pricing, our asks and escalations |
+| `interview_debrief.md.j2` | Candidate interview debrief | Hire/no-hire with per-competency evidence and level fit |
+
+**Fallback**
+
+| File | Meeting Type | When Used |
+|------|-------------|-----------|
+| `general.md.j2` | Other / fallback | TL;DR + decisions + actions + open questions; used when classification confidence is low |
+
+Every template emits the shared baseline (TL;DR, risks, open questions, action items, decisions, email draft, confidentiality) plus its type-specific sections. **Empty sections are omitted entirely** — no "Not discussed" placeholders.
 
 ### 9.2 Template variables
 
@@ -1037,53 +1089,71 @@ Every template receives these variables:
 | `organizer` | `str` | Organizer name |
 | `meeting_type` | `str` | Classified meeting type |
 | `transcript_text` | `str` | Full transcript with speaker labels |
+| `vendors` | `list[str]` | From `generation.vendors` — renders per-vendor feedback sub-sections |
+| `length_mode` | `str` | From `generation.length_mode` — `concise` / `standard` / `verbose` |
+| `prior_actions` | `list[dict]` | Open action items from recent meetings sharing attendees (for carryover); each has `id`, `description`, `owner`, `due_date`, `meeting_title` |
 
 ### 9.3 Creating a custom template
 
-1. Create a new `.md.j2` file in `templates/`:
+Built-in templates already cover board meetings, leadership syncs, incident reviews, vendor QBRs, architecture reviews, interview debriefs, and three 1:1 variants. You only need a new template when you have a distinct meeting shape the built-ins don't fit (e.g. a specific internal ritual).
 
-```markdown
-{# templates/board_meeting.md.j2 #}
-You are an expert meeting minutes assistant specializing in board meetings.
-Extract formal decisions, voting results, and compliance-relevant items.
+1. Create a new `.md.j2` file in `templates/` and import the shared macros — this gives you TL;DR, omit-empty, risks, open questions, email draft, confidentiality, and vendor injection for free:
+
+```jinja
+{# templates/strategy_offsite.md.j2 #}
+Summarize a multi-day strategy offsite. Focus on cross-functional alignment,
+long-range bets, and the commitments each leader made.
 
 ---
-# Board Meeting Minutes — {{ date }}
-
-**Attendees:** {{ attendees | join(', ') }}
-**Duration:** {{ duration }}
-
-## Transcript
-{{ transcript_text }}
+{% import '_shared.md.j2' as m %}
+{{ m.meeting_header('Strategy Offsite', title, date, duration, attendees, organizer) }}
 
 ---
 
-Please produce board meeting minutes with these sections:
+{{ m.omission_rule() }}
+
+{{ m.length_guidance(length_mode) }}
+
+{{ m.tldr_block() }}
+
+## Title
+[Specific — name the strategic theme.]
 
 ## Summary
-[Executive summary]
+3-5 sentences: key strategic decisions, top bets committed to, biggest unresolved tension.
 
-## Agenda Items
-[List agenda items discussed]
+## Detailed Notes
+Narrative walkthrough of each session.
 
-## Motions & Votes
-[Any formal motions, who proposed, voting results]
+## Strategic Bets
+For each: bet / timeframe / owner / success criteria / investment.
 
-## Decisions
-[All decisions made, with rationale]
+## Cross-Functional Commitments
+Populate `action_items` — one owner per commitment.
 
-## Action Items
-- [ ] [Description] — Owner: [Name] (Due: [Date if mentioned])
+{{ m.vendor_feedback_block(vendors) }}
+
+{{ m.risks_block() }}
+
+{{ m.open_questions_block() }}
+
+{{ m.prior_actions_block(prior_actions) }}
 
 ## Key Topics
-[List main topics]
+5-10 short labels.
+
+{{ m.email_draft_block() }}
+
+{{ m.confidentiality_block() }}
 ```
 
-2. To use it, override the meeting type when generating:
+2. The file stem becomes the meeting type. Override it when generating:
 
 ```bash
-mm generate <meeting_id> --type board_meeting
+mm generate <meeting_id> --type strategy_offsite
 ```
+
+Shared macro files are conventionally named with a leading underscore (`_shared.md.j2`, `_your_macros.md.j2`) — the router excludes underscore-prefixed files from the type list automatically.
 
 ---
 
@@ -1093,7 +1163,7 @@ The Template Manager lets you view, edit, and create meeting prompt templates di
 
 ### 10.1 Viewing and editing templates
 
-All `.md.j2` template files from the `templates/` directory appear in the Template Manager. Click any template to view its contents in an editor. Built-in templates (standup, one_on_one, customer_meeting, etc.) are protected from deletion but can be edited.
+All `.md.j2` template files from the `templates/` directory appear in the Template Manager. Click any template to view its contents in an editor. Built-in templates (standup, the three `one_on_one_*` variants, team/leadership/board, decision/architecture/incident reviews, customer/vendor, brainstorm, retrospective, planning, interview_debrief, and the `general` fallback) are protected from deletion but can be edited. The `_shared.md.j2` macro include is also editable — changes propagate to every template that imports it.
 
 ### 10.2 Creating custom meeting types
 
@@ -1108,25 +1178,39 @@ Any `.md.j2` file you add to the `templates/` directory — whether via the Temp
 
 ### 10.3 LLM-Based Meeting Type Classification
 
-The system uses an LLM classifier (Claude Haiku) to automatically detect meeting types. When the initial keyword-based classifier produces a confidence score below 0.7, the LLM classifier is invoked automatically. It sends the first 4000 characters of the transcript along with metadata (speaker count, calendar title) to the LLM, which returns the meeting type, a confidence score, and reasoning.
+The system uses an LLM classifier (Claude Haiku) to automatically detect meeting types. When the initial signals-based classifier produces a confidence score below 0.7, the LLM classifier is invoked automatically. It sends the first 4000 characters of the transcript along with metadata (speaker count, calendar title, attendee count) to the LLM, which returns the meeting type, a confidence score, and reasoning.
 
-The classifier reads actual template descriptions (system prompt and section headings) from your templates directory to make its decision, so custom template types are auto-discovered. The cost is approximately $0.001 per classification. If the Anthropic API is unavailable, the system falls back to keyword matching.
+The classifier reads actual template descriptions (system prompt and section headings) from your templates directory to make its decision, so custom template types are auto-discovered. The cost is approximately $0.001 per classification. If the Anthropic API is unavailable, the system falls back to a heuristic classifier that uses the calendar title first (e.g. "QBR" → `vendor_meeting`, "post-mortem" → `incident_review`, "board meeting" → `board_meeting`), then content keywords, then attendee count (two attendees → `one_on_one`). The fallback returns low confidence so the LLM path is always preferred when reachable.
 
 You can always override the detected type manually:
 
 ```bash
-mm generate <meeting_id> --type team_meeting
+mm generate <meeting_id> --type leadership_meeting
 ```
 
-### 10.5 Updated built-in templates
+### 10.4 TL;DR, confidentiality, and prior-action carryover
 
-The `one_on_one`, `customer_meeting`, and `team_meeting` templates include enriched sections:
+Every generated minutes document now opens with a **TL;DR** (~100-word executive digest covering the biggest decision, biggest risk, most urgent action, and the single takeaway) and carries a **confidentiality** classification in the header (`public` / `internal` / `confidential` / `restricted`). Every template also emits an **Open Questions** section for items raised but not resolved, and a **Follow-up Email Draft** (subject + to/cc + body) when the meeting produced commitments worth sending around.
 
-- **one_on_one**: Mood/Energy Check-in, Accomplishments & Wins (dated), Progress Against Objectives, Blockers (4 types with handling status + support needed), Feedback Given (SBI format), Feedback Received (upward), Service Feedback, Customer Feedback, Team & Org Observations, Career Development, Coaching Notes, Engagement Signals (positive + concerning), Action Items (split into employee vs manager commitments)
-- **team_meeting**: Prior Action Items Review, Decisions (with rationale), Financial Review (cloud spend, optimization, P&L), Blockers (4 categories + cross-team dependencies), Strategic Updates, Technology Decisions, Service Feedback (AWS/NetApp), Customer Impact, Resource & Capacity, Team Health & Morale, Announcements, Parking Lot, Action Items (split by urgency)
-- **Service Feedback** (shared across templates): AWS Services, NetApp Services, Other Services
-- **Blockers** (shared across templates): Categorized as Operational, Organizational, Physical/Infrastructure, Roadmap/Strategic
-- **Customer meetings** additionally include: Competitive Intelligence, and split Commitments (ours vs. customer's)
+**Prior-action carryover** (`generation.close_acknowledged_actions`): before generation, the pipeline pulls still-open action items from recent meetings that share attendees (up to `generation.prior_actions_lookback_meetings`, default 5) and injects them into the prompt. The LLM can mark any that were acknowledged as done / in progress / cancelled in the current meeting. During ingestion those DB rows are updated automatically — no manual checkbox click needed.
+
+### 10.5 Vendor feedback injection
+
+Templates that include a vendor-feedback block render one sub-heading per vendor listed in `generation.vendors` (default `[AWS, NetApp]`). Change the list to match your stack — e.g. `[GCP, Snowflake, Databricks]` — and every type-specific template reflects it without edits. The block is still omitted entirely when no vendor feedback was raised during the meeting.
+
+### 10.6 Template highlights
+
+- **`one_on_one_direct_report`** — manager perspective: Mood/Energy, Accomplishments & Wins (dated), Progress Against Objectives, Blockers (4 categories with handling + support needed), Feedback Given (SBI format), Feedback Received (upward), Vendor/Tooling Feedback, Career Development, Coaching Notes, Engagement Signals, split Action Items (employee vs manager commitments).
+- **`one_on_one_leader`** — user-is-the-report perspective: Direction Received, Feedback Received, Feedback Given (upward), Leader Commitments (captured verbatim as action items with the leader as owner), Strategic & Political Context.
+- **`one_on_one_peer`** — peer 1:1: Alignment Reached, Disagreements / Open Tensions, Cross-Team Dependencies, Commitments (both directions).
+- **`team_meeting`** — Decisions with rationale, Financial Review (cloud spend, optimization, P&L), Blockers (4 categories + Cross-Team Dependencies), Strategic Updates, Technology Decisions, Vendor Feedback, Customer Impact, Resource & Capacity, Team Health, Announcements, Parking Lot, Action Items (by urgency).
+- **`leadership_meeting`** — Cross-Functional Decisions, Priority & Resource Trade-offs, Cross-Team Commitments, Strategic Alignment, Organizational Signals, Financial & Commercial Signals.
+- **`board_meeting`** — Resolutions Passed (exact wording + vote count), Management Update, Financial Update, Strategic Items, Risks & Mitigations, Asks of the Board, Board Feedback & Direction, Executive Session (presence only — never fabricated content).
+- **`architecture_review`** — Problem Statement, Requirements & Constraints, Options Considered (pros/cons/cost/risks), Evaluation Matrix, Decision (with reversibility), Migration / Rollout Plan.
+- **`incident_review`** — Incident Summary (severity, impact, timestamps), Timeline, Impact, Contributing Factors, What Went Well / Poorly, Corrective Actions (tagged **[Prevent] / [Detect] / [Mitigate]**), Customer Communication Follow-ups. Blameless framing.
+- **`vendor_meeting`** — Vendor Commitments (the headline output — vendor as action item owner), Roadmap & Feature Updates, SLA Performance, Commercial / Pricing, Our Asks / Escalations, Competitive Context, Our Action Items.
+- **`customer_meeting`** — Customer Requirements, Vendor Feedback (per configured vendor), Customer Blockers (4 categories), Demo Notes, split Commitments (ours vs customer's), Next Steps, Competitive Intelligence.
+- **`interview_debrief`** — Panel Recommendation + Level Consistency, Per-Interviewer Signal, Per-Competency Assessment, Strengths, Concerns / Gaps, Missing Data, Compensation / Level Fit.
 
 ---
 

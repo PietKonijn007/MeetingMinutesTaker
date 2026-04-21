@@ -1,55 +1,59 @@
-You are an expert meeting minutes assistant specializing in planning meetings (sprint planning, quarterly planning, roadmap sessions). Capture scope, priorities, assignments, timelines, and commitments.
+Summarize a planning meeting (sprint, quarterly, roadmap). Capture scope, priorities, owners, timelines, and commitments.
 
 ---
-# Planning Session: {{ title }}
-
-**Date:** {{ date }}
-**Duration:** {{ duration }}
-**Attendees:** {{ attendees | join(', ') }}
-{% if organizer %}**Organizer:** {{ organizer }}{% endif %}
-
-## Transcript
-{{ transcript_text }}
+{% import '_shared.md.j2' as m %}
+{{ m.meeting_header('Planning', title, date, duration, attendees, organizer) }}
 
 ---
 
-Please produce planning notes using the following structure:
+{{ m.omission_rule() }}
+
+{{ m.length_guidance(length_mode) }}
+
+{{ m.tldr_block() }}
 
 ## Title
-[A short, descriptive title for this meeting — 3 to 10 words that capture the main topic or purpose. Do NOT use generic names like "Team Meeting" or "Weekly Sync" — be specific about what was discussed.]
+[Specific — 3 to 10 words — name the planning horizon and focus area.]
 
 ## Summary
-[Brief summary of what was planned, the planning horizon, and key outcomes]
+2-4 sentences: horizon, top priorities committed, biggest dependency or risk.
 
 ## Detailed Notes
-[A comprehensive narrative write-up of the planning session (~400–1200 words). Walk through how the team worked through the planning: what scope was considered and de-scoped, how trade-offs between items were debated, capacity concerns raised, dependencies discovered mid-discussion, and how priority rankings were arrived at. Attribute positions and estimates to named participants. Capture the reasoning behind commitments — this is what lets a reader understand WHY the plan looks the way it does, not just what the plan is. Include concrete details (story counts, dates, dependencies, owners). Use subheadings, paragraphs, and bullets for readability. Do not duplicate the structured lists below verbatim — weave the narrative around them. Only include information actually present in the transcript.]
+Narrative of scope considered and de-scoped, trade-offs debated, capacity concerns, priority reasoning.
 
 ## Planning Context
-[The context for this planning session — sprint goals, quarter objectives, etc.]
+Goal for the sprint / quarter / roadmap (omit if not stated).
 
 ## Scope & Goals
-[What the team committed to deliver, including specific goals and success criteria]
+What the team committed to and success criteria.
 
 ## Priorities
-[Items ranked by priority, with rationale if discussed]
-
-1. [Highest priority item]
-2. [Second priority]
+Ranked with rationale.
 
 ## Team Assignments
-[Who is responsible for what]
+Who owns what.
 
 ## Timeline & Milestones
-[Key dates and milestones identified]
+Key dates.
 
 ## Dependencies & Risks
-[Dependencies on other teams or external factors. Known risks.]
+Cross-team dependencies, known risks.
 
 ## Decisions
-[Planning decisions made]
+Planning decisions taken (populate `decisions`).
 
 ## Action Items
-- [ ] [Description] — Owner: [Name] (Due: [Date if mentioned])
+Populate `action_items` with owner and due date.
+
+{{ m.risks_block() }}
+
+{{ m.open_questions_block() }}
+
+{{ m.prior_actions_block(prior_actions) }}
 
 ## Key Topics
-[Main themes and discussion areas]
+3-7 short labels.
+
+{{ m.email_draft_block() }}
+
+{{ m.confidentiality_block() }}

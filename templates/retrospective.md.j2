@@ -1,51 +1,53 @@
-You are an expert meeting minutes assistant specializing in retrospective meetings (agile retrospectives or project reviews). Capture what went well, what could be improved, and specific action items for improvement.
+Summarize a retrospective — what went well, what could improve, and concrete changes the team is going to make.
 
 ---
-# Retrospective: {{ title }}
-
-**Date:** {{ date }}
-**Duration:** {{ duration }}
-**Attendees:** {{ attendees | join(', ') }}
-{% if organizer %}**Organizer:** {{ organizer }}{% endif %}
-
-## Transcript
-{{ transcript_text }}
+{% import '_shared.md.j2' as m %}
+{{ m.meeting_header('Retrospective', title, date, duration, attendees, organizer) }}
 
 ---
 
-Please produce retrospective notes using the following structure:
+{{ m.omission_rule() }}
+
+{{ m.length_guidance(length_mode) }}
+
+{{ m.tldr_block() }}
 
 ## Title
-[A short, descriptive title for this meeting — 3 to 10 words that capture the main topic or purpose. Do NOT use generic names like "Team Meeting" or "Weekly Sync" — be specific about what was discussed.]
+[Specific — 3 to 10 words — name the sprint/project/period and main theme.]
 
 ## Summary
-[Brief summary of the retrospective — what period/sprint/project was reviewed and key themes]
+2-4 sentences: period reviewed and the dominant improvement theme.
 
 ## Detailed Notes
-[A comprehensive narrative write-up of the retrospective (~400–1200 words). Walk through how the discussion unfolded: what themes emerged, where people strongly agreed or disagreed, emotional tone around specific incidents, root causes that surfaced during discussion, and how the group arrived at proposed improvements. Attribute views to named participants where clear. Capture the human context — frustration, pride, concern — that the bulleted lists below can't. Include concrete details (incidents, tools, processes, dates). Use subheadings and paragraphs for readability. Do not duplicate the What Went Well / Could Be Better lists verbatim — weave the narrative around them. Only include information actually present in the transcript.]
+Narrative of how the discussion unfolded — agreement vs. disagreement, emotional tone, root causes surfaced, improvements debated.
 
 ## What Went Well
-[All positive items mentioned, with specific examples where given]
-- [Item]
+Specific wins with examples.
 
 ## What Could Be Better
-[Areas for improvement, pain points, and challenges mentioned]
-- [Item]
+Pain points and challenges.
 
-## What We Should Stop Doing
-[Practices or behaviors to eliminate]
-- [Item]
+## Stop Doing
+Practices or behaviors to eliminate.
 
-## What We Should Start Doing
-[New practices or behaviors to adopt]
-- [Item]
+## Start Doing
+New practices to adopt.
 
 ## Decisions
-[Any decisions made about process changes or improvements]
+Process changes agreed.
 
 ## Action Items
-[Specific improvement actions with owners]
-- [ ] [Description] — Owner: [Name] (Due: [Date if mentioned])
+Improvement actions with owner and due date (populate `action_items`).
+
+{{ m.risks_block() }}
+
+{{ m.open_questions_block() }}
+
+{{ m.prior_actions_block(prior_actions) }}
 
 ## Key Topics
-[Main themes from the retrospective]
+3-7 short labels.
+
+{{ m.email_draft_block() }}
+
+{{ m.confidentiality_block() }}

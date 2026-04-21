@@ -1,0 +1,96 @@
+Summarize a 1:1 where the user is the manager and the other party is their direct report. Extract signals useful for performance reviews, career development, and identifying support needs. Think like an HR business partner + performance coach.
+
+---
+{% import '_shared.md.j2' as m %}
+{{ m.meeting_header('1:1 (Direct Report)', title, date, duration, attendees, organizer, attendee_join=' & ') }}
+
+---
+
+{{ m.omission_rule() }}
+
+{{ m.length_guidance(length_mode) }}
+
+{{ m.tldr_block() }}
+
+## Title
+[Specific — 3 to 10 words. Do NOT use "Weekly 1:1" — name the actual topics.]
+
+## Summary
+3-5 sentences: what was discussed, key outcomes, concerns, tone.
+
+## Detailed Notes
+Narrative of the conversation in order — opening, what the employee raised, manager response, deeper dives, how it wrapped up. Capture tone shifts, hesitation, enthusiasm, moments of alignment or friction. Use direct quotes where the employee's exact words matter.
+
+## Mood & Energy Check-in
+Self-reported energy, work-life balance, stress indicators, enthusiasm. Tone — upbeat, flat, frustrated, energized?
+
+## Accomplishments & Wins
+Specific completed work, problems solved, positive feedback received, milestones reached, ownership shown.
+
+## Progress Against Objectives
+Goals/OKRs discussed, status, timeline changes, obstacles, any new objectives.
+
+## Blockers & Challenges
+For each: what is it, how is the employee handling it, what support do they need from the manager?
+
+### Operational
+Day-to-day system/access/tooling/on-call/incident-response issues.
+
+### Organizational
+Unclear ownership, cross-team dependencies, approval bottlenecks, staffing, meeting overload.
+
+### Infrastructure / Physical
+Hardware, network, equipment, office/remote setup.
+
+### Roadmap / Strategic
+Product direction, feature priorities, tech debt, migrations, vendor decisions.
+
+## Feedback Given (Manager → Employee)
+Use SBI where possible.
+- **Positive:** situation / behavior / impact
+- **Constructive:** examples, agreed approach
+
+## Feedback Received (Employee → Manager / Org)
+Upward feedback — about manager style, team processes, leadership, tools, culture. Often subtle; capture it even when expressed as complaints or suggestions.
+
+{{ m.vendor_feedback_block(vendors) }}
+
+## Customer & Stakeholder Feedback
+What the employee shared about customer interactions, stakeholder relationships, external feedback.
+
+## Team & Organization Observations
+Team dynamics, morale, process friction, culture, recent org changes, strategy clarity.
+
+## Career Development & Growth
+Short-term learning goals, long-term aspirations, stretch assignments, training, mentoring, promotion readiness.
+
+## Coaching Notes
+Coaching topic / options explored / agreed next step / commitments.
+
+## Engagement & Wellbeing Signals
+Factual observations, not judgments.
+
+### Positive
+Volunteering ideas, enthusiasm, discussing future plans here, initiative, mentoring, asking about growth.
+
+### Concerning
+Short answers, low energy, cynicism, dissatisfaction with role/comp/growth, burnout or overwhelm, checking out.
+
+## Decisions
+Populate `decisions`.
+
+## Action Items
+Populate `action_items`. Separate employee vs. manager commitments via the `owner` field — manager commitments matter as much as employee tasks.
+
+{{ m.risks_block() }}
+
+{{ m.open_questions_block() }}
+
+{{ m.prior_actions_block(prior_actions) }}
+
+## Key Topics
+5-10 short labels.
+
+{{ m.email_draft_block() }}
+
+{{ m.confidentiality_block() }}

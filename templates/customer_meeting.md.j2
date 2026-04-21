@@ -1,86 +1,81 @@
-You are an expert meeting minutes assistant specializing in customer and client meetings in a technology/cloud services environment. The company works with AWS and NetApp services. Focus on capturing customer requirements, service feedback, blockers, commitments, and follow-ups. Categorize blockers precisely. Be professional, thorough, and accurate.
+Summarize a customer/client meeting. Capture requirements, service feedback, blockers, commitments (both directions), and next steps.
 
 ---
-# Customer Meeting: {{ title }}
-
-**Date:** {{ date }}
-**Duration:** {{ duration }}
-**Attendees:** {{ attendees | join(', ') }}
-{% if organizer %}**Organizer:** {{ organizer }}{% endif %}
-
-## Transcript
-{{ transcript_text }}
+{% import '_shared.md.j2' as m %}
+{{ m.meeting_header('Customer Meeting', title, date, duration, attendees, organizer) }}
 
 ---
 
-Please produce customer meeting notes using the following structure. Be thorough — extract every detail from the transcript.
+{{ m.omission_rule() }}
+
+{{ m.length_guidance(length_mode) }}
+
+{{ m.tldr_block() }}
 
 ## Title
-[A short, descriptive title — 3 to 10 words capturing the main topic. Be specific about the customer and subject.]
+[Specific — 3 to 10 words — name customer and subject.]
 
 ## Summary
-[2-4 sentences: who the customer is, what was discussed, key outcomes, and any critical issues or wins]
+2-4 sentences: who, what was discussed, key outcomes, any critical issue.
 
 ## Detailed Notes
-[A comprehensive narrative write-up of the customer meeting (~400–1200 words). Walk through the conversation in the order it unfolded: how the meeting opened, what the customer emphasized, how their concerns or questions evolved, and how our side responded. Capture the reasoning, nuance, and context behind requirements and feedback — not just the items themselves. Attribute positions to named participants (customer and our team) where clear. Include concrete details: product/service names, numbers, dates, environments, specific pain points. Use subheadings, paragraphs, and bullets for readability. Do not duplicate the structured lists below verbatim — weave the narrative around them. Only include information actually present in the transcript.]
+Narrative of how the meeting unfolded — customer emphasis, concern evolution, our responses. Attribute to named speakers.
 
 ## Customer Background & Context
-[Who is the customer, their industry, their current environment, and why this meeting was held. Include account status and relationship context if mentioned.]
+Industry, environment, account status, relationship context (omit if not established in transcript).
 
 ## Customer Requirements & Requests
-[Specific requirements, feature requests, or asks from the customer. Be precise — include timelines, priorities, and any conditions mentioned.]
+Specific asks, timelines, priorities, conditions.
 
-## Service Feedback
-[Capture ALL feedback the customer shared about services they use. This is critical intelligence.]
-
-### AWS Services Feedback
-[Customer feedback on any AWS services (EC2, S3, Lambda, EKS, SageMaker, Bedrock, Control Tower, Security Hub, IAM, CloudFormation, etc.). Include: satisfaction level, pain points, feature requests, performance issues, cost concerns, comparison with alternatives. If not discussed, write "Not discussed".]
-
-### NetApp Services Feedback
-[Customer feedback on any NetApp services (ONTAP, Cloud Volumes, StorageGRID, BlueXP, Astra, FSx for NetApp ONTAP, etc.). Include: satisfaction level, pain points, feature requests, performance issues, cost concerns, migration experiences. If not discussed, write "Not discussed".]
-
-### Other Services & Tools Feedback
-[Customer feedback on any other vendor services, tools, or platforms mentioned. If not discussed, write "Not discussed".]
+{{ m.vendor_feedback_block(vendors) }}
 
 ## Customer Blockers
-[Identify ALL blockers the customer mentioned. Categorize each precisely:]
+Categorize precisely; omit any category that doesn't apply.
 
-### Operational Blockers
-[Customer operational issues: service outages they experienced, access/permission problems, tooling failures, deployment difficulties, monitoring gaps, incident response concerns. If none, write "None identified".]
+### Operational
+Outages, access issues, tooling failures, monitoring gaps.
 
-### Organizational Blockers
-[Customer organizational issues: internal team alignment, procurement/approval delays, lack of trained staff, unclear ownership of decisions, stakeholder buy-in challenges. If none, write "None identified".]
+### Organizational
+Internal alignment, procurement, staffing, stakeholder buy-in.
 
-### Physical / Infrastructure Blockers
-[Customer infrastructure issues: data center constraints, network limitations, hardware refresh cycles, hybrid cloud connectivity, data residency requirements, compliance constraints. If none, write "None identified".]
+### Infrastructure / Physical
+Data center, network, hardware, hybrid cloud, compliance.
 
-### Roadmap / Strategic Blockers
-[Customer strategic concerns: misalignment with vendor roadmap, migration timeline risks, vendor lock-in concerns, technology direction uncertainty, budget constraints affecting long-term plans. If none, write "None identified".]
+### Roadmap / Strategic
+Vendor roadmap misalignment, migration risks, vendor lock-in, budget.
 
 ## Demo / Presentation Notes
-[Key points from any demo or presentation. Customer reactions, questions asked, features that resonated, concerns raised.]
+Key points shown, customer reactions, features that resonated, concerns raised.
 
 ## Commitments Made
-[Any commitments made by either party. Be explicit about who committed to what and by when.]
 
 ### Our Commitments to Customer
-[What we promised to deliver or follow up on]
+Specific promises with owner and date.
 
 ### Customer Commitments
-[What the customer agreed to do (provide data, make decisions, schedule follow-ups, etc.)]
+What the customer agreed to provide or do, and by when.
 
 ## Decisions
-[All decisions made during the meeting, with who made them]
+Populate `decisions`.
 
 ## Action Items
-[Every follow-up task. Be thorough — capture even informal commitments.]
-- [ ] [Description] — Owner: [Name] (Due: [Date if mentioned])
+Populate `action_items` with owner and due date.
 
 ## Next Steps
-[Agreed next steps, timeline, and next meeting date if set]
+Agreed next steps, timeline, next meeting date.
 
 ## Competitive Intelligence
-[Any mentions of competitors, alternative solutions the customer is evaluating, or comparisons made. If none, write "None mentioned".]
+Competitors being evaluated, comparisons, alternatives mentioned.
+
+{{ m.risks_block() }}
+
+{{ m.open_questions_block() }}
+
+{{ m.prior_actions_block(prior_actions) }}
 
 ## Key Topics
-[List 3-7 main themes from the meeting]
+3-7 short labels.
+
+{{ m.email_draft_block() }}
+
+{{ m.confidentiality_block() }}

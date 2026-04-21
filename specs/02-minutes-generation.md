@@ -38,50 +38,85 @@ An LLM-powered system that takes structured transcript JSON from System 1 and ge
 
 ### 2.4 LLM-Based Meeting Type Classifier
 
-The keyword-matching classifier has been replaced with an LLM call using Claude Haiku for improved accuracy.
+The primary classifier is an LLM call using Claude Haiku with Anthropic `tool_use`. A heuristic classifier (calendar title + content keywords + attendee count) is used as a fallback when the LLM is unreachable.
 
-**How it works:**
-1. Sends the first 4000 characters of the transcript plus metadata (speaker count, calendar title) to Claude Haiku
-2. Uses Anthropic `tool_use` with an enum constraint to guarantee a valid meeting type is returned
+**How the LLM path works:**
+1. Sends the first 4000 characters of the transcript plus metadata (speaker count, calendar title, attendee count) to Claude Haiku
+2. Uses Anthropic `tool_use` with an enum constraint (populated from the on-disk template list) to guarantee a valid meeting type is returned
 3. The LLM returns `meeting_type`, `confidence` (0-1), and `reasoning`
 4. The classifier reads actual template descriptions (system prompt + section headings) via `_extract_type_descriptions()` to inform its decision
-5. Custom template types added to the `templates/` directory are auto-discovered
+5. Custom template types added to the `templates/` directory are auto-discovered (files starting with `_` are treated as shared macro includes and excluded from the type list)
 
 **Cost:** Approximately $0.001 per classification.
 
-**Fallback:** If the Anthropic API is unavailable, the system falls back to keyword matching.
+**Heuristic fallback** (when no `ANTHROPIC_API_KEY` is set or the API call fails):
+1. Calendar title keywords first — e.g. "QBR" / "vendor sync" → `vendor_meeting`; "post-mortem" / "RCA" → `incident_review`; "board meeting" → `board_meeting`; "interview debrief" → `interview_debrief`; "architecture review" / "design review" → `architecture_review`; "staff meeting" / "E-team" → `leadership_meeting`
+2. Transcript content keywords (lower confidence)
+3. Attendee count heuristic — two attendees → `one_on_one`
+4. Otherwise `other` (falls through to the general template)
+
+The fallback returns low confidence (0.3-0.55) so the LLM path is preferred whenever reachable.
 
 **Trigger:** Runs automatically when the initial transcript confidence is below 0.7.
 
-**Meeting Type Refinement (N11):** After the initial classification, the system can refine the meeting type based on the full transcript content, improving accuracy for borderline cases.
+**Meeting Type Refinement (N11):** After the initial classification, the system can refine the meeting type based on the full transcript content, improving accuracy for borderline cases. The refined type must match a known `MeetingType` enum value; free-form suggestions are logged but not applied.
 
 ### 2.2 Supported Meeting Types & Templates
 
+Every template emits a shared baseline — **TL;DR** (~100 words), decisions, action items, risks, open questions, follow-up email draft, confidentiality classification — plus the type-specific sections below. **Empty sections are omitted entirely**; templates never emit "Not discussed" placeholders.
+
+**Team & cadence**
+
 | Meeting Type | Template Focus | Key Sections |
 |-------------|---------------|--------------|
-| `customer_meeting` | Client requirements, commitments | Client requests, Our commitments, Timeline, Follow-ups |
-| `one_on_one_direct_report` | Coaching, growth, performance | Discussion topics, Feedback given, Career development, Action items, Follow-ups |
-| `one_on_one_leader` | Updates, alignment, support needs | Status updates, Guidance received, Decisions, Escalations, Action items |
-| `standup` | Brief, per-person updates | Yesterday, Today, Blockers per person |
-| `team_meeting` | Decisions, financials, strategy | Prior action items review, Decisions (with rationale), Financial review, Blockers (4 categories + cross-team), Strategic updates, Technology decisions, Service feedback, Customer impact, Resource & capacity, Team health, Announcements, Parking lot, Action items (split by urgency) |
-| `interview` | Candidate assessment | Questions asked, Candidate responses (summarized), Assessment notes, Recommendation |
-| `brainstorm` | Ideas and themes | Ideas generated, Themes/clusters, Top ideas, Next steps |
-| `decision_meeting` | Options and outcomes | Context, Options discussed, Pros/cons, Decision made, Rationale |
-| `presentation` | Key takeaways | Presenter, Topic, Key points, Q&A summary, Audience feedback |
-| `all_hands` | Company updates | Announcements, Department updates, Q&A highlights, Key dates |
-| `retrospective` | Improvement actions | What went well, What didn't, Action items for improvement |
-| `planning` | Sprint/project plan | Goals, Stories/tasks discussed, Estimates, Commitments, Risks |
-| `workshop` | Learning outcomes | Topics covered, Exercises, Key learnings, Resources shared |
-| `other` | General-purpose | Summary, Key discussion points, Decisions, Action items |
+| `standup` | Per-person updates | Per-person Done/Today/Blockers |
+| `team_meeting` | Decisions, financials, strategy | Decisions (with rationale), Financial review, Blockers (4 categories + cross-team), Strategic updates, Technology decisions, Vendor feedback, Customer impact, Resource & capacity, Team health, Announcements, Parking lot, Action items (by urgency) |
+| `retrospective` | Improvement actions | What went well, What could be better, Stop/Start/Continue, Decisions, Action items |
+| `planning` | Sprint / project / quarterly plan | Planning context, Scope & goals, Priorities, Team assignments, Timeline, Dependencies & risks |
+| `brainstorm` | Ideas and themes | Problem statement, Ideas generated, Top ideas, Ideas to explore further |
+| `decision_meeting` | Options and outcomes | Context, Options considered, Decision (with rationale, reversibility, scope, dissent) |
+
+**1:1 (perspective-aware)**
+
+| Meeting Type | Template Focus | Key Sections |
+|-------------|---------------|--------------|
+| `one_on_one_direct_report` | Manager→report: coaching, growth, performance | Mood/Energy, Wins, Progress vs. objectives, Blockers (4 categories), Feedback Given (SBI), Feedback Received (upward), Career Development, Coaching Notes, Engagement Signals, split Action Items |
+| `one_on_one_leader` | User→boss / skip-level | Direction received, Feedback both ways, Leader commitments, Strategic & political context, Career development |
+| `one_on_one_peer` | Peer 1:1 (no reporting line) | Alignment reached, Disagreements, Cross-team dependencies, Commitments (both directions), Information shared |
+| `one_on_one` | Generic 1:1 fallback | Used when perspective isn't identifiable |
+
+**Exec & cross-functional**
+
+| Meeting Type | Template Focus | Key Sections |
+|-------------|---------------|--------------|
+| `leadership_meeting` | Peer-exec staff meeting | Cross-functional decisions, Priority & resource trade-offs, Cross-team commitments, Strategic alignment, Organizational signals, Financial signals |
+| `board_meeting` | Board / investor update | Resolutions passed (with vote counts), Management update, Financial update, Strategic items, Asks of the board, Board feedback |
+| `architecture_review` | ADR-style design review | Problem statement, Requirements & constraints, Options considered, Evaluation matrix, Decision (with reversibility), Migration plan |
+| `incident_review` | Blameless post-mortem | Incident summary (severity, impact, timestamps), Timeline, Impact, Contributing factors, What went well / poorly, Corrective actions ([Prevent] / [Detect] / [Mitigate]) |
+
+**External**
+
+| Meeting Type | Template Focus | Key Sections |
+|-------------|---------------|--------------|
+| `customer_meeting` | Client / external call | Customer requirements, Vendor feedback, Customer blockers (4 categories), Demo notes, split Commitments (ours vs customer's), Next steps, Competitive intelligence |
+| `vendor_meeting` | Vendor / partner / procurement (e.g. QBR) | Vendor commitments (as action items with vendor as owner), Roadmap updates, SLA performance, Commercial / pricing, Our asks / escalations, Competitive context |
+| `interview_debrief` | Candidate interview debrief | Panel recommendation + level consistency, Per-interviewer signal, Per-competency assessment, Strengths, Concerns / gaps, Missing data |
+
+**Fallback**
+
+| Meeting Type | Template Focus | Key Sections |
+|-------------|---------------|--------------|
+| `other` | General-purpose | TL;DR + summary + decisions + action items + open questions; used when classification confidence is low |
 
 ### 2.3 Template Selection Logic
 
 ```
-1. Check meeting_type from transcript JSON
-2. If confidence >= 0.7 -> use corresponding template
-3. If confidence < 0.7 -> run LLM classifier on transcript excerpt
-4. If user override provided -> use override
-5. If no match -> fall back to "other" (general-purpose) template
+1. If user override provided -> use override
+2. Check meeting_type from transcript JSON
+3. If confidence >= 0.7 -> use corresponding template
+4. If confidence < 0.7 -> run LLM classifier on transcript excerpt
+5. If LLM unavailable -> fall back to heuristic (calendar title > content keywords > attendee count)
+6. If still no match -> fall back to "other" (general-purpose) template
 ```
 
 ---
@@ -234,29 +269,47 @@ Ollama provides a fully local, free alternative to cloud LLM providers. The inte
 | `qwen2.5:32b` | 32B | ~20GB | Near-cloud quality |
 | `qwen2.5:72b` / `llama3.1:70b` | 70B+ | ~45GB | Cloud-equivalent |
 
-### 4.2 LLM Configuration
+### 4.2 Generation Configuration
 
 ```yaml
-llm:
-  primary_provider: "anthropic"        # anthropic | openai | openrouter | ollama
-  model: "claude-sonnet-4-6"           # Model ID (for openrouter, use prefixed IDs like "anthropic/claude-sonnet-4")
-  fallback_provider: "openai"          # Fallback when primary fails (null to disable)
-  fallback_model: "gpt-4o"
-  temperature: 0.2                     # low temperature for factual extraction
-  max_output_tokens: 4096
-  retry_attempts: 3
-  timeout_seconds: 120
+generation:
+  templates_dir: templates              # Directory containing .md.j2 template files
+  # Per-vendor service-feedback sub-sections in templates that emit a vendor-feedback
+  # block. Empty list = single generic vendor-feedback block.
+  vendors: [AWS, NetApp]
+  # Length of the `detailed_notes` narrative.
+  length_mode: concise                  # concise (~150-400w) | standard (~400-900w) | verbose (~900-1500w)
+  # Emit a ready-to-send follow-up email draft (subject + to/cc + body) as a
+  # structured field and markdown section.
+  generate_email_draft: true
+  # auto = LLM classifies; otherwise force a floor (public | internal | confidential | restricted)
+  confidentiality_default: auto
+  # Prior-action carryover (ACT-1): pull still-open action items from recent
+  # meetings that share attendees and inject them into the prompt. The LLM can
+  # mark any acknowledged-closed items; matching DB rows are updated during ingestion.
+  close_acknowledged_actions: true
+  prior_actions_lookback_meetings: 5
 
-  # Ollama-specific settings (only used when primary_provider = ollama)
-  ollama:
-    base_url: "http://localhost:11434"  # Ollama server URL (overridable via OLLAMA_BASE_URL env var)
-    timeout_seconds: 300                # Local models can be slower than cloud APIs
+  llm:
+    primary_provider: "anthropic"        # anthropic | openai | openrouter | ollama
+    model: "claude-sonnet-4-6"           # Model ID (for openrouter, use prefixed IDs like "anthropic/claude-sonnet-4")
+    fallback_provider: "openai"          # Fallback when primary fails (null to disable)
+    fallback_model: "gpt-4o"
+    temperature: 0.2                     # low temperature for factual extraction
+    max_output_tokens: 4096
+    retry_attempts: 3
+    timeout_seconds: 120
 
-  # For long transcripts
-  chunking:
-    strategy: "sliding_window"         # sliding_window | map_reduce | refine
-    chunk_size_tokens: 80000
-    overlap_tokens: 2000
+    # Ollama-specific settings (only used when primary_provider = ollama)
+    ollama:
+      base_url: "http://localhost:11434"  # Ollama server URL (overridable via OLLAMA_BASE_URL env var)
+      timeout_seconds: 300                # Local models can be slower than cloud APIs
+
+    # For long transcripts
+    chunking:
+      strategy: "sliding_window"         # sliding_window | map_reduce | refine
+      chunk_size_tokens: 80000
+      overlap_tokens: 2000
 ```
 
 ### 4.3 Long Transcript Handling
@@ -289,19 +342,25 @@ The primary method for generating structured meeting minutes is via Anthropic's 
 
 The tool definition includes these fields:
 
-- `summary` (str): Executive summary of the meeting
+- `title` (str): Specific, descriptive meeting title
+- `tldr` (str): ~100-word executive digest — biggest decision, biggest risk, most urgent action, single takeaway
+- `summary` (str): Executive summary (2-6 sentences depending on meeting type)
+- `detailed_notes` (str): Long-form narrative of how the conversation unfolded; length governed by `generation.length_mode`
+- `meeting_type_suggestion` (str, optional): Refined type suggestion (N11). Accepted only if it matches a known `MeetingType` enum value
+- `confidentiality` (str): `public` | `internal` | `confidential` | `restricted`
 - `sentiment` (str): Overall meeting sentiment (positive, neutral, negative, mixed)
 - `participants` (list[ParticipantInfo]): Participant details with name, role, contribution summary, and per-speaker sentiment (positive/neutral/negative/mixed)
 - `discussion_points` (list[DiscussionPoint]): Key topics with description, speaker, and outcome
 - `action_items` (list[StructuredActionItem]): With description, owner, due_date, priority (high/medium/low), transcript_segment_ids
 - `decisions` (list[StructuredDecision]): With description, made_by, rationale, confidence (high/medium/low), transcript_segment_ids
-- `risks_and_concerns` (list[RiskConcern]): Identified risks with description, severity, owner
+- `risks_and_concerns` (list[RiskConcern]): Identified risks with description, raised_by
+- `open_questions` (list[OpenQuestion]): Questions raised but not resolved; each has `question`, `raised_by`, `owner`
 - `follow_ups` (list[FollowUp]): Items needing follow-up with description, owner, timeline
 - `parking_lot` (list[str]): Topics raised but deferred
-- `meeting_effectiveness` (MeetingEffectiveness): Rating (1-5) and notes on meeting quality (A4: meeting effectiveness scoring)
-- `key_topics` (list[str]): Extracted topic keywords
-- `structured_data` (dict): Meeting-type-specific structured data
-- `minutes_markdown` (str): Full rendered markdown of the minutes
+- `prior_action_updates` (list[PriorActionUpdate]): For each prior open action item acknowledged in this meeting — `action_item_id` (from the prior-actions block injected into the prompt), `new_status` (`done` | `in_progress` | `cancelled`), `evidence` (short quote)
+- `email_draft` (EmailDraft | null): Ready-to-send follow-up email with `subject`, `to`, `cc`, `body`. Null when no commitments warrant a follow-up
+- `meeting_effectiveness` (MeetingEffectiveness): `had_clear_agenda`, `decisions_made`, `action_items_assigned`, `unresolved_items`
+- `key_topics` (list[str]): Extracted topic labels
 
 ### 4A.3 Tool Use Approach
 
@@ -312,7 +371,15 @@ The tool definition includes these fields:
 
 ### 4A.3.1 Persistence of structured data
 
-The `MinutesJSONWriter` in `system2/output.py` populates `MinutesJSON.structured_data` with a dict containing all structured fields (sentiment, participants, discussion_points, risks_and_concerns, follow_ups, parking_lot, key_topics, meeting_effectiveness, decisions, action_items). This field is serialised by `StorageEngine.upsert_meeting()` into the `minutes.structured_json` TEXT column, and deserialised by the API route to populate the `MinutesResponse` seen by the frontend. This ensures the structured view in the Minutes tab works end-to-end (before this fix, structured fields existed on disk but were NULL in the DB, so the UI only showed Summary + Decisions + Actions).
+The `MinutesJSONWriter` in `system2/output.py` populates `MinutesJSON.structured_data` with a dict containing all structured fields (`tldr`, `confidentiality`, `sentiment`, `participants`, `discussion_points`, `risks_and_concerns`, `open_questions`, `follow_ups`, `parking_lot`, `prior_action_updates`, `email_draft`, `key_topics`, `meeting_effectiveness`, `decisions`, `action_items`). This field is serialised by `StorageEngine.upsert_meeting()` into the `minutes.structured_json` TEXT column, and deserialised by the API route to populate the `MinutesResponse` seen by the frontend. This ensures the structured view in the Minutes tab works end-to-end (before this fix, structured fields existed on disk but were NULL in the DB, so the UI only showed Summary + Decisions + Actions).
+
+### 4A.3.2 Prior-action carryover & auto-closure
+
+Before generation, `PipelineOrchestrator` calls `StorageEngine.get_open_action_items_for_attendees()` to fetch still-open action items from the last `generation.prior_actions_lookback_meetings` meetings that share at least one attendee with the current meeting. Each open item (id + description + owner + due date + source meeting title) is injected into the prompt via the `prior_actions` template variable, rendered by the shared `prior_actions_block` macro.
+
+The LLM is instructed to populate `prior_action_updates[]` only for items actually acknowledged in the current meeting — not to echo every prior item. After ingestion completes, `PipelineOrchestrator._apply_prior_action_updates()` reads the freshly written minutes JSON, and for each update calls `StorageEngine.update_action_item_status(action_item_id, new_status)` where `new_status ∈ {done, in_progress, cancelled}`. Invalid / unknown action item ids are skipped silently. The number of applied transitions is logged.
+
+This whole path is gated by `generation.close_acknowledged_actions` (default true) and is best-effort — DB hiccups never block generation.
 
 ### 4A.3.2 Fallback rendering (text+regex path and older meetings)
 
@@ -339,33 +406,64 @@ When structured output fails (API error, schema validation failure, JSON parse e
 
 ### 5.1 Primary Output: Structured Markdown
 
+The markdown output always opens with header metadata (including `Confidentiality:` when classified), then TL;DR, then Summary. Empty sections are omitted entirely.
+
 ```markdown
-# Meeting Minutes: {title}
+# {title}
 
 **Date**: {date}
 **Duration**: {duration}
-**Type**: {meeting_type}
 **Attendees**: {attendee_list}
 **Organizer**: {organizer}
+**Confidentiality**: {public | internal | confidential | restricted}
+**Sentiment**: {positive | neutral | mixed | negative | constructive | tense}
+
+## TL;DR
+{~100-word executive digest: biggest decision, biggest risk, most urgent action, single takeaway}
 
 ## Summary
-{2-3 sentence executive summary}
+{2-6 sentence executive summary — length depends on meeting type}
+
+## Detailed Notes
+{narrative walkthrough; length governed by generation.length_mode}
 
 ## {Type-Specific Sections}
 ...
 
 ## Action Items
-- [ ] {action} — **{owner}** {due date if known}
+- [ ] [{PRIORITY}] {action} — Owner: {owner} (Due: {date})
 
-## Decisions Made
-- {decision 1}
-- {decision 2}
+## Decisions
+- {decision} (by {made_by})
+  *Rationale: {rationale}*
 
-## Next Steps
-- {next step}
+## Risks & Concerns
+- {risk} (raised by {name})
 
----
-*Generated from transcript {meeting_id} on {generation_date}*
+## Open Questions
+- {question} _(raised by {name}; owner: {name})_
+
+## Follow-ups
+- {item} — {owner} ({timeframe})
+
+## Parking Lot
+- {deferred topic}
+
+## Prior Action Item Updates
+- `{action_item_id}` → **{done | in_progress | cancelled}** — _{evidence quote}_
+
+## Follow-up Email Draft
+**Subject:** {subject}
+**To:** {attendees}
+**Cc:** {optional}
+
+{body — short recap, bulleted decisions, bulleted action items, one-line closing}
+
+## Meeting Effectiveness
+- Clear agenda: {Yes | No}
+- Decisions made: {n}
+- Action items assigned: {n}
+- Unresolved items: {n}
 ```
 
 ### 5.2 Output JSON (for System 3 ingestion)
@@ -384,7 +482,10 @@ When structured output fails (API error, schema validation failure, JSON parse e
     "attendees": ["Alice", "Bob", "Carol"],
     "organizer": "Alice"
   },
+  "tldr": "~100-word executive digest covering the single biggest decision, biggest risk, most urgent action, and takeaway.",
   "summary": "Brief executive summary...",
+  "detailed_notes": "Narrative walkthrough of how the meeting unfolded...",
+  "confidentiality": "internal",
   "sections": [
     {
       "heading": "Alice",
@@ -425,9 +526,26 @@ When structured output fails (API error, schema validation failure, JSON parse e
     { "topic": "Database migration", "description": "...", "speaker": "Alice", "outcome": "decided" }
   ],
   "risks_and_concerns": [],
+  "open_questions": [
+    { "question": "Do we still need the Databricks contract?", "raised_by": "Bob", "owner": "Alice" }
+  ],
   "follow_ups": [],
   "parking_lot": [],
-  "meeting_effectiveness": { "rating": 4, "notes": "Focused and productive" },
+  "prior_action_updates": [
+    { "action_item_id": "ai-0f2a1b", "new_status": "done", "evidence": "Alice confirmed the doc was shared" }
+  ],
+  "email_draft": {
+    "subject": "Standup recap — DB migration unblocked",
+    "to": ["Alice", "Bob", "Carol"],
+    "cc": [],
+    "body": "Team,\n\n- Decision: proceed with Option B for migration\n- Bob to review PR #423 by 2026-03-29\n\nThanks!"
+  },
+  "meeting_effectiveness": {
+    "had_clear_agenda": true,
+    "decisions_made": 1,
+    "action_items_assigned": 2,
+    "unresolved_items": 1
+  },
   "minutes_markdown": "# Meeting Minutes: Daily Standup\n...",
   "llm": {
     "provider": "anthropic",
@@ -484,25 +602,50 @@ When structured output fails (API error, schema validation failure, JSON parse e
 
 ### 7.1 Custom Prompt Templates
 
-Users can create custom meeting type templates:
+Custom meeting-type templates are created by convention: drop a new `<type>.md.j2` file into `templates/` and the type becomes usable immediately. No config block is required — `PromptRouter._discover_all_types()` globs the directory on every run, excluding files whose stem starts with `_` (treated as shared macro includes).
 
-```yaml
-custom_templates:
-  - name: "board_meeting"
-    description: "Quarterly board meeting minutes"
-    detection_keywords: ["board", "quarterly review", "shareholder"]
-    detection_attendee_count: ">= 8"
-    template_file: "templates/board_meeting.md"
-    output_format: "pdf"
-    distribution: ["confluence"]
+A custom template should import the shared macros to get the cross-cutting baseline (TL;DR, omit-empty rule, length guidance, vendor injection, risks, open questions, prior-action carryover, email draft, confidentiality) for free:
 
-  - name: "sales_call"
-    description: "Sales/prospect call notes"
-    detection_keywords: ["pricing", "demo", "proposal", "contract"]
-    detection_calendar_label: "Sales"
-    template_file: "templates/sales_call.md"
-    crm_integration: true
+```jinja
+{# templates/strategy_offsite.md.j2 — a user-defined type #}
+Summarize a multi-day strategy offsite. Focus on cross-functional alignment,
+long-range bets, and the commitments each leader made.
+
+---
+{% import '_shared.md.j2' as m %}
+{{ m.meeting_header('Strategy Offsite', title, date, duration, attendees, organizer) }}
+
+---
+
+{{ m.omission_rule() }}
+{{ m.length_guidance(length_mode) }}
+{{ m.tldr_block() }}
+
+## Title
+[Specific — name the strategic theme.]
+
+## Summary
+3-5 sentences: key strategic decisions, top bets, biggest unresolved tension.
+
+## Strategic Bets
+For each: bet / timeframe / owner / success criteria / investment.
+
+## Cross-Functional Commitments
+Populate `action_items` with a single owner per commitment.
+
+{{ m.vendor_feedback_block(vendors) }}
+{{ m.risks_block() }}
+{{ m.open_questions_block() }}
+{{ m.prior_actions_block(prior_actions) }}
+
+## Key Topics
+5-10 short labels.
+
+{{ m.email_draft_block() }}
+{{ m.confidentiality_block() }}
 ```
+
+The LLM classifier auto-discovers the new type: it scans each `.md.j2` file's system prompt and section headings via `_extract_type_descriptions()` to build its enum. Existing heuristic fallback keywords for calendar titles are hardcoded in `PromptRouter.classify_meeting_type()` — if you want the new type detected from titles without relying on the LLM path, add a pattern there.
 
 ### 7.2 Post-Processing Hooks
 

@@ -9,7 +9,7 @@ recording:
   auto_stop_silence_minutes: 5
 transcription:
   primary_engine: whisper
-  whisper_model: medium
+  whisper_model: distil-large-v3
   language: auto
   custom_vocabulary: null
 diarization:
@@ -18,7 +18,7 @@ diarization:
 generation:
   llm:
     primary_provider: anthropic
-    model: claude-sonnet-4-6
+    model: claude-opus-4-7
     fallback_provider: null
     fallback_model: null
     temperature: 0.2
@@ -26,6 +26,20 @@ generation:
     retry_attempts: 3
     timeout_seconds: 120
   templates_dir: templates
+  # Vendors rendered as per-vendor service feedback sub-sections.
+  # Empty list → single generic vendor-feedback block.
+  vendors:
+    - AWS
+    - NetApp
+  # concise | standard | verbose — controls detailed-notes length.
+  length_mode: concise
+  # Also generate a follow-up email draft artifact per meeting.
+  generate_email_draft: true
+  # auto | public | internal | confidential | restricted
+  confidentiality_default: auto
+  # Carry prior open action items into prompt and close any acknowledged done.
+  close_acknowledged_actions: true
+  prior_actions_lookback_meetings: 5
 storage:
   database: sqlite
   sqlite_path: db/meetings.db
@@ -52,3 +66,5 @@ retention:
 security:
   encryption_enabled: false
   encryption_key: ''
+performance:
+  pytorch_mps_fallback: true

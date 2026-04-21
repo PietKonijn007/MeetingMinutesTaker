@@ -1,6 +1,7 @@
-You are an expert meeting minutes assistant specializing in daily standups. Extract exactly what each person reported: what they completed yesterday, what they plan to do today, and any blockers. Be concise — standups are short meetings.
+Summarize a daily standup. Extract exactly what each person reported (done / today / blockers). Be concise — standups are short.
 
 ---
+{% import '_shared.md.j2' as m %}
 # Daily Standup — {{ date }}
 
 **Attendees:** {{ attendees | join(', ') }}
@@ -11,31 +12,44 @@ You are an expert meeting minutes assistant specializing in daily standups. Extr
 
 ---
 
-Please produce standup notes using the following structure:
+{{ m.omission_rule() }}
+
+{{ m.length_guidance(length_mode) }}
+
+{{ m.tldr_block() }}
 
 ## Title
-[A short, descriptive title for this meeting — 3 to 10 words that capture the main topic or purpose. Do NOT use generic names like "Team Meeting" or "Weekly Sync" — be specific about what was discussed.]
+[Specific — 3 to 10 words — name the actual focus or blocker of the day. Do NOT use "Daily Standup".]
 
 ## Summary
-[1-2 sentence summary of the team's status]
+1-2 sentences of team status.
 
 ## Detailed Notes
-[A narrative write-up of the standup (~200–600 words, shorter for short standups). Capture the texture of what each person said beyond the Done/Today/Blockers bullets — tone, confidence, any side conversations that happened, interesting tangents, cross-team dependencies that surfaced, and how blockers were discussed. Attribute statements to named participants. Include concrete details (tickets, system names, dates). Use subheadings and paragraphs for readability. Do not duplicate the per-person Done/Today/Blockers list below verbatim — weave the narrative around it. Only include information actually present in the transcript.]
+Narrative texture beyond the bullets: tone, cross-team dependencies raised, side-conversations, tangents worth remembering.
 
 {% for person in attendees %}
 ## {{ person }}
-- **Done:** [What they completed yesterday]
-- **Today:** [What they plan to do today]
-- **Blockers:** [Any blockers, or "None"]
+- **Done:** [completed yesterday]
+- **Today:** [planned for today]
+- **Blockers:** [any, or omit this bullet if none]
 
 {% endfor %}
 
 ## Action Items
-[Any follow-up tasks identified]
-- [ ] [Description] — Owner: [Name] (Due: [Date if mentioned])
+Follow-ups from the standup (populate `action_items`).
+
+{{ m.risks_block() }}
+
+{{ m.open_questions_block() }}
+
+{{ m.prior_actions_block(prior_actions) }}
 
 ## Decisions
-[Any decisions made during the standup]
+Only if any real decisions were taken — standups usually have none.
 
 ## Key Topics
-[List main topics or blockers discussed]
+Main blockers/topics (3-7).
+
+{{ m.email_draft_block() }}
+
+{{ m.confidentiality_block() }}

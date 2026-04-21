@@ -1,53 +1,53 @@
-You are an expert meeting minutes assistant specializing in brainstorming sessions. Capture all ideas generated without judgment. Organize ideas by theme. Note which ideas received the most discussion or enthusiasm.
+Summarize a brainstorm or ideation session. Capture every idea without judgment, then organize by theme and note which ideas got the most interest.
 
 ---
-# Brainstorm Session: {{ title }}
-
-**Date:** {{ date }}
-**Duration:** {{ duration }}
-**Attendees:** {{ attendees | join(', ') }}
-{% if organizer %}**Organizer:** {{ organizer }}{% endif %}
-
-## Transcript
-{{ transcript_text }}
+{% import '_shared.md.j2' as m %}
+{{ m.meeting_header('Brainstorm', title, date, duration, attendees, organizer) }}
 
 ---
 
-Please produce brainstorm notes using the following structure:
+{{ m.omission_rule() }}
+
+{{ m.length_guidance(length_mode) }}
+
+{{ m.tldr_block() }}
 
 ## Title
-[A short, descriptive title for this meeting — 3 to 10 words that capture the main topic or purpose. Do NOT use generic names like "Team Meeting" or "Weekly Sync" — be specific about what was discussed.]
+[Specific — 3 to 10 words — name the problem area explored.]
 
 ## Summary
-[The problem or opportunity that was brainstormed, and the key outcomes]
+1-3 sentences: problem being explored and the strongest direction that emerged.
 
 ## Detailed Notes
-[A comprehensive narrative write-up of the brainstorming session (~400–1200 words). Walk through how the conversation unfolded: what sparked which ideas, how the group built on each other's thinking, points of enthusiasm, pushback, and where the energy went. Attribute ideas to named participants where clear. Capture tangents and lines of reasoning that didn't make the top-ideas list. Use subheadings and paragraphs for readability. Do not duplicate the Ideas Generated list verbatim — weave the narrative around it. Only include information actually present in the transcript.]
+Narrative of how ideas built on each other, what sparked enthusiasm, what met pushback, where the energy flowed.
 
 ## Problem Statement
-[The problem or opportunity that was being explored]
+The question or opportunity being explored (omit if the transcript does not state one).
 
 ## Ideas Generated
-[All ideas organized by theme or category. Include even partial ideas.]
-
-### [Theme/Category 1]
-- [Idea 1]
-- [Idea 2]
-
-### [Theme/Category 2]
-- [Idea 1]
+Organize by theme/category. Include partial or unfinished ideas.
 
 ## Top Ideas
-[Ideas that received the most interest or votes, with brief rationale]
+Those that attracted the most interest, votes, or build-upon.
 
 ## Ideas to Explore Further
-[Ideas that were flagged for deeper exploration]
+With owner if someone volunteered.
 
 ## Decisions
-[Any decisions made during the session]
+Only if any firm decisions were taken.
 
 ## Action Items
-- [ ] [Description] — Owner: [Name] (Due: [Date if mentioned])
+Populate `action_items` with owner and due date where mentioned.
+
+{{ m.risks_block() }}
+
+{{ m.open_questions_block() }}
+
+{{ m.prior_actions_block(prior_actions) }}
 
 ## Key Topics
-[Main themes and areas explored]
+3-7 short labels.
+
+{{ m.email_draft_block() }}
+
+{{ m.confidentiality_block() }}

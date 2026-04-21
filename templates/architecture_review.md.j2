@@ -1,0 +1,70 @@
+Summarize an architecture or design review. Produce something close to an Architecture Decision Record: the problem, options compared on explicit dimensions, the decision, constraints, and reversibility.
+
+---
+{% import '_shared.md.j2' as m %}
+{{ m.meeting_header('Architecture Review', title, date, duration, attendees, organizer) }}
+
+---
+
+{{ m.omission_rule() }}
+
+{{ m.length_guidance(length_mode) }}
+
+{{ m.tldr_block() }}
+
+## Title
+[Specific — 3 to 10 words — name the design question (e.g. "Search index: OpenSearch vs. pgvector").]
+
+## Summary
+2-4 sentences: design question, recommended option, key trade-off accepted, any strong dissent.
+
+## Detailed Notes
+Narrative of how the options were presented and compared — what criteria mattered, where reviewers pushed back, how the group converged.
+
+## Problem Statement
+What business or technical problem this design addresses. Current pain / current state.
+
+## Requirements & Constraints
+Functional requirements, non-functional requirements (latency, throughput, cost, availability, security, compliance), and hard constraints.
+
+## Options Considered
+For each option:
+- **Name**
+- **How it works** (1-3 sentences)
+- **Pros**
+- **Cons**
+- **Rough cost / effort**
+- **Risks**
+
+## Evaluation Matrix
+If a comparison was drawn in the meeting, capture the criteria and how each option scored.
+
+## Decision
+The chosen option. Populate `decisions` with: **Decision** / **Rationale** / **Reversibility** (easy / hard / one-way door) / **Approved by** / **Dissent** (if any) / **Scope or constraints**.
+
+## Follow-up Design Work
+Prototypes, spikes, benchmarks, security review, cost modelling required.
+
+## Dependencies
+External teams, vendors, or approvals needed.
+
+{{ m.vendor_feedback_block(vendors) }}
+
+## Migration / Rollout Plan
+If discussed — phases, flags, rollback plan.
+
+## Action Items
+Populate `action_items` with owner, due date.
+
+{{ m.risks_block() }}
+
+{{ m.open_questions_block() }}
+
+{{ m.prior_actions_block(prior_actions) }}
+
+## Key Topics
+3-7 short labels.
+
+{{ m.email_draft_block() }}
+
+{{ m.confidentiality_block() }}

@@ -278,23 +278,15 @@ Hardware profile and recommendations available via `GET /api/config/hardware`.
 
 ### 3.4 Meeting Type Classification
 
-- Auto-classify meeting type based on calendar metadata + transcript content:
-  - `customer_meeting` / `client_call`
-  - `one_on_one_direct_report` (1:1 with an employee / direct report)
-  - `one_on_one_leader` (1:1 with your boss / leader)
-  - `standup` / `daily_sync`
-  - `team_meeting` (decisions, financial review, blockers, strategic updates)
-  - `interview`
-  - `brainstorm`
-  - `decision_meeting`
-  - `presentation` / `demo`
-  - `all_hands`
-  - `retrospective`
-  - `planning` / `sprint_planning`
-  - `workshop`
-  - `other`
-- Classification uses: number of attendees, meeting title patterns, recurrence patterns, transcript content analysis
-- User can override classification before minutes generation
+- Auto-classify meeting type based on calendar metadata + transcript content. Built-in types:
+  - **Team & cadence:** `standup`, `team_meeting`, `retrospective`, `planning`, `brainstorm`, `decision_meeting`
+  - **1:1 (perspective-aware):** `one_on_one_direct_report` (manager → report), `one_on_one_leader` (user → boss / skip-level), `one_on_one_peer` (no reporting line), `one_on_one` (generic fallback)
+  - **Exec & cross-functional:** `leadership_meeting` (peer-exec staff), `board_meeting`, `architecture_review`, `incident_review` (blameless post-mortem)
+  - **External:** `customer_meeting`, `vendor_meeting` (QBR / procurement), `interview_debrief`
+  - **Fallback:** `other` → routed to the general template
+- Classification uses: LLM classifier (Claude Haiku) via Anthropic `tool_use` with an enum constraint over the on-disk template list. When unreachable, a heuristic fallback looks at calendar title patterns first, then content keywords, then attendee count (two attendees → `one_on_one`).
+- User-added `.md.j2` files in `templates/` become valid types automatically (files starting with `_` are treated as shared macro includes and excluded).
+- User can override classification before minutes generation.
 
 ---
 

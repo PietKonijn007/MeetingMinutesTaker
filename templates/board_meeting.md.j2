@@ -1,0 +1,63 @@
+Summarize a board or investor update meeting. These minutes may be filed as an official record; precision, confidentiality, and clear attribution of decisions matter. Err high on confidentiality classification.
+
+---
+{% import '_shared.md.j2' as m %}
+{{ m.meeting_header('Board Meeting', title, date, duration, attendees, organizer) }}
+
+---
+
+{{ m.omission_rule() }}
+
+{{ m.length_guidance(length_mode) }}
+
+{{ m.tldr_block() }}
+
+## Title
+[Specific — 3 to 10 words — name the board session (e.g. "Q2 Board Update — Strategy & Hiring"). Do NOT use "Board Meeting".]
+
+## Summary
+3-5 sentences: purpose, key resolutions passed, asks to the board, strategic signals.
+
+## Detailed Notes
+Narrative walkthrough of the board's reactions, questions, and points of emphasis. Attribute positions clearly. Capture push-back or concerns verbatim where important.
+
+## Attendees & Roles
+Board members, management presenters, observers. Flag conflicts-of-interest if any were declared.
+
+## Resolutions Passed
+Formal resolutions/votes: exact wording, who moved, who seconded, vote count (for/against/abstain). Populate `decisions`.
+
+## Management Update
+Business highlights, KPI summary, hiring, product, go-to-market.
+
+## Financial Update
+Revenue, burn, runway, ARR/MRR, gross margin, headcount costs, variance to plan.
+
+## Strategic Items Discussed
+Strategy, partnerships, fundraising plans, M&A, market shifts.
+
+## Risks & Mitigations
+Enterprise risks discussed — legal, regulatory, security, commercial, key-person.
+
+## Asks of the Board
+Specific asks made to board members (intros, customer connections, interview help, advice).
+
+## Board Feedback & Direction
+What the board advised or directed management to do or prioritize.
+
+## Action Items
+Populate `action_items` with owner (management or specific board member) and due date.
+
+{{ m.open_questions_block() }}
+
+{{ m.prior_actions_block(prior_actions) }}
+
+## Executive Session Notes
+If there was an executive session (without management), note only that it happened and its declared topic — do not fabricate content.
+
+## Key Topics
+5-10 short labels.
+
+{{ m.email_draft_block() }}
+
+{{ m.confidentiality_block() }}

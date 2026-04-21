@@ -55,9 +55,13 @@ Meeting Occurs
     │   (Google Calendar / Outlook → attendees, title, type)
     │
     ├── 5. Classify meeting type
-    │   (standup, 1:1, team meeting, decision meeting, client call, etc.)
-    │   Uses LLM classifier (Claude Haiku) when keyword confidence < 0.7
+    │   18 built-in types covering team/cadence, perspective-aware 1:1s,
+    │   exec (board, leadership, architecture, incident), and external
+    │   (customer, vendor, interview) meetings — plus user-added types.
+    │   Uses LLM classifier (Claude Haiku) when heuristic confidence < 0.7
     │   Reads template descriptions for template-aware classification
+    │   Heuristic fallback uses calendar title → content keywords →
+    │   attendee count (2 attendees → one_on_one)
     │
     ├── 6. Map speakers to attendees
     │
@@ -69,17 +73,11 @@ Meeting Occurs
     ├── 1. Ingest transcript.json
     │
     ├── 2. Route to appropriate prompt template based on meeting_type
-    │   ┌──────────────────────────────────────────────┐
-    │   │  standup        → standup_template.md         │
-    │   │  one_on_one     → one_on_one_template.md      │
-    │   │  team_meeting   → team_meeting_template.md    │
-    │   │  decision       → decision_template.md        │
-    │   │  client_call    → client_call_template.md     │
-    │   │  brainstorm     → brainstorm_template.md      │
-    │   │  retrospective  → retrospective_template.md   │
-    │   │  ...            → ...                         │
-    │   │  other          → general_template.md         │
-    │   └──────────────────────────────────────────────┘
+    │   Filename convention: templates/<meeting_type>.md.j2
+    │   Shared macros (templates/_shared.md.j2) provide TL;DR, omit-empty,
+    │   length guidance, vendor-feedback injection, risks, open questions,
+    │   prior-action carryover, email draft, confidentiality blocks.
+    │   See specs/02-minutes-generation.md §2.2 for the full type list.
     │
     ├── 3. Construct prompt (system + template + context + transcript)
     │
@@ -143,11 +141,23 @@ Schema: See System 2 spec, Section 5.2
 Key fields consumed by System 3:
   - meeting_id (links back to System 1 data)
   - metadata (title, date, attendees, type)
+  - tldr
   - summary
+  - detailed_notes
+  - confidentiality
   - sections[]
   - action_items[]
   - decisions[]
+  - risks_and_concerns[]
+  - open_questions[]
+  - follow_ups[]
+  - parking_lot[]
+  - prior_action_updates[]  → used by PipelineOrchestrator to close
+                              matching rows in the action_items table
+                              during ingestion (see spec 02 §4A.3.2)
+  - email_draft (object | null)
   - key_topics[]
+  - meeting_effectiveness (object)
   - minutes_markdown
 ```
 
@@ -225,10 +235,26 @@ Post-processing hooks fire
 │   ├── config.yaml              # Main configuration
 │   └── vocabulary.txt           # Custom vocabulary for transcription
 │
-├── templates/                   # Jinja2 prompt templates
+├── templates/                   # Jinja2 prompt templates (18 built-ins + user-added)
+│   ├── _shared.md.j2            #   Shared macros imported by every template
 │   ├── standup.md.j2
+│   ├── team_meeting.md.j2
+│   ├── leadership_meeting.md.j2
+│   ├── board_meeting.md.j2
 │   ├── decision_meeting.md.j2
-│   └── ...
+│   ├── architecture_review.md.j2
+│   ├── incident_review.md.j2
+│   ├── customer_meeting.md.j2
+│   ├── vendor_meeting.md.j2
+│   ├── interview_debrief.md.j2
+│   ├── one_on_one_direct_report.md.j2
+│   ├── one_on_one_leader.md.j2
+│   ├── one_on_one_peer.md.j2
+│   ├── one_on_one.md.j2         #   Generic 1:1 fallback
+│   ├── brainstorm.md.j2
+│   ├── retrospective.md.j2
+│   ├── planning.md.j2
+│   └── general.md.j2            #   Fallback for type="other"
 │
 ├── data/
 │   ├── recordings/              # Audio files (System 1 output)
@@ -297,7 +323,13 @@ diarization:
 
 # System 2 settings
 generation:
-  templates_dir: templates         # Jinja2 prompt templates directory
+  templates_dir: templates            # Jinja2 prompt templates directory
+  vendors: [AWS, NetApp]              # Per-vendor feedback sub-sections in templates
+  length_mode: concise                # concise | standard | verbose — detailed-notes length
+  generate_email_draft: true          # Emit a follow-up email draft artifact
+  confidentiality_default: auto       # auto | public | internal | confidential | restricted
+  close_acknowledged_actions: true    # Auto-close prior open actions acknowledged in a meeting
+  prior_actions_lookback_meetings: 5  # Scan last N meetings for carryover actions
   llm:
     primary_provider: anthropic    # anthropic | openai | openrouter | ollama
     model: claude-sonnet-4-6

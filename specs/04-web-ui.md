@@ -252,17 +252,22 @@ The richest page. Shows everything about a single meeting.
 
 Structured card layout (replaces the old flat markdown render):
 
-- **Summary card**: accent left-border, sentiment badge in the corner, summary text. Always present.
+- **TL;DR card**: prominent top card showing the `tldr` field (~100-word executive digest). Always present. Omitted only when the field is blank (rare).
+- **Confidentiality pill**: badge next to the meeting title showing `public` / `internal` / `confidential` / `restricted` with escalating color (green → blue → amber → red).
+- **Summary card**: accent left-border, sentiment badge in the corner, summary text.
 - **Key topics chips**: hashtag-style chips from `key_topics`.
 - **Discussion section**: collapsible cards for each item in `discussion_points`. Header bar shows topic title, sentiment badge, and participant avatars (up to 3 + overflow). Click to expand for full summary and complete participant list. "Expand all / Collapse all" toggle above the cards.
 - **Outcomes grid** (2 columns): Decisions (◆) and Action items (○) preview. Each shows the top 3 with "View all →" deep-link to the respective tab.
 - **Risks & Concerns**: yellow left-border card with ⚠ icon per item.
+- **Open Questions**: blue left-border card with ? icon per item; shows `raised_by` and `owner` chips.
 - **Follow-ups**: card with owner/timeframe badges per item.
 - **Parking lot**: dashed-border card.
+- **Prior Action Item Updates**: card listing each `{action_item_id, new_status, evidence}` with a status pill (done / in_progress / cancelled) — the system auto-closed these during ingestion based on the LLM's acknowledged-closure detection.
+- **Follow-up Email Draft**: card with a "Copy" button; renders `subject`, `to`, `cc`, and `body`. Only shown when `email_draft` is non-null.
 - **Sections fallback**: when `discussion_points` is empty but `sections[]` (from text+regex path) has content, renders sections as collapsible cards identical to Discussion. Deduplicates sections whose headings match already-rendered cards.
 - **Raw markdown toggle**: button in the top-right switches to the original markdown blob for anyone who wants the flat view.
 
-Card data comes from the new fields in `MinutesResponse`: `sentiment`, `discussion_points`, `risks_and_concerns`, `follow_ups`, `parking_lot`, `key_topics`, `sections`. Fields are populated from `minutes.structured_json` in the DB or falls back to reading the on-disk minutes JSON file.
+Card data comes from `MinutesResponse`: `tldr`, `confidentiality`, `sentiment`, `discussion_points`, `risks_and_concerns`, `open_questions`, `follow_ups`, `parking_lot`, `prior_action_updates`, `email_draft`, `key_topics`, `meeting_effectiveness`, `sections`. Fields are populated from `minutes.structured_json` in the DB or fall back to reading the on-disk minutes JSON file. Empty fields render no card (no "Not discussed" placeholders).
 
 #### 3.2.5 Transcript Tab
 
@@ -574,13 +579,24 @@ Each setting has a label, description, and appropriate input control (dropdown, 
 |------|-------|-----|
 | `standup` | Green | `#22C55E` |
 | `one_on_one` | Sky | `#0EA5E9` |
-| `customer_meeting` | Purple | `#A855F7` |
+| `one_on_one_direct_report` | Sky | `#0EA5E9` |
+| `one_on_one_leader` | Sky (darker) | `#0284C7` |
+| `one_on_one_peer` | Sky (lighter) | `#38BDF8` |
 | `team_meeting` | Indigo | `#6366F1` |
+| `leadership_meeting` | Violet | `#8B5CF6` |
+| `board_meeting` | Slate (dark) | `#334155` |
 | `decision_meeting` | Amber | `#F59E0B` |
+| `architecture_review` | Blue | `#3B82F6` |
+| `incident_review` | Red | `#EF4444` |
+| `customer_meeting` | Purple | `#A855F7` |
+| `vendor_meeting` | Fuchsia | `#D946EF` |
+| `interview_debrief` | Lime | `#84CC16` |
 | `brainstorm` | Pink | `#EC4899` |
 | `retrospective` | Orange | `#F97316` |
 | `planning` | Teal | `#14B8A6` |
 | `other` | Gray | `#6B7280` |
+
+Add a new color when you add a new meeting type template; if no color is mapped, the `MeetingTypeBadge` falls back to the `other` gray.
 
 ---
 
@@ -594,7 +610,11 @@ The web UI is powered by a FastAPI backend. All state changes go through the API
 GET    /api/meetings                         # List meetings (paginated, filtered)
        ?q=<search>&type=<type>&after=<date>&before=<date>&person=<email>
        &limit=20&offset=0
-GET    /api/meetings/:id                     # Meeting detail (includes minutes, actions, decisions, discussion_points, risks_and_concerns, follow_ups, parking_lot, key_topics, sections)
+GET    /api/meetings/:id                     # Meeting detail — includes: tldr, confidentiality, minutes_markdown,
+                                              # summary, detailed_notes, action_items, decisions, discussion_points,
+                                              # risks_and_concerns, open_questions, follow_ups, parking_lot,
+                                              # prior_action_updates, email_draft, key_topics,
+                                              # meeting_effectiveness, sections
 GET    /api/meetings/:id/transcript          # Full transcript with segments (id, start, end, speaker, text) + speakers mapping
 PATCH  /api/meetings/:id/transcript/speakers # Rename speakers. Body: {"mapping": {"SPEAKER_00": "Tom"}} or {"ordered_names": ["Tom", "Mary"]}
 GET    /api/meetings/:id/audio               # Stream audio file

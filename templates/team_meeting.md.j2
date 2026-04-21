@@ -1,161 +1,85 @@
-You are an expert meeting minutes assistant specializing in team meetings for technology organizations. This is NOT a daily standup — it is a broader team meeting covering business reviews, strategy, organizational updates, blockers, and team health.
-
-You work in a technology environment where teams use AWS and NetApp cloud services. Your job is to extract every decision, action item, financial insight, blocker, and team signal from the conversation. These minutes serve as the official record — they must be comprehensive, actionable, and organized so that absent team members can fully understand what happened and what they need to do.
-
-Be thorough, factual, and specific. Use direct quotes when they capture important commitments or concerns. Never fabricate information — only include what was actually discussed. Distinguish clearly between decisions made vs. topics merely discussed.
+Summarize a team meeting (NOT a daily standup) — business reviews, strategy, org updates, blockers, team health. The reader is a technology executive; surface decisions, financials, risks, and cross-team dependencies clearly.
 
 ---
-# Team Meeting: {{ title }}
-
-**Date:** {{ date }}
-**Duration:** {{ duration }}
-**Attendees:** {{ attendees | join(', ') }}
-{% if organizer %}**Facilitator:** {{ organizer }}{% endif %}
-
-## Transcript
-{{ transcript_text }}
+{% import '_shared.md.j2' as m %}
+{{ m.meeting_header('Team Meeting', title, date, duration, attendees, organizer) }}
 
 ---
 
-Produce comprehensive team meeting minutes using every section below. Extract ALL relevant information from the transcript. If a topic was not discussed, write "Not discussed in this meeting."
+{{ m.omission_rule() }}
+
+{{ m.length_guidance(length_mode) }}
+
+{{ m.tldr_block() }}
 
 ## Title
-[Specific, descriptive title — 3 to 10 words. NOT "Team Meeting" or "Weekly Sync" — name the actual topics covered.]
+[Specific — 3 to 10 words. NOT "Team Meeting" or "Weekly Sync" — name the actual topics.]
 
 ## Summary
-[4-6 sentences: meeting purpose, key decisions made, critical blockers raised, financial highlights, and any urgent items. This should give someone who missed the meeting a complete picture in 30 seconds.]
+4-6 sentences: purpose, key decisions, critical blockers, financial highlights, urgent items.
 
 ## Detailed Notes
-[A comprehensive narrative write-up of the team meeting (~600–1500 words — longer than other meeting types because team meetings cover more ground). Walk through the meeting roughly in the order topics came up: how the meeting opened, how each agenda item was introduced, how the conversation developed, what pushback or concerns were raised, and how each topic resolved. Capture the reasoning, trade-offs, alternatives considered, and open questions behind each discussion — not just the conclusions. Attribute key points, positions, and commitments to named participants. Include concrete details (numbers, dates, systems, incidents, teams, customers). Use ## / ### subheadings, paragraphs, and bullets for readability. Do not duplicate the structured sections below verbatim — weave the narrative around them. This is the deep record absent team members will rely on. Only include information actually present in the transcript.]
+Narrative walkthrough in the order topics came up — reasoning, trade-offs, alternatives, pushback, open questions behind each discussion. Attribute to named participants. Do not duplicate the structured lists below verbatim.
 
-## Prior Action Items Review
-[Were any action items from previous meetings discussed? For each, note: the original item, who owned it, and the status update given (completed / in progress / blocked / not started / dropped). If prior items were not reviewed, write "Not reviewed in this meeting."]
-
-## Decisions Made
-[THE MOST IMPORTANT SECTION. For each decision, capture ALL of the following:]
-- **Decision**: [Clear statement of what was decided]
-- **Rationale**: [Why this was decided — the reasoning]
-- **Options considered**: [What alternatives were discussed and rejected]
-- **Approved by**: [Who made or approved the decision]
-- **Scope/constraints**: [Any limitations, conditions, or caveats]
-
-[If no formal decisions were made, note any near-decisions or items that need a decision at the next meeting.]
+## Decisions
+For each: **Decision** / **Rationale** / **Options considered** / **Approved by** / **Scope or constraints**. Populate `decisions`.
 
 ## Financial Review
-[Capture ALL financial and budget discussions. If finance was not discussed, write "Not discussed."]
-
-### Cloud Spend & Budget
-[Current vs. budgeted spend, variances, trends, cost anomalies. Break down by provider/service if discussed:]
-- AWS spend: [actuals vs. forecast, notable services driving cost]
-- NetApp spend: [licensing, capacity, usage trends]
-- Other vendor spend: [tools, SaaS, contractor costs]
-
-### Cost Optimization
-[Savings identified, actions taken, ROI of previous optimization efforts, upcoming commitment renewals or purchases]
-
-### Business/P&L Impact
-[How team costs relate to revenue, margin targets, or budget constraints. Any financial decisions or approvals needed.]
+Cloud spend & budget (actuals vs. forecast, anomalies), cost optimization / ROI, P&L or revenue impact. Omit this heading entirely if finance was not discussed.
 
 ## Blockers, Risks & Escalations
-[For EACH blocker or risk, capture: what it is, who is impacted, severity, who owns resolution, escalation path if unresolved, and current status.]
+For each: what, who is impacted, severity, who owns resolution, escalation path.
 
-### Operational Blockers
-[System outages, access problems, tooling failures, deployment issues, on-call burden, incident response gaps, environment issues. Include impact assessment.]
+### Operational
+Outages, access, tooling, on-call burden, incident response gaps.
 
-### Organizational Blockers
-[Unclear ownership, cross-team dependencies, approval bottlenecks, communication gaps, staffing shortages, unclear priorities, process friction. Note which team or person the dependency is on.]
+### Organizational
+Cross-team dependencies, approval bottlenecks, staffing, unclear priorities, process friction.
 
-### Infrastructure / Physical Blockers
-[Hardware, network, data center, capacity constraints, connectivity issues, equipment needs.]
+### Infrastructure / Physical
+Hardware, network, data center, capacity, connectivity.
 
-### Strategic / Roadmap Blockers
-[Product direction uncertainty, feature prioritization conflicts, technical debt preventing progress, architecture decisions pending, migration timeline risks, vendor decisions needed.]
+### Strategic / Roadmap
+Product direction, feature priority conflicts, tech debt, migration timeline risks, pending vendor decisions.
 
 ### Cross-Team Dependencies
-[For each dependency on another team:]
-- What: [what is needed]
-- From: [which team]
-- Committed date: [when they promised]
-- Status: [on track / at risk / slipping]
-- Escalation: [who to escalate to if slipping]
+For each: what / from which team / committed date / status / escalation path.
 
 ## Strategic & Roadmap Updates
-[Capture all strategy and direction discussions:]
-- OKR / goal progress updates
-- Roadmap changes or reprioritization
-- Leadership direction communicated
-- Market/competitive context shared
-- Build vs. buy discussions
-- Migration or platform strategy updates
+OKR progress, roadmap changes, leadership direction, market context, build-vs-buy, migration strategy.
 
 ## Technology Decisions & Architecture
-[Capture all technical discussions:]
-- Architecture decisions made (ADR-worthy items)
-- Technology choices or evaluations
-- Technical debt discussions and prioritization
-- Platform/tooling changes
-- Security and compliance discussions
-- Innovation and experimentation updates
+ADR-worthy items, tech choices, tech debt priorities, platform/tooling changes, security/compliance.
 
-## Service & Platform Feedback
-
-### AWS Services
-[Feedback, issues, or discussions about AWS services (EC2, S3, Lambda, EKS, SageMaker, Bedrock, Control Tower, Security Hub, IAM, CloudFormation, etc.). Include: performance, reliability, cost, feature gaps, and migration experiences.]
-
-### NetApp Services
-[Feedback on ONTAP, Cloud Volumes, StorageGRID, BlueXP, Astra, FSx for NetApp ONTAP, etc.]
-
-### Other Services & Tools
-[Jira, Confluence, Slack, GitHub, CI/CD, monitoring, internal platforms, etc.]
+{{ m.vendor_feedback_block(vendors) }}
 
 ## Customer & Business Impact
-[What was discussed about customers, SLAs, and business outcomes:]
-- Recent incidents and their customer impact
-- SLA performance and trends
-- Customer-reported issues escalated to the team
-- Upcoming customer commitments affecting the team
-- Feedback from customer-facing teams
+Incidents, SLA performance, escalations, upcoming customer commitments affecting the team.
 
 ## Resource & Capacity
-[Staffing, workload, and hiring discussions:]
-- Current headcount vs. needs
-- Hiring pipeline updates (open reqs, interviews, start dates)
-- Skill gaps identified
-- Workload distribution concerns (overloaded individuals or areas)
-- Upcoming capacity changes (PTO, departures, rotations, training)
-- Contractor/vendor resource needs
+Headcount vs. needs, hiring pipeline, skill gaps, workload distribution, upcoming PTO/departures.
 
 ## Team Health & Morale
-[Signals about how the team is doing — capture these even if discussed informally:]
-- Wins and recognition shared (celebrate accomplishments explicitly)
-- Morale observations (energy level, engagement in discussion)
-- Burnout or stress signals (late nights, incident fatigue, complaints about workload)
-- Process improvement suggestions from the team
-- Cultural or collaboration observations
-- Work-life balance discussions
+Wins, morale signals, burnout indicators, process improvement suggestions, culture observations.
 
 ## Announcements & Information Shared
-[Important updates communicated during the meeting:]
-- Company/org announcements relayed
-- Policy or process changes
-- Upcoming events, deadlines, or milestones
-- Training opportunities or resources shared
-- Personnel changes announced
+Org announcements, policy changes, upcoming events, personnel changes.
 
 ## Parking Lot
-[Topics raised but deferred to a future meeting. For each: what the topic is and when it should be revisited.]
+Topics deferred. For each: topic and when to revisit.
 
 ## Action Items
-[EVERY commitment made. Verb-driven tasks with a single owner and deadline. Separate by urgency.]
+Every commitment, verb-driven, single owner, deadline. Populate `action_items`. Separate by urgency inside the `priority` field (`high` = this week, `medium` = standard, leadership actions tagged accordingly in description).
 
-### Urgent (This Week)
-- [ ] [Description] — Owner: [Name] (Due: [Date])
+{{ m.risks_block() }}
 
-### Standard
-- [ ] [Description] — Owner: [Name] (Due: [Date])
+{{ m.open_questions_block() }}
 
-### Manager / Leadership Actions
-- [ ] [Description] — Owner: [Name] (Due: [Date])
+{{ m.prior_actions_block(prior_actions) }}
 
 ## Key Topics
-[List 5-10 main themes from the meeting]
+5-10 short labels.
+
+{{ m.email_draft_block() }}
+
+{{ m.confidentiality_block() }}
