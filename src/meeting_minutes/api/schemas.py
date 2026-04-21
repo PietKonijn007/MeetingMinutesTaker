@@ -245,6 +245,12 @@ class RecordingStopRequest(BaseModel):
     notes: str | None = None          # User's meeting notes (markdown)
     speakers: str | None = None       # Comma-separated speaker names
     instructions: str | None = None   # Custom instructions for the LLM
+    # User-picked template type. When set (non-empty), the pipeline uses this
+    # as `PromptRouter.select_template(user_override=...)` and skips the LLM
+    # classifier entirely. Valid values: any MeetingType enum value or any
+    # template stem present in templates/ (custom templates are supported).
+    # Leave null/empty to let the auto-classifier pick the type.
+    meeting_type: str | None = None
 
 
 class RecordingStartResponse(BaseModel):

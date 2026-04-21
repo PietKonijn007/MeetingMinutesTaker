@@ -2,6 +2,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { api } from '$lib/api.js';
   import { addToast } from '$lib/stores/toasts.js';
+  import { MEETING_TYPE_GROUPS } from '$lib/meetingTypes.js';
 
   let audioDevices = $state([]);
   let languages = $state([]);
@@ -21,6 +22,8 @@
   let speakerNames = $state('');
   let meetingNotes = $state('');
   let customInstructions = $state('');
+  // User-picked meeting type override. Empty string = auto-classify.
+  let selectedMeetingType = $state('');
   let levelHistory = $state(new Array(24).fill(0));
   let refreshingDevices = $state(false);
   let devicePollTimer = $state(null);
@@ -243,6 +246,7 @@
       if (meetingNotes.trim()) body.notes = meetingNotes.trim();
       if (speakerNames.trim()) body.speakers = speakerNames.trim();
       if (customInstructions.trim()) body.instructions = customInstructions.trim();
+      if (selectedMeetingType) body.meeting_type = selectedMeetingType;
       await api.stopRecording(body);
       // Recording slot is now free — reset local state immediately
       recState = 'idle';
@@ -253,6 +257,7 @@
       meetingNotes = '';
       speakerNames = '';
       customInstructions = '';
+      selectedMeetingType = '';
       addToast('Recording stopped. Processing in background...', 'info');
     } catch (e) {
       addToast(`Failed to stop recording: ${e.message}`, 'error');
@@ -558,6 +563,32 @@
 
       <!-- Live note-taking area -->
       <div class="w-full max-w-2xl bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-xl p-4 mb-6">
+        <!-- Meeting type picker -->
+        <div class="mb-3">
+          <label for="meeting-type" class="block text-xs font-medium text-[var(--text-secondary)] mb-1">
+            Meeting Type (optional — overrides auto-classification)
+          </label>
+          <select
+            id="meeting-type"
+            bind:value={selectedMeetingType}
+            class="w-full px-3 py-2 bg-[var(--bg-primary)] border border-[var(--border-subtle)] rounded-lg
+                   text-[var(--text-primary)] text-sm focus:outline-none focus:ring-2 focus:ring-[var(--accent)]
+                   focus:border-transparent"
+          >
+            <option value="">Auto-detect (use classifier)</option>
+            {#each MEETING_TYPE_GROUPS as group}
+              <optgroup label={group.group}>
+                {#each group.items as t}
+                  <option value={t.value}>{t.label}</option>
+                {/each}
+              </optgroup>
+            {/each}
+          </select>
+          <p class="text-xs text-[var(--text-muted)] mt-1">
+            Pick a template to force the meeting type. Leave on auto-detect to let the classifier decide.
+          </p>
+        </div>
+
         <!-- Speaker names -->
         <div class="mb-3">
           <label for="speaker-names" class="block text-xs font-medium text-[var(--text-secondary)] mb-1">

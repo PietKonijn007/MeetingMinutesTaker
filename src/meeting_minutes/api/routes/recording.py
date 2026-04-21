@@ -144,8 +144,12 @@ async def stop_recording(
     state_file = Path("/tmp/mm_recording_state.json")
     state_file.unlink(missing_ok=True)
 
-    # Save user notes and speaker names alongside the recording
-    if body.notes or body.speakers:
+    # Save user notes, speaker names, instructions, and meeting-type override
+    # alongside the recording. Any of these fields being populated triggers a
+    # notes-file write; the pipeline later reads this file to enhance the
+    # transcript and to apply the user's template override (if any).
+    user_meeting_type = (body.meeting_type or "").strip() or None
+    if body.notes or body.speakers or body.instructions or user_meeting_type:
         import json as _json
         data_dir = Path(config.data_dir).expanduser()
         notes_dir = data_dir / "notes"
@@ -158,9 +162,16 @@ async def stop_recording(
             notes_data["speakers"] = [s.strip() for s in body.speakers.split(",") if s.strip()]
         if body.instructions:
             notes_data["instructions"] = body.instructions
+        if user_meeting_type:
+            notes_data["meeting_type"] = user_meeting_type
         notes_file.write_text(_json.dumps(notes_data, indent=2), encoding="utf-8")
-        logger.info("Saved user notes for meeting %s (%d chars, %d speakers)",
-                     meeting_id, len(body.notes or ""), len(notes_data.get("speakers", [])))
+        logger.info(
+            "Saved user notes for meeting %s (%d chars, %d speakers, type=%s)",
+            meeting_id,
+            len(body.notes or ""),
+            len(notes_data.get("speakers", [])),
+            user_meeting_type or "auto",
+        )
 
     # Create pipeline job entry — starts as "queued" until the worker picks it up
     _pipeline_jobs[meeting_id] = {

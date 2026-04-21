@@ -573,6 +573,34 @@ class PipelineOrchestrator:
         tj = transcript_data.transcript_json
         _console(f"    Speakers: {len(tj.speakers)} | Transcript length: {len(transcript_data.full_text):,} chars")
 
+        # Load user notes, speaker names, instructions, and any user-picked
+        # meeting-type override. Read BEFORE routing so the override can
+        # short-circuit the LLM classifier.
+        import json as _json
+        user_notes = ""
+        user_speakers = []
+        user_instructions = ""
+        user_meeting_type: str | None = None
+        notes_file = self._data_dir / "notes" / f"{meeting_id}.json"
+        if notes_file.exists():
+            try:
+                notes_data = _json.loads(notes_file.read_text())
+                user_notes = notes_data.get("notes", "")
+                user_speakers = notes_data.get("speakers", [])
+                user_instructions = notes_data.get("instructions", "")
+                raw_type = (notes_data.get("meeting_type") or "").strip()
+                user_meeting_type = raw_type or None
+                if user_notes:
+                    _console(f"  User notes: {len(user_notes)} chars")
+                if user_speakers:
+                    _console(f"  Speaker names provided: {', '.join(user_speakers)}")
+                if user_instructions:
+                    _console(f"  Custom instructions: {user_instructions[:100]}...")
+                if user_meeting_type:
+                    _console(f"  User-picked meeting type: {user_meeting_type}", "cyan")
+            except Exception:
+                pass
+
         # Route to template
         gen_config = self._config.generation
         templates_dir = Path(gen_config.templates_dir)
@@ -581,8 +609,17 @@ class PipelineOrchestrator:
 
         router = PromptRouter(gen_config, templates_dir)
 
-        # Classify meeting type using LLM if confidence is low
-        if tj.meeting_type_confidence < router.CONFIDENCE_THRESHOLD:
+        # If the user picked a type during recording, honor it and skip
+        # auto-classification entirely. Otherwise fall through to the
+        # confidence-gated LLM classifier.
+        if user_meeting_type:
+            tj.meeting_type = user_meeting_type
+            tj.meeting_type_confidence = 1.0
+            _console(
+                f"  Meeting type: {user_meeting_type} (user-selected — skipping auto-classify)",
+                "cyan",
+            )
+        elif tj.meeting_type_confidence < router.CONFIDENCE_THRESHOLD:
             _console(f"  Classifying meeting type with LLM (was: {tj.meeting_type}, confidence: {tj.meeting_type_confidence:.2f})...")
             try:
                 # Extract calendar title if available
@@ -604,35 +641,15 @@ class PipelineOrchestrator:
                 tj.meeting_type_confidence = classified_conf
             except Exception as e:
                 _console(f"  ⚠ LLM classification failed: {e}", "yellow")
-
-        _console(f"    Meeting type: {tj.meeting_type} (confidence: {tj.meeting_type_confidence:.2f})")
+        else:
+            _console(f"    Meeting type: {tj.meeting_type} (confidence: {tj.meeting_type_confidence:.2f})")
 
         template = router.select_template(
             tj.meeting_type,
             tj.meeting_type_confidence,
+            user_override=user_meeting_type,
         )
         _console(f"  Template selected: {template.name}")
-
-        # Load user notes and speaker names if available
-        import json as _json
-        user_notes = ""
-        user_speakers = []
-        user_instructions = ""
-        notes_file = self._data_dir / "notes" / f"{meeting_id}.json"
-        if notes_file.exists():
-            try:
-                notes_data = _json.loads(notes_file.read_text())
-                user_notes = notes_data.get("notes", "")
-                user_speakers = notes_data.get("speakers", [])
-                user_instructions = notes_data.get("instructions", "")
-                if user_notes:
-                    _console(f"  User notes: {len(user_notes)} chars")
-                if user_speakers:
-                    _console(f"  Speaker names provided: {', '.join(user_speakers)}")
-                if user_instructions:
-                    _console(f"  Custom instructions: {user_instructions[:100]}...")
-            except Exception:
-                pass
 
         # Build context — prefer user-provided speaker names over diarized labels
         attendees = user_speakers if user_speakers else [s.name or s.label for s in tj.speakers]
@@ -766,7 +783,11 @@ class PipelineOrchestrator:
             # the LLM often returns free-form phrases like "Campaign Kickoff /
             # Marketing Planning" which would otherwise be stored as a raw string
             # and render as "Other" (since no badge color matches it).
-            if hasattr(structured, 'meeting_type_suggestion') and structured.meeting_type_suggestion:
+            # Skipped entirely when the user picked a type during recording —
+            # their choice is authoritative.
+            if user_meeting_type:
+                pass  # user-selected type is authoritative; ignore LLM suggestion
+            elif hasattr(structured, 'meeting_type_suggestion') and structured.meeting_type_suggestion:
                 from meeting_minutes.models import MeetingType
                 _valid_types = {t.value for t in MeetingType}
                 raw_suggestion = structured.meeting_type_suggestion.strip()
