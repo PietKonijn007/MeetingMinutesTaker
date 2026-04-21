@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 
 import yaml
-from pydantic import BaseModel, ValidationError, model_validator
+from pydantic import BaseModel, Field, ValidationError, model_validator
 
 
 class RecordingConfig(BaseModel):
@@ -48,6 +48,28 @@ class LLMConfig(BaseModel):
 class GenerationConfig(BaseModel):
     llm: LLMConfig = LLMConfig()
     templates_dir: str = "templates"
+    # Vendor names injected into prompts (e.g. "AWS", "NetApp", "Snowflake").
+    # Templates render a service-feedback section for each vendor listed here.
+    # Leave empty to render a single generic "Vendor & Tooling Feedback" section
+    # without provider-specific subheadings.
+    vendors: list[str] = Field(default_factory=lambda: ["AWS", "NetApp"])
+    # Length mode controls how verbose generated minutes are.
+    # "concise"   — ~150-400 word detailed notes, TL;DR-first.
+    # "standard"  — ~400-900 word detailed notes.
+    # "verbose"   — ~900-1500 word detailed notes (old default).
+    length_mode: str = "concise"
+    # Whether to generate a follow-up email draft alongside the minutes.
+    generate_email_draft: bool = True
+    # Confidentiality inference: "auto" asks the LLM to classify
+    # (public | internal | confidential | restricted); set to a fixed value to
+    # override. Defaults to "auto".
+    confidentiality_default: str = "auto"
+    # If True, and a prior action item is acknowledged closed in a meeting,
+    # mark it done in the DB during ingestion.
+    close_acknowledged_actions: bool = True
+    # Maximum number of previous meetings whose open action items get injected
+    # into the prompt for acknowledgement-based closure. Keeps prompts small.
+    prior_actions_lookback_meetings: int = 5
 
 
 class StorageConfig(BaseModel):

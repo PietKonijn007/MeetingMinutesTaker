@@ -67,11 +67,18 @@ class MinutesJSONWriter:
         participants = getattr(minutes, "participants", [])
         discussion_points = getattr(minutes, "discussion_points", [])
         risks_and_concerns = getattr(minutes, "risks_and_concerns", [])
+        open_questions = getattr(minutes, "open_questions", []) or []
         follow_ups = getattr(minutes, "follow_ups", [])
         parking_lot = getattr(minutes, "parking_lot", []) or []
+        prior_action_updates = getattr(minutes, "prior_action_updates", []) or []
+        email_draft = getattr(minutes, "email_draft", None)
         meeting_effectiveness = getattr(minutes, "meeting_effectiveness", None)
+        tldr = getattr(minutes, "tldr", "") or ""
+        confidentiality = getattr(minutes, "confidentiality", None)
 
         structured_data = {
+            "tldr": tldr,
+            "confidentiality": confidentiality,
             "sentiment": getattr(minutes, "sentiment", None),
             "detailed_notes": getattr(minutes, "detailed_notes", "") or "",
             "participants": [p.model_dump() for p in participants],
@@ -79,8 +86,11 @@ class MinutesJSONWriter:
             "decisions": [d.model_dump() for d in minutes.decisions],
             "action_items": [ai.model_dump() for ai in minutes.action_items],
             "risks_and_concerns": [rc.model_dump() for rc in risks_and_concerns],
+            "open_questions": [oq.model_dump() for oq in open_questions],
             "follow_ups": [fu.model_dump() for fu in follow_ups],
             "parking_lot": parking_lot,
+            "prior_action_updates": [pau.model_dump() for pau in prior_action_updates],
+            "email_draft": email_draft.model_dump() if email_draft else None,
             "key_topics": minutes.key_topics,
             "meeting_effectiveness": meeting_effectiveness.model_dump() if meeting_effectiveness else None,
         }
@@ -91,6 +101,7 @@ class MinutesJSONWriter:
             meeting_type=meeting_type,
             metadata=metadata,
             summary=minutes.summary,
+            tldr=tldr,
             detailed_notes=getattr(minutes, "detailed_notes", "") or "",
             sections=minutes.sections,
             action_items=minutes.action_items,
@@ -98,12 +109,16 @@ class MinutesJSONWriter:
             key_topics=minutes.key_topics,
             minutes_markdown=markdown,
             llm=llm_usage,
+            confidentiality=confidentiality,
             sentiment=getattr(minutes, "sentiment", None),
             participants=participants,
             discussion_points=discussion_points,
             risks_and_concerns=risks_and_concerns,
+            open_questions=open_questions,
             follow_ups=follow_ups,
             parking_lot=parking_lot,
+            prior_action_updates=prior_action_updates,
+            email_draft=email_draft,
             meeting_effectiveness=meeting_effectiveness,
             structured_data=structured_data,
         )
@@ -131,9 +146,19 @@ class MinutesJSONWriter:
         lines.append(f"**Attendees:** {', '.join(metadata.attendees)}")
         if metadata.organizer:
             lines.append(f"**Organizer:** {metadata.organizer}")
+        confidentiality = getattr(minutes, "confidentiality", None)
+        if confidentiality:
+            lines.append(f"**Confidentiality:** {confidentiality}")
         if getattr(minutes, "sentiment", None):
             lines.append(f"**Sentiment:** {minutes.sentiment}")
         lines.append("")
+
+        tldr = getattr(minutes, "tldr", "") or ""
+        if tldr.strip():
+            lines.append("## TL;DR")
+            lines.append("")
+            lines.append(tldr.strip())
+            lines.append("")
 
         if minutes.summary:
             lines.append("## Summary")
@@ -212,6 +237,21 @@ class MinutesJSONWriter:
                 lines.append(line)
             lines.append("")
 
+        if getattr(minutes, "open_questions", None):
+            lines.append("## Open Questions")
+            lines.append("")
+            for oq in minutes.open_questions:
+                line = f"- {oq.question}"
+                trailers = []
+                if getattr(oq, "raised_by", None):
+                    trailers.append(f"raised by {oq.raised_by}")
+                if getattr(oq, "owner", None):
+                    trailers.append(f"owner: {oq.owner}")
+                if trailers:
+                    line += f" _({'; '.join(trailers)})_"
+                lines.append(line)
+            lines.append("")
+
         if getattr(minutes, "follow_ups", None):
             lines.append("## Follow-ups")
             lines.append("")
@@ -229,6 +269,32 @@ class MinutesJSONWriter:
             lines.append("")
             for item in minutes.parking_lot:
                 lines.append(f"- {item}")
+            lines.append("")
+
+        prior_updates = getattr(minutes, "prior_action_updates", None) or []
+        if prior_updates:
+            lines.append("## Prior Action Item Updates")
+            lines.append("")
+            for pau in prior_updates:
+                line = f"- `{pau.action_item_id}` → **{pau.new_status}**"
+                if getattr(pau, "evidence", None):
+                    line += f" — _{pau.evidence}_"
+                lines.append(line)
+            lines.append("")
+
+        email_draft = getattr(minutes, "email_draft", None)
+        if email_draft and (email_draft.subject or email_draft.body):
+            lines.append("## Follow-up Email Draft")
+            lines.append("")
+            if email_draft.subject:
+                lines.append(f"**Subject:** {email_draft.subject}")
+            if email_draft.to:
+                lines.append(f"**To:** {', '.join(email_draft.to)}")
+            if email_draft.cc:
+                lines.append(f"**Cc:** {', '.join(email_draft.cc)}")
+            lines.append("")
+            if email_draft.body:
+                lines.append(email_draft.body)
             lines.append("")
 
         if getattr(minutes, "meeting_effectiveness", None):

@@ -1,55 +1,43 @@
-You are an expert meeting minutes assistant. You work in a technology environment where teams use services from cloud providers (AWS, NetApp, and others). Produce clear, accurate, and well-structured meeting minutes. Capture service feedback and categorize blockers by type. Only include information that was actually discussed.
+Generate professional meeting minutes from the transcript below. The reader is a technology executive — optimize for scannability and the signals an exec needs (decisions, risks, commitments, escalations).
 
 ---
-# Meeting: {{ title }}
-
-**Date:** {{ date }}
-**Duration:** {{ duration }}
-**Attendees:** {{ attendees | join(', ') }}
-{% if organizer %}**Organizer:** {{ organizer }}{% endif %}
-
-## Transcript
-{{ transcript_text }}
+{% import '_shared.md.j2' as m %}
+{{ m.meeting_header('Meeting', title, date, duration, attendees, organizer) }}
 
 ---
 
-Please produce meeting minutes using the following structure. Be thorough and complete.
+{{ m.omission_rule() }}
+
+{{ m.length_guidance(length_mode) }}
+
+{{ m.tldr_block() }}
 
 ## Title
-[A short, descriptive title — 3 to 10 words capturing the main topic. Be specific, not generic.]
+[Specific, descriptive title — 3 to 10 words. Do NOT use "Meeting" or "Weekly Sync" — name the actual subject.]
 
 ## Summary
-[2-4 sentences summarizing the key purpose, outcomes, and any critical issues raised]
+[2-4 sentences: purpose, key decisions, most urgent follow-up.]
 
 ## Detailed Notes
-[A comprehensive narrative write-up of the meeting (~400–1200 words, depending on meeting length). Walk through the conversation roughly in the order topics came up. Capture the reasoning, trade-offs, alternatives considered, and open questions — not just conclusions. Attribute positions to named participants where clear. Include concrete details mentioned (numbers, dates, system names, error messages). Use subheadings, paragraphs, and bullets for readability. Do not duplicate the lists below verbatim — weave the narrative around them. Only include information actually present in the transcript.]
-
-## Discussion
-[Key discussion points organized by topic. Use bullet points for clarity.]
-
-## Service Feedback
-[If any AWS, NetApp, or other services were discussed, capture the feedback here. If no service feedback was discussed, omit this section entirely.]
-
-## Blockers
-[If any blockers were mentioned, categorize them. If no blockers were discussed, omit this section entirely.]
-
-### Operational Blockers
-[System outages, access problems, tooling failures, deployment issues]
-
-### Organizational Blockers
-[Unclear ownership, cross-team dependencies, approval bottlenecks, staffing]
-
-### Physical / Infrastructure Blockers
-[Hardware, network, data center, connectivity issues]
-
-### Roadmap / Strategic Blockers
-[Product direction, feature prioritization, technical debt, migration timelines]
+[Narrative walkthrough of how the conversation unfolded — reasoning, trade-offs, pushback, and resolution for each topic. Attribute to named participants. Do not duplicate the structured lists below verbatim; weave the narrative around them.]
 
 ## Decisions
-[List all decisions made, one per line]
+For each: **Decision** / **Rationale** / **Approved by** / **Scope/constraints** (populate the `decisions` structured field).
 
 ## Action Items
-- [ ] [Description] — Owner: [Name] (Due: [Date if mentioned])
+Verb-driven tasks with owner and due date where mentioned (populate the `action_items` structured field).
+
+{{ m.risks_block() }}
+
+{{ m.open_questions_block() }}
+
+{{ m.vendor_feedback_block(vendors) }}
+
+{{ m.prior_actions_block(prior_actions) }}
 
 ## Key Topics
-[List 3-7 main topics discussed]
+3-7 short topic labels.
+
+{{ m.email_draft_block() }}
+
+{{ m.confidentiality_block() }}

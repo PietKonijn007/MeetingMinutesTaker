@@ -280,3 +280,52 @@ class StorageEngine:
         item.status = status
         self._session.commit()
         return True
+
+    def get_open_action_items_for_attendees(
+        self,
+        attendee_names: list[str],
+        lookback_meetings: int = 5,
+        exclude_meeting_id: str | None = None,
+    ) -> list[ActionItemORM]:
+        """Return open action items from recent meetings that shared attendees.
+
+        Used for prior-action carryover into a new meeting's prompt so the LLM
+        can detect and mark acknowledged-closed items. Returns open items from
+        up to ``lookback_meetings`` distinct prior meetings where at least one
+        attendee overlaps with ``attendee_names``, newest-first.
+        """
+        if not attendee_names:
+            return []
+
+        attendees_lower = {n.strip().lower() for n in attendee_names if n and n.strip()}
+        if not attendees_lower:
+            return []
+
+        # Find recent meetings whose attendee set overlaps.
+        q = (
+            self._session.query(MeetingORM)
+            .order_by(MeetingORM.date.desc().nullslast())
+        )
+        if exclude_meeting_id:
+            q = q.filter(MeetingORM.meeting_id != exclude_meeting_id)
+
+        matching_meeting_ids: list[str] = []
+        for meeting in q.limit(200):
+            meeting_attendee_names = {
+                (p.name or "").strip().lower() for p in meeting.attendees
+            }
+            if meeting_attendee_names & attendees_lower:
+                matching_meeting_ids.append(meeting.meeting_id)
+            if len(matching_meeting_ids) >= lookback_meetings:
+                break
+
+        if not matching_meeting_ids:
+            return []
+
+        items = (
+            self._session.query(ActionItemORM)
+            .filter(ActionItemORM.meeting_id.in_(matching_meeting_ids))
+            .filter(ActionItemORM.status == ActionItemStatus.OPEN.value)
+            .all()
+        )
+        return items

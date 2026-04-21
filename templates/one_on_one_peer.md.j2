@@ -1,0 +1,60 @@
+Summarize a 1:1 between peers (peer exec, peer leader, or cross-functional counterpart — no reporting relationship). Goal: capture alignment, cross-team dependencies, commitments in both directions, and any politics.
+
+---
+{% import '_shared.md.j2' as m %}
+{{ m.meeting_header('Peer 1:1', title, date, duration, attendees, organizer, attendee_join=' & ') }}
+
+---
+
+{{ m.omission_rule() }}
+
+{{ m.length_guidance(length_mode) }}
+
+{{ m.tldr_block() }}
+
+## Title
+[Specific — 3 to 10 words — name the joint subject.]
+
+## Summary
+3-5 sentences: topics discussed, alignment reached, commitments both sides made, friction points.
+
+## Detailed Notes
+Narrative of the conversation — where alignment was easy, where there was friction, what was said vs. unsaid. Attribute positions clearly.
+
+## Alignment Reached
+Shared view on strategy, priorities, process, or ownership.
+
+## Disagreements / Open Tensions
+Areas the two sides do not agree on. Be specific and factual — list positions, not judgments.
+
+## Cross-Team Dependencies
+For each: what / which direction / agreed date / owner on each side.
+
+## Commitments
+
+### From the User
+Populate `action_items` with the user as `owner`.
+
+### From the Peer
+Populate `action_items` with the peer as `owner`.
+
+## Information Shared
+Non-obvious context the peer shared — org changes, roadmap hints, hiring, stakeholder posture — that shapes how the user should act.
+
+{{ m.vendor_feedback_block(vendors) }}
+
+## Decisions
+Joint decisions, if any. Populate `decisions`.
+
+{{ m.risks_block() }}
+
+{{ m.open_questions_block() }}
+
+{{ m.prior_actions_block(prior_actions) }}
+
+## Key Topics
+3-7 short labels.
+
+{{ m.email_draft_block() }}
+
+{{ m.confidentiality_block() }}

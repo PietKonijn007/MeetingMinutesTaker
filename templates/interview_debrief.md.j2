@@ -1,0 +1,67 @@
+Summarize a candidate interview debrief. Focus on hire/no-hire signal and evidence per competency. Keep observations factual — these notes may be retained and reviewed.
+
+---
+{% import '_shared.md.j2' as m %}
+{{ m.meeting_header('Interview Debrief', title, date, duration, attendees, organizer) }}
+
+---
+
+{{ m.omission_rule() }}
+
+{{ m.length_guidance(length_mode) }}
+
+{{ m.tldr_block() }}
+
+## Title
+[Specific — 3 to 10 words — e.g. "Debrief: J. Doe — Staff Eng, Platform". Do NOT use "Interview Debrief".]
+
+## Candidate & Role
+Candidate name, role/level interviewed for, pipeline stage.
+
+## Panel Recommendation
+Overall recommendation: **strong hire / hire / lean hire / lean no-hire / no-hire / need-more-data**. And: level consistency (at level / up-level / down-level).
+
+## Summary
+2-4 sentences: the case for hire, the biggest concern, and whether the panel aligned or split.
+
+## Detailed Notes
+Narrative of how each interviewer presented their signal, where the panel agreed, where they disagreed, and how the recommendation converged.
+
+## Per-Interviewer Signal
+For each panelist:
+- **Interviewer** — competency assessed — recommendation — strongest positive signal — strongest concern
+
+## Competencies Assessed
+For each competency (e.g. Coding, System Design, Leadership, Culture, Communication):
+- **Competency**: signal (strong / mixed / weak) — specific evidence from the interview.
+
+## Strengths
+Bulleted, specific, evidence-based.
+
+## Concerns / Gaps
+Bulleted, specific, evidence-based. Distinguish "concern based on evidence" from "missing data".
+
+## Missing Data / Follow-ups Needed
+Competencies not well-assessed; additional interviews or references to request.
+
+## Compensation / Level Fit
+Only if discussed — do not fabricate.
+
+## Decisions
+Final panel decision and level. Populate `decisions`.
+
+## Action Items
+Next steps: extend offer, schedule further rounds, references, reject, update recruiter. Populate `action_items`.
+
+{{ m.risks_block() }}
+
+{{ m.open_questions_block() }}
+
+{{ m.prior_actions_block(prior_actions) }}
+
+## Key Topics
+3-7 short labels.
+
+{{ m.email_draft_block() }}
+
+{{ m.confidentiality_block() }}

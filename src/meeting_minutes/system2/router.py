@@ -17,13 +17,19 @@ KNOWN_TYPES = {e.value for e in MeetingType}
 
 # Also discover custom templates at runtime
 def _discover_all_types(templates_dir: Path) -> set[str]:
-    """Return all known meeting types including custom templates."""
+    """Return all known meeting types including custom templates.
+
+    Files whose stem starts with "_" are shared macro includes (e.g.
+    `_shared.md.j2`) and are excluded from the type set.
+    """
     types = set(KNOWN_TYPES)
     if templates_dir.is_dir():
         for f in templates_dir.glob("*.md.j2"):
             stem = f.stem
             if stem.endswith(".md"):
                 stem = stem[:-3]
+            if stem.startswith("_"):
+                continue
             if stem == "general":
                 stem = "other"
             types.add(stem)
@@ -32,9 +38,18 @@ def _discover_all_types(templates_dir: Path) -> set[str]:
 TEMPLATE_FILENAME_MAP: dict[str, str] = {
     "standup": "standup.md.j2",
     "one_on_one": "one_on_one.md.j2",
+    "one_on_one_direct_report": "one_on_one_direct_report.md.j2",
+    "one_on_one_leader": "one_on_one_leader.md.j2",
+    "one_on_one_peer": "one_on_one_peer.md.j2",
     "team_meeting": "team_meeting.md.j2",
+    "leadership_meeting": "leadership_meeting.md.j2",
     "decision_meeting": "decision_meeting.md.j2",
+    "architecture_review": "architecture_review.md.j2",
+    "incident_review": "incident_review.md.j2",
     "customer_meeting": "customer_meeting.md.j2",
+    "vendor_meeting": "vendor_meeting.md.j2",
+    "board_meeting": "board_meeting.md.j2",
+    "interview_debrief": "interview_debrief.md.j2",
     "brainstorm": "brainstorm.md.j2",
     "retrospective": "retrospective.md.j2",
     "planning": "planning.md.j2",
@@ -196,7 +211,12 @@ Transcript excerpt (first ~10 minutes):
             api_key = os.environ.get("ANTHROPIC_API_KEY")
             if not api_key:
                 logger.info("No ANTHROPIC_API_KEY, falling back to keyword classification")
-                return self.classify_meeting_type(transcript_excerpt, {})
+                mt, conf = self.classify_meeting_type(
+                    transcript_excerpt,
+                    {"title": calendar_title},
+                    num_attendees=num_attendees or num_speakers or None,
+                )
+                return mt, conf, "keyword fallback (no API key)"
 
             client = anthropic.AsyncAnthropic(api_key=api_key)
 
@@ -229,12 +249,21 @@ Transcript excerpt (first ~10 minutes):
 
             # No tool_use block — shouldn't happen with tool_choice forced
             logger.warning("LLM did not return tool_use block, falling back to keyword classification")
-            return self.classify_meeting_type(transcript_excerpt, {})
+            mt, conf = self.classify_meeting_type(
+                transcript_excerpt,
+                {"title": calendar_title},
+                num_attendees=num_attendees or num_speakers or None,
+            )
+            return mt, conf, "keyword fallback (no tool_use block)"
 
         except Exception as e:
             logger.warning("LLM classification failed: %s, falling back to keywords", e)
-            mt, conf = self.classify_meeting_type(transcript_excerpt, {})
-            return mt, conf, "keyword fallback"
+            mt, conf = self.classify_meeting_type(
+                transcript_excerpt,
+                {"title": calendar_title},
+                num_attendees=num_attendees or num_speakers or None,
+            )
+            return mt, conf, f"keyword fallback ({e.__class__.__name__})"
 
     def _load_template(self, meeting_type: str) -> PromptTemplate:
         # 1. Check for a type-specific template file by convention
@@ -267,31 +296,66 @@ Transcript excerpt (first ~10 minutes):
         )
 
     def classify_meeting_type(
-        self, transcript_excerpt: str, calendar_metadata: dict
+        self,
+        transcript_excerpt: str,
+        calendar_metadata: dict | None = None,
+        num_attendees: int | None = None,
     ) -> tuple[str, float]:
-        """Simple keyword-based classification when LLM is not available."""
+        """Heuristic classification used as a fallback when the LLM is not available.
+
+        Uses calendar title first (highest signal), then content keywords, then
+        attendee count. Returns low confidence so the LLM path is preferred
+        whenever it's reachable. Returns ``("other", 0.0)`` when no signal is
+        found — the router then falls through to the general template.
+        """
+        calendar_metadata = calendar_metadata or {}
+        title = str(calendar_metadata.get("title") or calendar_metadata.get("calendar_title") or "").lower()
         text = transcript_excerpt.lower()
-        type_keywords = {
-            "standup": ["standup", "stand-up", "daily", "blockers", "what did you do"],
-            "one_on_one": ["1:1", "one on one", "one-on-one", "career", "personal"],
-            "decision_meeting": ["decision", "vote", "approve", "decide", "resolution"],
-            "customer_meeting": ["customer", "client", "sales", "demo", "requirements"],
-            "brainstorm": ["brainstorm", "ideation", "ideas", "creative", "think"],
-            "retrospective": ["retrospective", "retro", "what went well", "what could be better"],
-            "planning": ["planning", "sprint", "roadmap", "quarter", "milestone"],
-        }
 
-        scores: dict[str, int] = {}
-        for meeting_type, keywords in type_keywords.items():
-            scores[meeting_type] = sum(1 for kw in keywords if kw in text)
+        # Calendar title keywords — each phrase maps to a meeting type.
+        # Order matters: more specific types first.
+        title_patterns: list[tuple[str, list[str]]] = [
+            ("board_meeting", ["board meeting", "board update", "board review"]),
+            ("interview_debrief", ["interview debrief", "hiring debrief", "candidate debrief"]),
+            ("incident_review", ["incident review", "post-mortem", "postmortem", "rca"]),
+            ("architecture_review", ["architecture review", "design review", "adr"]),
+            ("vendor_meeting", ["qbr", "vendor sync", "vendor call", "procurement"]),
+            ("customer_meeting", ["customer", "client", "prospect", "pov"]),
+            ("leadership_meeting", ["staff meeting", "leadership sync", "e-team", "leadership meeting", "exec sync", "exec meeting"]),
+            ("retrospective", ["retro", "retrospective"]),
+            ("planning", ["planning", "sprint plan", "quarterly plan", "roadmap"]),
+            ("decision_meeting", ["decision", "approval"]),
+            ("brainstorm", ["brainstorm", "ideation"]),
+            ("one_on_one_direct_report", ["1:1", "1-1", "one on one", "one-on-one"]),  # will be refined by attendee count
+            ("standup", ["standup", "stand up", "stand-up", "daily"]),
+            ("team_meeting", ["team meeting", "weekly sync", "team sync"]),
+        ]
 
-        if max(scores.values(), default=0) == 0:
-            return "other", 0.0
+        for mtype, patterns in title_patterns:
+            if any(p in title for p in patterns):
+                # 1:1 + 2 attendees is high-confidence; refine perspective later via LLM.
+                if mtype == "one_on_one_direct_report" and num_attendees == 2:
+                    return "one_on_one", 0.55
+                return mtype, 0.55
 
-        best_type = max(scores, key=lambda k: scores[k])
-        total = sum(scores.values())
-        confidence = scores[best_type] / max(total, 1)
-        return best_type, min(confidence, 1.0)
+        # Content keyword fallback (lower confidence).
+        content_patterns: list[tuple[str, list[str]]] = [
+            ("incident_review", ["post-mortem", "rca", "root cause", "incident ", "pager"]),
+            ("retrospective", ["what went well", "what could be better", "start stop continue"]),
+            ("architecture_review", ["architecture", "design doc", "system design", "adr"]),
+            ("customer_meeting", ["customer asked", "client asked", "the customer", "the client"]),
+            ("vendor_meeting", ["aws rep", "account team", "discount", "renewal", "edp"]),
+            ("planning", ["sprint", "quarter", "roadmap", "milestone"]),
+        ]
+        for mtype, patterns in content_patterns:
+            if any(p in text for p in patterns):
+                return mtype, 0.35
+
+        # Attendee-count heuristic.
+        if num_attendees == 2:
+            return "one_on_one", 0.3
+
+        return "other", 0.0
 
 
 def _split_template(content: str) -> tuple[str, str]:

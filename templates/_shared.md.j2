@@ -1,0 +1,108 @@
+{# Shared Jinja macros used by every meeting-type template.
+
+   The goal is that common cross-cutting rules (TL;DR, omit-empty, vendor
+   injection, length mode, prior-action carryover, email draft, open
+   questions, risks, confidentiality) live in ONE place and can be updated
+   globally. Per-type templates only supply the sections unique to that
+   meeting type.
+
+   Conventions:
+   - Every macro emits a self-contained block ending in one trailing blank
+     line so templates can concatenate them freely.
+   - Macros assume the caller already has `vendors`, `length_mode`,
+     `prior_actions` in context when relevant — templates pass them through
+     Jinja's variable scope.
+#}
+
+{%- macro omission_rule() -%}
+**Omission rule:** If a section below would have no real content, OMIT THE ENTIRE HEADING AND BODY. Do not write "Not discussed", "None", "N/A", or any placeholder phrasing. A shorter document with only real content is always preferred over a padded one.
+{%- endmacro -%}
+
+{%- macro length_guidance(length_mode='concise') -%}
+**Length guidance:**
+{%- if length_mode == 'concise' %} Target ~150-400 words in Detailed Notes. An executive reader should be able to finish the minutes in under two minutes. Prefer tight bullets over prose where possible.
+{%- elif length_mode == 'verbose' %} Target ~900-1500 words in Detailed Notes. Be comprehensive; include reasoning, trade-offs, alternatives, and open questions for each major topic.
+{%- else %} Target ~400-900 words in Detailed Notes. Cover the reasoning and trade-offs behind each major topic without over-narrating.
+{%- endif %}
+{%- endmacro -%}
+
+{%- macro tldr_block() -%}
+## TL;DR (~100 words)
+Write an executive digest at the very top of the output, before Summary. It MUST cover: the single biggest decision (or "no decisions"), the biggest risk or concern (or "no significant risks"), the most urgent action item and its owner, and the one thing a busy reader must take away. Cap at ~100 words. Do not pad — if nothing decision-worthy happened, say so in one sentence.
+{%- endmacro -%}
+
+{%- macro confidentiality_block() -%}
+## Confidentiality
+Classify the sensitivity of the discussion into exactly one of: `public`, `internal`, `confidential`, `restricted`. Populate the `confidentiality` structured field. When in doubt, err toward the higher classification.
+- `public` — already public or suitable for any audience
+- `internal` — standard company-internal; no sensitive data
+- `confidential` — personnel, finance, customer, or unreleased product details
+- `restricted` — legal, regulatory, board, security-incident, or M&A content
+{%- endmacro -%}
+
+{%- macro open_questions_block() -%}
+## Open Questions
+List questions raised during the meeting that were not resolved by the time it ended. Populate the `open_questions` structured field (each with `question`, `raised_by`, `owner` where identifiable). Omit this heading if no open questions remain.
+{%- endmacro -%}
+
+{%- macro risks_block() -%}
+## Risks & Concerns
+Capture substantive risks, warnings, or concerns raised by participants (technical, commercial, regulatory, people, security, timeline). Populate the `risks_and_concerns` structured field. Omit this heading if none were raised.
+{%- endmacro -%}
+
+{%- macro email_draft_block() -%}
+## Follow-up Email Draft
+Draft a short follow-up email the organizer can send to attendees. Populate the `email_draft` structured field:
+- `subject` — under 10 words, specific
+- `to` — attendee names
+- `cc` — only if leadership, stakeholders, or affected teams should be looped in
+- `body` — markdown, ~150 words max: one-line recap, bulleted decisions, bulleted action items with owner/due date, one-line closing
+Omit entirely (leave `email_draft` null) if the meeting produced no commitments or decisions worth a follow-up.
+{%- endmacro -%}
+
+{%- macro vendor_feedback_block(vendors) -%}
+## Vendor & Tooling Feedback
+Capture feedback, pain points, feature requests, cost or performance issues about services and tools discussed. Omit this entire section (and all sub-headings) if no vendor or tool feedback was raised.
+{% if vendors and vendors | length > 0 %}
+{% for v in vendors %}
+### {{ v }}
+[Feedback on {{ v }}, if any — omit this sub-heading if nothing was said about {{ v }}]
+
+{% endfor %}
+{% endif %}
+### Other Tools
+[Jira, Slack, GitHub, CI/CD, monitoring, internal platforms, etc. — omit if no feedback.]
+{%- endmacro -%}
+
+{%- macro prior_actions_block(prior_actions) -%}
+{% if prior_actions and prior_actions | length > 0 %}
+## Prior Open Action Items (Carryover)
+The following action items from previous meetings are still open. For each one that was acknowledged during THIS meeting as done, in progress, or dropped, populate an entry in the `prior_action_updates` structured field with the exact `action_item_id` shown, the new status (`done` | `in_progress` | `cancelled`), and a short evidence quote. Do NOT echo items that were not discussed.
+
+{% for item in prior_actions %}
+- **{{ item.id }}** — {{ item.description }}{% if item.owner %} · Owner: {{ item.owner }}{% endif %}{% if item.due_date %} · Due: {{ item.due_date }}{% endif %}{% if item.meeting_title %} · from "{{ item.meeting_title }}"{% endif %}
+{% endfor %}
+{% endif %}
+{%- endmacro -%}
+
+{%- macro meeting_header(kind, title, date, duration, attendees, organizer=None, attendee_join=', ') -%}
+# {{ kind }}: {{ title }}
+
+**Date:** {{ date }}
+**Duration:** {{ duration }}
+**Attendees:** {{ attendees | join(attendee_join) }}
+{% if organizer %}**Organizer:** {{ organizer }}
+{% endif %}
+## Transcript
+{{ transcript_text }}
+{%- endmacro -%}
+
+{%- macro closing_instructions(length_mode='concise') -%}
+---
+
+{{ omission_rule() }}
+
+{{ length_guidance(length_mode) }}
+
+Produce the minutes using ONLY the sections above that have real content. Populate every relevant structured field. Never fabricate information — only include what was actually said.
+{%- endmacro -%}

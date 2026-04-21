@@ -1,134 +1,55 @@
-You are an expert meeting minutes assistant specializing in manager–direct report 1:1 meetings. You work in a technology environment where teams use services from cloud providers (AWS, NetApp, and others).
-
-Your job is to extract EVERYTHING of value from this 1:1 conversation. Think like an HR business partner and a performance coach combined. Capture accomplishments with specific dates, track progress against objectives, identify blockers and how the employee is handling them, note all feedback exchanged in both directions, and flag any engagement or wellbeing signals. Every detail matters — these notes will be used for performance reviews, career development, and identifying support needs.
-
-Be thorough, factual, and specific. Use direct quotes when the employee's exact words matter. Never fabricate information — only include what was actually discussed.
+Summarize a 1:1 meeting. Perspective is ambiguous, so extract value for both sides — use this template only when the relationship direction (manager / direct report / peer) isn't identifiable from the transcript.
 
 ---
-# 1:1 Meeting: {{ title }}
-
-**Date:** {{ date }}
-**Duration:** {{ duration }}
-**Manager / Direct Report:** {{ attendees | join(' & ') }}
-
-## Transcript
-{{ transcript_text }}
+{% import '_shared.md.j2' as m %}
+{{ m.meeting_header('1:1 Meeting', title, date, duration, attendees, organizer, attendee_join=' & ') }}
 
 ---
 
-Produce comprehensive 1:1 meeting notes using every section below. For each section, extract ALL relevant information from the transcript. If a topic was not discussed, write "Not discussed in this meeting."
+{{ m.omission_rule() }}
+
+{{ m.length_guidance(length_mode) }}
+
+{{ m.tldr_block() }}
 
 ## Title
-[Specific, descriptive title — 3 to 10 words. NOT "Weekly 1:1" — name the actual topics discussed.]
+[Specific — 3 to 10 words. Do NOT use "Weekly 1:1".]
 
 ## Summary
-[3-5 sentences: what was discussed, key outcomes, any concerns raised, overall tone of the meeting]
+3-5 sentences: what was discussed, outcomes, concerns, tone.
 
 ## Detailed Notes
-[A comprehensive narrative write-up of the 1:1 (~400–1200 words). Walk through the conversation roughly in the order topics came up: how the meeting opened, what the employee brought up, how the manager responded, where the conversation went deeper, and how it wrapped up. Capture the nuance, emotion, and context that structured lists below cannot — tone shifts, hesitation, enthusiasm, unspoken concerns made explicit, moments of alignment or friction. Use direct quotes when the employee's exact words matter for performance review or coaching documentation. Include concrete details (project names, incidents, peers mentioned, specific feedback examples). Use subheadings and paragraphs for readability. Do not duplicate the structured sections below verbatim — weave the narrative around them. Only include information actually present in the transcript.]
+Narrative of how the conversation flowed, emotional tone, hesitation, enthusiasm, alignment or friction. Use direct quotes when exact words matter.
 
-## Mood & Energy Check-in
-[How did the employee seem? Did they express how they're feeling about work? Note any self-reported happiness/energy level, work-life balance comments, stress indicators, or enthusiasm. If the employee mentioned how their week/sprint has been going, capture it here. Note the tone — were they upbeat, flat, frustrated, energized?]
+## Progress & Status
+What each side reported on their current work, targets, and blockers.
 
-## Accomplishments & Wins
-[EVERY accomplishment, completed task, or win the employee mentioned since the last meeting. Be specific with dates, project names, and outcomes where mentioned. Include:]
-- Completed work items with specific details
-- Problems solved or incidents handled
-- Positive feedback received from peers, stakeholders, or customers
-- Milestones reached on longer-term projects
-- Any initiative or ownership demonstrated beyond their core role
+## Feedback Exchanged
+Both directions — what each person said about the other's work, style, or decisions.
 
-## Progress Against Objectives
-[How is the employee tracking against their goals/OKRs/objectives? Capture:]
-- Which objectives were discussed
-- Current status or percentage complete for each
-- Timeline changes (ahead/behind/on track)
-- Obstacles to hitting targets
-- Any new objectives or goal adjustments discussed
-[If no formal objectives were discussed, note any implicit progress discussion.]
+{{ m.vendor_feedback_block(vendors) }}
 
-## Blockers & Challenges
-[Identify ALL blockers and challenges mentioned. For EACH blocker, capture: what the blocker is, how the employee is currently handling it, and what support they need from the manager.]
-
-### Operational Blockers
-[Day-to-day issues: system outages, access problems, tooling failures, deployment issues, on-call burden, incident response gaps, environment issues. For each: what is it, how are they handling it, what do they need?]
-
-### Organizational Blockers
-[People/process issues: unclear ownership, cross-team dependencies, approval bottlenecks, communication gaps, staffing shortages, unclear priorities, meeting overload. For each: what is it, how are they handling it, what do they need?]
-
-### Physical / Infrastructure Blockers
-[Hardware, network, data center, equipment, office/remote setup, connectivity issues.]
-
-### Roadmap / Strategic Blockers
-[Product direction, feature prioritization, technical debt, architecture decisions, migration timelines, vendor decisions blocking progress.]
-
-## Feedback Given (Manager → Employee)
-[ALL feedback the manager gave during this meeting. Use SBI format where possible:]
-- **Positive feedback**: What was recognized? Be specific about the situation, behavior, and impact.
-- **Constructive feedback**: What improvement areas were discussed? What specific examples were given? What was the agreed approach to improve?
-[This section is critical for performance review documentation. Capture exact examples.]
-
-## Feedback Received (Employee → Manager/Org)
-[ALL feedback the employee gave upward — about the manager's style, team processes, organizational decisions, leadership, tools, culture. This is often subtle — capture it even when expressed indirectly as complaints, suggestions, or observations.]
-
-## Service & Technology Feedback
-[Capture ALL feedback about services, tools, and platforms discussed.]
-
-### AWS Services
-[Feedback on EC2, S3, Lambda, EKS, SageMaker, Bedrock, Control Tower, Security Hub, IAM, CloudFormation, etc. Include: satisfaction, pain points, feature requests, cost concerns, performance issues.]
-
-### NetApp Services
-[Feedback on ONTAP, Cloud Volumes, StorageGRID, BlueXP, Astra, FSx for NetApp ONTAP, etc. Include: satisfaction, pain points, feature requests, performance issues.]
-
-### Other Services & Tools
-[Feedback on Jira, Confluence, Slack, GitHub, CI/CD, monitoring tools, internal platforms, etc.]
-
-## Customer & Stakeholder Feedback
-[What did the employee share about customer interactions, stakeholder relationships, or external feedback? Include: customer satisfaction signals, complaints relayed, feature requests heard, relationship health.]
-
-## Team & Organization Observations
-[What did the employee observe or comment about: team dynamics, morale, collaboration, process friction, culture, recent org changes, strategy clarity? These observations are valuable signals about the broader team health.]
-
-## Career Development & Growth
-[Everything discussed about the employee's career trajectory:]
-- Short-term skill goals and learning interests
-- Long-term career aspirations
-- Desired projects, stretch assignments, or role changes
-- Training/certification needs or completed milestones
-- Mentoring relationships (giving or receiving)
-- Readiness signals for promotion or role expansion
-
-## Coaching Notes
-[If any coaching conversation happened, capture:]
-- What was the topic/challenge being coached on?
-- What options or approaches were explored?
-- What was the agreed next step?
-- What commitments did the employee make for self-improvement?
+## Career / Role / Growth
+Anything discussed about trajectory, skills, stretch opportunities, promotion signals.
 
 ## Engagement & Wellbeing Signals
-[Note any signals — positive or concerning — about the employee's engagement level. Be factual, not judgmental.]
+Factual observations, not judgments.
 
-### Positive Signals
-[Volunteering ideas, enthusiasm about projects, discussing future plans at the company, taking initiative, mentoring others, asking about growth opportunities.]
-
-### Concerning Signals
-[Short/minimal answers, low energy, cynicism, "not my job" attitude (if new), expressing dissatisfaction with role/compensation/growth, withdrawal from team activities, mentions of burnout or overwhelm, signs of checking out.]
-
-[If no clear signals either way, write "No notable signals in this meeting."]
-
-## Decisions Made
-[All decisions, with who made them and the rationale]
+## Decisions
+Populate `decisions`.
 
 ## Action Items
-[EVERY commitment made by either person. Separate manager and employee actions.]
+Populate `action_items` — separate by owner using the `owner` field.
 
-### Employee Action Items
-- [ ] [Description] — Due: [Date if mentioned]
+{{ m.risks_block() }}
 
-### Manager Action Items (Commitments)
-- [ ] [Description] — Due: [Date if mentioned]
+{{ m.open_questions_block() }}
 
-[Manager commitments are just as important as employee tasks. If the manager promised to follow up on something, get approval, make an introduction, or provide resources — capture it here.]
+{{ m.prior_actions_block(prior_actions) }}
 
 ## Key Topics
-[List 5-10 main themes from the meeting]
+3-7 short labels.
+
+{{ m.email_draft_block() }}
+
+{{ m.confidentiality_block() }}

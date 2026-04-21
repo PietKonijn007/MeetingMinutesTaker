@@ -1,0 +1,62 @@
+Summarize a 1:1 where the user is the direct report and the other party is their manager (or skip-level, CEO, CFO). The user's goal is: capture commitments the leader made, direction given, feedback received, and the political/strategic context needed to execute well.
+
+---
+{% import '_shared.md.j2' as m %}
+{{ m.meeting_header('1:1 with Leader', title, date, duration, attendees, organizer, attendee_join=' & ') }}
+
+---
+
+{{ m.omission_rule() }}
+
+{{ m.length_guidance(length_mode) }}
+
+{{ m.tldr_block() }}
+
+## Title
+[Specific — 3 to 10 words — name the real subject. Do NOT use "1:1".]
+
+## Summary
+3-5 sentences: key direction received, feedback, commitments from the leader, and what the user now needs to do differently.
+
+## Detailed Notes
+Narrative — what the leader signalled explicitly and implicitly, tone, where they pushed back, where they agreed, what they avoided. Use direct quotes where the leader's exact words matter (they carry political weight).
+
+## Direction Received
+Explicit guidance, priorities, and signals about strategy, focus, or re-prioritization.
+
+## Feedback Received (Leader → User)
+- **Positive recognition** — situation / behavior / impact
+- **Constructive** — concerns, growth areas, gaps flagged
+
+## Feedback Given (User → Leader)
+Upward feedback the user offered — about the org, peer leaders, strategy, tooling, blockers.
+
+## Leader's Commitments
+Every commitment the leader made: resources, approvals, introductions, escalations, air-cover, decisions they'll make by X date. Capture verbatim where possible — populate as `action_items` with the leader as `owner`.
+
+## User's Commitments
+What the user agreed to deliver. Populate `action_items` with the user as `owner`.
+
+## Strategic & Political Context
+Hints about org direction, stakeholder dynamics, budget posture, other leaders' positions. Non-obvious subtext worth remembering.
+
+## Career Development
+Promotion signals, growth feedback, skill gaps flagged, stretch opportunities discussed.
+
+{{ m.vendor_feedback_block(vendors) }}
+
+## Decisions
+Decisions the leader made in the meeting or confirmed. Populate `decisions`.
+
+{{ m.risks_block() }}
+
+{{ m.open_questions_block() }}
+
+{{ m.prior_actions_block(prior_actions) }}
+
+## Key Topics
+3-7 short labels.
+
+{{ m.email_draft_block() }}
+
+{{ m.confidentiality_block() }}

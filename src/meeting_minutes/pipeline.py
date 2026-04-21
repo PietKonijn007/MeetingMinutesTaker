@@ -646,6 +646,46 @@ class PipelineOrchestrator:
         )
         _console(f"  Context: {context.date} | {context.duration} | {len(attendees)} attendees")
 
+        # Prior-action carryover (ACT-1): pull still-open items from recent
+        # meetings that share attendees so the LLM can detect acknowledged
+        # closures in this meeting. Best-effort — a DB hiccup here must not
+        # block generation.
+        prior_actions_payload: list[dict] = []
+        if gen_config.close_acknowledged_actions and attendees:
+            try:
+                from meeting_minutes.system3.db import get_session_factory
+                from meeting_minutes.system3.storage import StorageEngine as _StorageEngine
+
+                db_path = resolve_db_path(self._config.storage.sqlite_path)
+                if db_path.exists():
+                    session_factory = get_session_factory(f"sqlite:///{db_path}")
+                    _session = session_factory()
+                    try:
+                        _storage = _StorageEngine(_session)
+                        items = _storage.get_open_action_items_for_attendees(
+                            attendee_names=attendees,
+                            lookback_meetings=gen_config.prior_actions_lookback_meetings,
+                            exclude_meeting_id=meeting_id,
+                        )
+                        for it in items:
+                            m_title = it.meeting.title if it.meeting else None
+                            prior_actions_payload.append({
+                                "id": it.action_item_id,
+                                "description": it.description,
+                                "owner": it.owner,
+                                "due_date": it.due_date,
+                                "meeting_title": m_title,
+                            })
+                    finally:
+                        _session.close()
+                    if prior_actions_payload:
+                        _console(
+                            f"  Prior open actions carried forward: {len(prior_actions_payload)}",
+                            "dim",
+                        )
+            except Exception as _exc:
+                self._logger.debug("Prior-action carryover skipped: %s", _exc)
+
         # Render prompt and generate — inject user notes if available
         prompt_engine = PromptTemplateEngine(templates_dir)
         provider = gen_config.llm.primary_provider
@@ -679,10 +719,19 @@ class PipelineOrchestrator:
                 f"{user_instructions}"
             )
 
+        # Build extra template vars: vendor list, length mode, prior actions.
+        extra_vars = {
+            "vendors": list(gen_config.vendors or []),
+            "length_mode": gen_config.length_mode or "concise",
+            "prior_actions": prior_actions_payload,
+        }
+
         # Try structured generation first
         try:
             _console(f"  Trying structured generation (tool_use)...", "yellow")
-            system_prompt, user_prompt = prompt_engine.render_structured(template, context, enhanced_transcript)
+            system_prompt, user_prompt = prompt_engine.render_structured(
+                template, context, enhanced_transcript, extra_vars=extra_vars,
+            )
             if custom_system_addendum:
                 system_prompt += custom_system_addendum
             _console(f"  Prompt rendered: {len(user_prompt):,} chars")
@@ -760,7 +809,9 @@ class PipelineOrchestrator:
             _console(f"  Falling back to text+regex path...", "yellow")
 
             # Fall back to old text+regex path
-            full_prompt = prompt_engine.render(template, context, enhanced_transcript)
+            full_prompt = prompt_engine.render(
+                template, context, enhanced_transcript, extra_vars=extra_vars,
+            )
             _console(f"  Prompt rendered: {len(full_prompt):,} chars")
             _console(f"  Calling LLM: {provider} / {model}...", "yellow")
 
@@ -881,6 +932,63 @@ class PipelineOrchestrator:
         _console(f"  ✓ Ingested into database in {t_ingest:.1f}s", "green")
         _console(f"    DB: {db_path}")
         _console(f"    Full-text search index updated")
+
+        # Apply prior-action closures from the generated minutes.
+        try:
+            self._apply_prior_action_updates(meeting_id, storage)
+        except Exception as _exc:
+            self._logger.warning("Prior-action closure step failed: %s", _exc)
+        finally:
+            session.close()
+
+    def _apply_prior_action_updates(self, meeting_id: str, storage) -> None:
+        """Close / re-status prior open action items acknowledged in this meeting.
+
+        Reads the freshly written minutes JSON, looks at
+        ``structured_data.prior_action_updates``, and calls
+        ``StorageEngine.update_action_item_status`` for each. Logs each
+        transition. Does not create new items — only mutates existing ones.
+        """
+        import json as _json
+
+        gen_config = self._config.generation
+        if not getattr(gen_config, "close_acknowledged_actions", True):
+            return
+
+        minutes_path = self._minutes_dir / f"{meeting_id}.json"
+        if not minutes_path.exists():
+            return
+
+        try:
+            with open(minutes_path, "r", encoding="utf-8") as f:
+                data = _json.load(f)
+        except Exception:
+            return
+
+        structured = data.get("structured_data") or {}
+        updates = structured.get("prior_action_updates") or []
+        if not updates:
+            return
+
+        allowed = {"done", "in_progress", "cancelled"}
+        applied = 0
+        for u in updates:
+            action_id = u.get("action_item_id")
+            new_status = u.get("new_status")
+            if not action_id or new_status not in allowed:
+                continue
+            ok = storage.update_action_item_status(action_id, new_status)
+            if ok:
+                applied += 1
+                self._logger.info(
+                    "Prior action %s → %s (from meeting %s)",
+                    action_id, new_status, meeting_id[:8],
+                )
+        if applied:
+            _console(
+                f"  ✓ Closed/updated {applied} prior action item(s) based on this meeting",
+                "green",
+            )
 
     async def rediarize(self, meeting_id: str, regenerate: bool = True) -> None:
         """Re-run ONLY speaker diarization on existing audio, merge into existing transcript.

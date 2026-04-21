@@ -332,6 +332,7 @@ class StructuredMinutesAdapter:
         return ParsedMinutes(
             meeting_id=meeting_context.meeting_id,
             title=structured.title,
+            tldr=getattr(structured, "tldr", "") or "",
             summary=structured.summary,
             detailed_notes=structured.detailed_notes,
             sections=sections,
@@ -344,11 +345,15 @@ class StructuredMinutesAdapter:
                 "date": meeting_context.date,
                 "attendees": meeting_context.attendees,
             },
+            confidentiality=getattr(structured, "confidentiality", None),
             sentiment=structured.sentiment,
             participants=structured.participants,
             discussion_points=structured.discussion_points,
             risks_and_concerns=structured.risks_and_concerns,
+            open_questions=list(getattr(structured, "open_questions", []) or []),
             follow_ups=structured.follow_ups,
             parking_lot=structured.parking_lot,
+            prior_action_updates=list(getattr(structured, "prior_action_updates", []) or []),
+            email_draft=getattr(structured, "email_draft", None),
             meeting_effectiveness=structured.meeting_effectiveness,
         )

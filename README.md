@@ -9,7 +9,7 @@ You spend hours each week in meetings. Key decisions get made, action items get 
 ### What makes it different
 
 - **Private by design** — Audio capture happens at the OS level via system audio loopback. Nothing joins your meeting as a participant. Nothing leaves your machine unless you choose a cloud LLM. Run fully offline with Whisper + Ollama.
-- **Meeting-type intelligence** — A standup gets a per-person Done/Today/Blockers breakdown. A decision meeting gets an options matrix with rationale. A customer call gets client requests and commitments. 9 built-in templates, fully customizable.
+- **Meeting-type intelligence** — A standup gets a per-person Done/Today/Blockers breakdown. A decision meeting gets an options matrix with rationale. A customer call gets client requests and commitments. An incident review gets a blameless timeline and contributing factors. 18 built-in templates covering the real exec calendar (board, leadership, vendor, architecture review, interview debrief, three 1:1 variants, and more) — fully customizable.
 - **Talk to your meetings** — Ask "What did Jon commit to about lead times since April?" and get a synthesized answer with citations to the specific meetings, powered by local semantic search over your entire meeting history.
 - **Speaker identification** — Automatic speaker diarization labels who said what. Enter names once and they propagate through transcripts, minutes, action items, and decisions.
 - **Action item tracking** — Every action item extracted across every meeting, filterable by owner, status, and due date. Mark items complete from anywhere in the app.
@@ -37,23 +37,51 @@ Record Audio ──► Transcribe ──► Generate Minutes ──► Store & S
 
 **System 1 — Recording & Transcription**: Captures audio from virtual and physical meetings via system audio loopback (BlackHole on macOS), transcribes with a pluggable transcription engine — Faster Whisper (CTranslate2, default) or Whisper.cpp (GGML quantized, lower memory) — including Distil-Whisper models with Metal/CUDA acceleration. Identifies speakers with pyannote.audio (GPU-accelerated via MPS/CUDA), maps speaker labels to user-provided names in first-speaking order, enriches with calendar metadata, and supports live note-taking during recording. Separate `mm rediarize` command can re-run speaker diarization on existing audio without re-transcribing. Hardware auto-detection recommends optimal models for your GPU/RAM.
 
-**System 2 — Minutes Generation**: Auto-detects meeting type using an LLM classifier with meeting type refinement, routes transcripts to meeting-type-specific prompt templates, generates structured minutes via LLM. Supports **four providers**: Anthropic Claude (tool_use for guaranteed JSON), OpenAI, OpenRouter (200+ models), and **Ollama for fully local/offline summarization** (JSON-mode structured generation). Produces three layers of output per meeting: a short `summary`, a long-form `detailed_notes` narrative (~400–1500 words walking through how the conversation unfolded), and structured lists for decisions, action items, risks, and follow-ups. Extracts action items and decisions with per-speaker sentiment analysis and meeting effectiveness scoring, and runs quality checks. Supports custom LLM instructions provided during recording.
+**System 2 — Minutes Generation**: Auto-detects meeting type using an LLM classifier (Claude Haiku, with a calendar-title + content + attendee-count keyword fallback), routes transcripts to meeting-type-specific prompt templates, generates structured minutes via LLM. Supports **four providers**: Anthropic Claude (tool_use for guaranteed JSON), OpenAI, OpenRouter (200+ models), and **Ollama for fully local/offline summarization** (JSON-mode structured generation). Produces four layers of output per meeting: a ~100-word executive **TL;DR**, a short `summary`, a `detailed_notes` narrative (length controlled by `generation.length_mode` = `concise` / `standard` / `verbose`), and structured lists for decisions, action items, risks, open questions, follow-ups, and a ready-to-send email draft. Extracts sentiment, meeting effectiveness, a confidentiality classification, and carries open action items forward from prior meetings — automatically closing them in the DB when they're acknowledged as done in a later meeting. Vendor-feedback sub-sections are driven by a configurable `generation.vendors` list (default `[AWS, NetApp]`). Supports custom LLM instructions provided during recording.
 
 **System 3 — Storage & Search**: Stores everything in SQLite with full-text search (FTS5) and **semantic vector search** (via `sqlite-vec` + `sentence-transformers`). Provides a CLI for searching, browsing, and managing meetings and action items. **"Chat with your meetings"** feature uses RAG (Retrieval-Augmented Generation) to answer natural-language questions across all your meeting history — e.g., _"Summarize all actions Jon Porter has taken on lead times since April 1st"_. Supports encryption at rest, configurable retention policies, and in-calendar search with filters.
 
 ## Supported Meeting Types
 
+Every template emits a shared baseline — **TL;DR**, decisions, action items, risks, open questions, confidentiality classification, and a follow-up email draft — plus the type-specific sections below. Empty sections are omitted (no "Not discussed" filler).
+
+### Team & cadence
 | Type | Template Focus |
 |------|---------------|
 | `standup` | Per-person Done / Today / Blockers |
-| `one_on_one` | Discussion topics, feedback, career development |
-| `customer_meeting` | Client requests, commitments, timeline |
-| `decision_meeting` | Options, pros/cons, decision, rationale |
-| `brainstorm` | Ideas generated, themes, top ideas |
-| `retrospective` | Went well, didn't go well, improvements |
 | `team_meeting` | Decisions, financial review, blockers, strategic updates |
+| `retrospective` | Went well, didn't go well, improvements |
 | `planning` | Goals, tasks, estimates, risks |
-| `general` | Summary, discussion points, decisions, actions |
+| `brainstorm` | Ideas generated, themes, top ideas |
+| `decision_meeting` | Options, pros/cons, decision, rationale, reversibility |
+
+### 1:1 (perspective-aware)
+| Type | Template Focus |
+|------|---------------|
+| `one_on_one_direct_report` | Manager→report: mood, wins, objectives, blockers, feedback, coaching, engagement signals |
+| `one_on_one_leader` | User→boss/skip-level: direction received, leader commitments, political/strategic context |
+| `one_on_one_peer` | Peer 1:1: alignment, disagreements, cross-team dependencies, commitments both ways |
+| `one_on_one` | Generic 1:1 fallback when the perspective isn't identifiable |
+
+### Exec & cross-functional
+| Type | Template Focus |
+|------|---------------|
+| `leadership_meeting` | Peer-exec staff meeting: cross-functional decisions, priority trade-offs, resource allocation |
+| `board_meeting` | Board/investor update: resolutions, management update, financial update, asks of the board |
+| `architecture_review` | ADR-style: problem, options matrix, decision, reversibility, migration plan |
+| `incident_review` | Blameless post-mortem: timeline, contributing factors, prevent/detect/mitigate actions |
+
+### External
+| Type | Template Focus |
+|------|---------------|
+| `customer_meeting` | Client requests, service feedback, blockers, commitments both ways, next steps |
+| `vendor_meeting` | QBR / procurement: vendor commitments, roadmap, SLA performance, pricing, our asks |
+| `interview_debrief` | Hire/no-hire recommendation with per-competency evidence and level fit |
+
+### Fallback
+| Type | Template Focus |
+|------|---------------|
+| `general` | Used when classification confidence is low; TL;DR + decisions + actions + open questions |
 
 ## Quick Install
 
@@ -353,6 +381,12 @@ generation:
     ollama:
       base_url: http://localhost:11434  # Ollama server URL
       timeout_seconds: 300              # Local models can be slower
+  vendors: [AWS, NetApp]              # Per-vendor feedback sub-sections in templates
+  length_mode: concise                # concise | standard | verbose — detailed-notes length
+  generate_email_draft: true          # Emit a follow-up email draft artifact
+  confidentiality_default: auto       # auto | public | internal | confidential | restricted
+  close_acknowledged_actions: true    # Auto-close prior open actions acknowledged in a meeting
+  prior_actions_lookback_meetings: 5  # How many prior meetings to pull open actions from
 
 storage:
   sqlite_path: db/meetings.db

@@ -1,0 +1,59 @@
+Summarize an incident review / post-mortem. Blameless framing: focus on contributing factors, timeline, customer impact, and corrective actions — NOT individual fault. Capture precise facts; these minutes often end up in compliance or customer-facing RCAs.
+
+---
+{% import '_shared.md.j2' as m %}
+{{ m.meeting_header('Incident Review', title, date, duration, attendees, organizer) }}
+
+---
+
+{{ m.omission_rule() }}
+
+{{ m.length_guidance(length_mode) }}
+
+{{ m.tldr_block() }}
+
+## Title
+[Specific — 3 to 10 words — name the incident (e.g. "INC-4821 — EKS control-plane outage 2026-04-18").]
+
+## Incident Summary
+Severity, services affected, customer impact, start / detect / mitigate / resolve timestamps, duration.
+
+## Detailed Notes
+Narrative of what happened and how the team responded. Blameless — describe actions and decisions without attributing blame to individuals.
+
+## Timeline
+Chronological, timestamped events:
+- **HH:MM UTC** — event, who did what, what they observed
+
+## Impact
+Customers affected, features degraded, SLA/SLO breach, revenue or trust impact.
+
+## Contributing Factors
+Root cause(s) and contributing factors. Include technical (code, config, infra) AND systemic (process, monitoring, alerting, runbooks, on-call load, knowledge gaps).
+
+## What Went Well
+Detection speed, team response, tooling that helped.
+
+## What Went Poorly
+Delays, false starts, missing signals, ambiguous ownership.
+
+## Corrective Actions
+Populate `action_items`. Categorize in the description: **[Prevent]** changes to prevent recurrence / **[Detect]** improve detection / **[Mitigate]** faster response next time. Every item needs owner, due date, priority.
+
+{{ m.vendor_feedback_block(vendors) }}
+
+## Followups for Customer Communication
+Any customer-facing comms owed (public RCA, apology note, credits) — populate `action_items`.
+
+{{ m.risks_block() }}
+
+{{ m.open_questions_block() }}
+
+{{ m.prior_actions_block(prior_actions) }}
+
+## Key Topics
+3-7 short labels.
+
+{{ m.email_draft_block() }}
+
+{{ m.confidentiality_block() }}

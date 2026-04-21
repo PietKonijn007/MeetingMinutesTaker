@@ -11,10 +11,21 @@ from pydantic import BaseModel, Field
 
 class MeetingType(str, Enum):
     STANDUP = "standup"
+    # Kept for backwards compatibility with pre-existing meetings; new meetings
+    # prefer the three perspective-aware variants below.
     ONE_ON_ONE = "one_on_one"
+    ONE_ON_ONE_DIRECT_REPORT = "one_on_one_direct_report"
+    ONE_ON_ONE_LEADER = "one_on_one_leader"
+    ONE_ON_ONE_PEER = "one_on_one_peer"
     TEAM_MEETING = "team_meeting"
+    LEADERSHIP_MEETING = "leadership_meeting"
     DECISION_MEETING = "decision_meeting"
+    ARCHITECTURE_REVIEW = "architecture_review"
+    INCIDENT_REVIEW = "incident_review"
     CUSTOMER_MEETING = "customer_meeting"
+    VENDOR_MEETING = "vendor_meeting"
+    BOARD_MEETING = "board_meeting"
+    INTERVIEW_DEBRIEF = "interview_debrief"
     BRAINSTORM = "brainstorm"
     RETROSPECTIVE = "retrospective"
     PLANNING = "planning"
@@ -186,21 +197,54 @@ class MeetingEffectiveness(BaseModel):
     unresolved_items: int = 0
 
 
+class OpenQuestion(BaseModel):
+    """A question raised in the meeting that was not answered before it ended."""
+    question: str
+    raised_by: str | None = None
+    owner: str | None = None  # who is expected to answer
+
+
+class EmailDraft(BaseModel):
+    """Follow-up email draft the organizer can send to attendees."""
+    subject: str = ""
+    to: list[str] = []
+    cc: list[str] = []
+    body: str = ""
+
+
+class PriorActionUpdate(BaseModel):
+    """An update to a prior meeting's action item acknowledged in this meeting.
+
+    Only populated when the LLM was given prior open action items as input and
+    the conversation explicitly acknowledged one as closed, progressed, or
+    dropped.
+    """
+    action_item_id: str
+    new_status: str  # "done" | "in_progress" | "cancelled"
+    evidence: str | None = None  # short quote or paraphrase from transcript
+
+
 class StructuredMinutesResponse(BaseModel):
     """The complete schema the LLM fills via tool_use."""
     title: str = ""
+    tldr: str = ""  # ~100 words, executive-first summary
     summary: str = ""
     detailed_notes: str = ""
     meeting_type_suggestion: str | None = None
+    # auto | public | internal | confidential | restricted
+    confidentiality: str | None = None
     sentiment: str | None = None  # constructive, positive, neutral, tense, negative
     participants: list[ParticipantInfo] = []
     discussion_points: list[DiscussionPoint] = []
     decisions: list[StructuredDecision] = []
     action_items: list[StructuredActionItem] = []
     risks_and_concerns: list[RiskConcern] = []
+    open_questions: list[OpenQuestion] = []
     follow_ups: list[FollowUp] = []
     key_topics: list[str] = []
     parking_lot: list[str] = []
+    prior_action_updates: list[PriorActionUpdate] = []
+    email_draft: EmailDraft | None = None
     meeting_effectiveness: MeetingEffectiveness | None = None
 
 
@@ -212,6 +256,7 @@ class MinutesJSON(BaseModel):
     meeting_type: str
     metadata: MinutesMetadata
     summary: str
+    tldr: str = ""
     detailed_notes: str = ""
     sections: list[MinutesSection]
     action_items: list[ActionItem]
@@ -219,12 +264,16 @@ class MinutesJSON(BaseModel):
     key_topics: list[str]
     minutes_markdown: str
     llm: LLMUsage
+    confidentiality: str | None = None
     sentiment: str | None = None
     participants: list[ParticipantInfo] = []
     discussion_points: list[DiscussionPoint] = []
     risks_and_concerns: list[RiskConcern] = []
+    open_questions: list[OpenQuestion] = []
     follow_ups: list[FollowUp] = []
     parking_lot: list[str] = []
+    prior_action_updates: list[PriorActionUpdate] = []
+    email_draft: EmailDraft | None = None
     meeting_effectiveness: MeetingEffectiveness | None = None
     structured_data: dict | None = None
 
@@ -314,6 +363,7 @@ class ParsedMinutes(BaseModel):
 
     meeting_id: str
     title: str = ""
+    tldr: str = ""
     summary: str
     detailed_notes: str = ""
     sections: list[MinutesSection]
@@ -322,12 +372,16 @@ class ParsedMinutes(BaseModel):
     key_topics: list[str]
     raw_llm_response: str
     meeting_context: dict = Field(default_factory=dict)
+    confidentiality: str | None = None
     sentiment: str | None = None
     participants: list[ParticipantInfo] = []
     discussion_points: list[DiscussionPoint] = []
     risks_and_concerns: list[RiskConcern] = []
+    open_questions: list[OpenQuestion] = []
     follow_ups: list[FollowUp] = []
     parking_lot: list[str] = []
+    prior_action_updates: list[PriorActionUpdate] = []
+    email_draft: EmailDraft | None = None
     meeting_effectiveness: MeetingEffectiveness | None = None
 
 

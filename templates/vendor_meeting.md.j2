@@ -1,0 +1,60 @@
+Summarize a vendor, partner, or procurement meeting — a QBR, pricing negotiation, roadmap review, or escalation with a provider. The user is the buyer/customer of the vendor. Focus on commitments the vendor made, pricing, roadmap alignment, SLA performance, and leverage points for negotiation.
+
+---
+{% import '_shared.md.j2' as m %}
+{{ m.meeting_header('Vendor Meeting', title, date, duration, attendees, organizer) }}
+
+---
+
+{{ m.omission_rule() }}
+
+{{ m.length_guidance(length_mode) }}
+
+{{ m.tldr_block() }}
+
+## Title
+[Specific — 3 to 10 words — name vendor and subject (e.g. "AWS Q2 QBR — Bedrock Pricing & EKS Roadmap").]
+
+## Summary
+2-4 sentences: vendor, purpose, key commitments, any commercial movement, escalations raised.
+
+## Detailed Notes
+Narrative of how the conversation unfolded — vendor's talking points, where we pushed, their concessions, unresolved items. Quote vendor commitments verbatim where possible.
+
+## Vendor & Attendees
+Vendor name, account team present, our attendees and their roles.
+
+## Vendor Commitments
+Every commitment the vendor made: dates, features, fixes, credits, roadmap items, SLAs. Populate `action_items` with the vendor contact as `owner`. These are the most important output of this meeting.
+
+## Roadmap & Feature Updates
+What the vendor shared about their roadmap, features, GA dates.
+
+## Service & SLA Performance
+Incidents, SLA credits owed, response-time issues, support quality, outage post-mortems from the vendor side.
+
+## Commercial / Pricing
+Pricing discussed, discount structure, renewal terms, upcoming commitments (EDP, reserved capacity), invoice issues.
+
+## Our Asks / Escalations
+Issues we escalated, features we requested, commercial concessions we requested.
+
+## Competitive / Alternative Context
+Alternatives we mentioned or that came up. Leverage we signalled (or should signal next time).
+
+## Risks & Dependencies
+Vendor lock-in concerns, migration risks, capacity/quota risks, vendor financial stability signals.
+
+## Our Action Items
+Populate `action_items` with someone on our side as `owner`.
+
+{{ m.open_questions_block() }}
+
+{{ m.prior_actions_block(prior_actions) }}
+
+## Key Topics
+3-7 short labels.
+
+{{ m.email_draft_block() }}
+
+{{ m.confidentiality_block() }}
