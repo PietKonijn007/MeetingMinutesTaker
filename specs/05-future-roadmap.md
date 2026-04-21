@@ -46,6 +46,21 @@ The following local AI features have been implemented:
 - **Hardware-aware whisper.cpp install**: `install.sh` detects platform and sets the right `WHISPER_*` env vars for source-build to enable Metal / CUDA / OpenBLAS.
 - **ffmpeg auto-install**: New step [2.5/10] in `install.sh` installs ffmpeg via Homebrew.
 
+### Batch 3 — Complete (Implemented across PRs #3 – #8)
+
+Full specs in `specs/07-implementation-plan-batch3.md`. Summary of what's live on main:
+
+- **PIP-1 — Resumable pipeline state machine** ([PR #3](https://github.com/PietKonijn007/MeetingMinutesTaker/pull/3)): `pipeline_stages` table tracks per-(meeting, stage) state. CLI `mm status`, `mm resume [--all] [--from-stage=...]`. API `GET /api/meetings/:id/pipeline`, `POST /api/meetings/:id/resume`, `GET /api/pipeline/interrupted`. Server startup resets stale `running` rows older than 30 min. Retention preserves audio for meetings whose pipeline hasn't reached a terminal state.
+- **HLT-1 — Startup health check + `mm repair`** ([PR #4](https://github.com/PietKonijn007/MeetingMinutesTaker/pull/4)): six integrity checks (PRAGMA, FTS row counts, embedding-vector orphans, minutes presence, audio-file presence, voice-sample orphans). CLI `mm repair [--dry-run] [--check=<name>]`. API `GET /api/health/full`. Supersedes prior R5.
+- **DSK-1 — Disk-space preflight + watchdog** ([PR #4](https://github.com/PietKonijn007/MeetingMinutesTaker/pull/4)): tiered advisory warnings (green/yellow/orange/red) before `mm record start`, with top-20-oldest-audio cleanup table in the UI. Mid-recording watchdog triggers graceful stop if free space drops below threshold. New CLI flags: `mm record start --planned-minutes`, `--force`.
+- **ONB-1 — First-run onboarding** ([PR #4](https://github.com/PietKonijn007/MeetingMinutesTaker/pull/4)): CLI `mm doctor [--json]` runs 11 checks (PR #8 added WeasyPrint natives check). API `GET /api/doctor`. New `/onboarding` page with per-check retry + clipboard-copy hints; auto-redirect on first visit when `meetings` table is empty.
+- **SPK-1 — Passive speaker centroid learning** ([PR #5](https://github.com/PietKonijn007/MeetingMinutesTaker/pull/5)): Supersedes N2. `person_voice_samples` table stores embeddings extracted from pyannote's `SpeakerDiarization.apply()` output. Match tiers: high (≥0.85), medium (0.70–0.85), unknown (<0.70). Speaker-rename UI pre-fills names with suggestion badges. Inline "create new person" flow for unknown clusters with >30 s speech. Contamination invalidation on corrections.
+- **REC-1 — Recurring-meeting threading** ([PR #6](https://github.com/PietKonijn007/MeetingMinutesTaker/pull/6)): Partially supersedes N9. `meeting_series` + `meeting_series_members` tables, detection by `(meeting_type + exact attendee set)` with cadence classification. CLI `mm series detect | list | show`. New `/series` list and `/series/:id` detail pages.
+- **ANA-1 — Cross-meeting analytics** ([PR #6](https://github.com/PietKonijn007/MeetingMinutesTaker/pull/6)): Partially supersedes A1. Four new tabbed panels on `/stats`: commitment completion per person, recurring unresolved topics (sqlite-vec clustering + union-find), sentiment trends, meeting-type effectiveness. Each endpoint accepts `?series=<id>` for series-scoped views. CLI `mm stats rebuild`.
+- **BRF-1 — Pre-meeting briefing** ([PR #8](https://github.com/PietKonijn007/MeetingMinutesTaker/pull/8)): New `/brief` page with six pure-query sections (who/when last, open commitments, unresolved topics, sentiment sparklines, recent decisions, context excerpts) plus a pinned Start Recording panel that pre-fills title, attendees (via SPK-1 centroids), and carry-over notes. Deep-linked from `/people/:id` and `/series/:id`.
+- **NOT-1 — Desktop notifications** ([PR #8](https://github.com/PietKonijn007/MeetingMinutesTaker/pull/8)): macOS notifications on pipeline complete/failed via `pync`. Platform-gated and lazy-imported; non-macOS no-ops cleanly. Fires from existing PIP-1 stage-transition hooks.
+- **EXP-1 — PDF + DOCX export** ([PR #8](https://github.com/PietKonijn007/MeetingMinutesTaker/pull/8)): WeasyPrint PDF (with auto-install of native deps via `install.sh` + `DYLD_FALLBACK_LIBRARY_PATH` at runtime) and python-docx DOCX. Per-meeting exports via `GET /api/meetings/:id/export?format=...`. Bulk series exports via `GET /api/series/:id/export` → ZIP. `mm export` CLI with `--series=<id>` bulk mode. New `ExportMenu.svelte` dropdown on meeting detail.
+
 ---
 
 ## Security
@@ -124,7 +139,9 @@ The following local AI features have been implemented:
 
 ## Resilience & Robustness
 
-### R5: Health Check Endpoint
+### R5: Health Check Endpoint — **Superseded by HLT-1 (shipped [PR #4](https://github.com/PietKonijn007/MeetingMinutesTaker/pull/4))**
+
+> Batch 3 replaced this lightweight probe with a more thorough startup health check + `mm repair` self-repair flow. Endpoints: `GET /api/health/full` for the full check, `GET /healthz` preserved for simple liveness. See `specs/07-implementation-plan-batch3.md` — HLT-1 section.
 
 **Description**: `GET /api/health` returning system status — DB connectivity, disk space, model availability, last backup time.
 
@@ -200,7 +217,9 @@ def health_check():
 
 ---
 
-### N2: Voice Enrollment for Known Speakers
+### N2: Voice Enrollment for Known Speakers — **Superseded by SPK-1 (shipped [PR #5](https://github.com/PietKonijn007/MeetingMinutesTaker/pull/5))**
+
+> Batch 3 replaced the 30-second explicit-enrollment design with **passive centroid learning** — no dedicated recording step. Centroids are built from real meeting audio and improve after every meeting. See `specs/07-implementation-plan-batch3.md` — SPK-1 section. Data model: `person_voice_samples` table; match tiers: high (≥0.85), medium (0.70–0.85), unknown (<0.70).
 
 **Description**: Record 30-second voice samples of regular meeting attendees. Drops speaker identification error from ~15% to ~3%.
 
@@ -278,7 +297,9 @@ def health_check():
 
 ---
 
-### N9: Meeting-Over-Meeting Comparison
+### N9: Meeting-Over-Meeting Comparison — **Partially shipped by REC-1 ([PR #6](https://github.com/PietKonijn007/MeetingMinutesTaker/pull/6))**
+
+> REC-1 ships the core "recurring meetings grouped into a series" infrastructure: `meeting_series` table, cadence detection, `/series/:id` views with cross-meeting action items / decisions / recurring topics. The LLM-powered "What's new since last meeting?" diff view from this original spec is **not yet shipped** — it remains a follow-up.
 
 **Description**: For recurring meetings, show what changed: new blockers, resolved items, mood trajectory.
 
@@ -411,7 +432,9 @@ def health_check():
 
 ## Analytics & Insights
 
-### A1: Manager Dashboard
+### A1: Manager Dashboard — **Partially shipped by ANA-1 ([PR #6](https://github.com/PietKonijn007/MeetingMinutesTaker/pull/6))**
+
+> ANA-1 shipped four cross-meeting analytics panels on `/stats`: commitment completion rate per person, recurring unresolved topics, sentiment trends, and meeting-type effectiveness. The "most-met people" and generic "topic trends" charts from this original spec are covered by those four panels.
 
 **Description**: Meetings per week, time in meetings, action item completion rates, most-met people, topic trends.
 

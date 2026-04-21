@@ -180,7 +180,7 @@ mm actions complete <action_id>                   # Mark done
 | `mm rediarize <id>` | Re-run speaker diarization on existing audio (skips transcription) |
 | `mm status <id>` | Show per-stage pipeline state for a meeting (capture → transcribe → diarize → generate → ingest → embed → export) |
 | `mm resume <id>` | Resume pipeline from the first non-succeeded stage (supports `--from-stage`, `--all`) |
-| `mm doctor` | Run ten first-run diagnostic checks (Python, ffmpeg, audio device, tokens, LLM reachability, DB, disk, GPU, models, sqlite-vec). Supports `--json`. Exits non-zero on any failure. |
+| `mm doctor` | Run eleven first-run diagnostic checks (Python, ffmpeg, audio device, tokens, LLM reachability, DB, disk, GPU, models, sqlite-vec, WeasyPrint natives). Supports `--json`. Exits non-zero on any failure. |
 | `mm repair` | Run startup health checks and optionally rebuild derived indexes (FTS, embedding vectors, voice samples). Supports `--dry-run`, `--check=<name>`, `--yes`. |
 | `mm embed` | Generate semantic search embeddings for all meetings (run once to backfill) |
 | `mm embed <id>` | Embed a single meeting |
@@ -215,7 +215,7 @@ REST equivalents: `GET /api/meetings/:id/pipeline`, `POST /api/meetings/:id/resu
 
 ## First-run diagnostics (`/onboarding`)
 
-On first launch with an empty database, `mm serve` routes the browser to `/onboarding`, which calls `GET /api/doctor` and renders each of the ten checks as a green/yellow/red card with a copy-paste fix command. Every failing check has its own **Retry** button so you can fix the underlying issue and re-check without leaving the page. From the command line, `mm doctor` prints the same table; add `--json` for programmatic consumption.
+On first launch with an empty database, `mm serve` routes the browser to `/onboarding`, which calls `GET /api/doctor` and renders each of the eleven checks as a green/yellow/red card with a copy-paste fix command. Every failing check has its own **Retry** button so you can fix the underlying issue and re-check without leaving the page. From the command line, `mm doctor` prints the same table; add `--json` for programmatic consumption.
 
 ## Disk-space preflight (DSK-1)
 

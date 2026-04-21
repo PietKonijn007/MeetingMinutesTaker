@@ -22,6 +22,19 @@ This guide walks you through installing the system, setting up audio capture, co
 14. [Retention Policies](#14-retention-policies)
 15. [Troubleshooting](#15-troubleshooting)
 
+### Batch 3 features (shipped in Phases 0–4)
+
+16. [First-Run Onboarding (`mm doctor` / `/onboarding`)](#16-first-run-onboarding)
+17. [Pipeline Resume (`mm status` / `mm resume`)](#17-pipeline-resume)
+18. [Health Checks and Repair (`mm repair`)](#18-health-checks-and-repair)
+19. [Disk-Space Preflight and Advisory Cleanup](#19-disk-space-preflight)
+20. [Speaker Identity Learning (SPK-1)](#20-speaker-identity-learning)
+21. [Recurring Meetings and Series](#21-recurring-meetings-and-series)
+22. [Cross-Meeting Analytics](#22-cross-meeting-analytics)
+23. [Pre-Meeting Briefing (`/brief`)](#23-pre-meeting-briefing)
+24. [Desktop Notifications](#24-desktop-notifications)
+25. [Export to PDF and DOCX (`mm export`)](#25-export-to-pdf-and-docx)
+
 ---
 
 ## 1. Prerequisites
@@ -717,6 +730,46 @@ mm upgrade --branch main           # explicit
 mm upgrade --no-restart            # update code but don't restart service
 ```
 
+### 6.8 Batch 3 commands (Phases 0–4)
+
+These commands shipped with the Batch 3 feature set. See sections 16–25 at the end of this guide for workflow context.
+
+```bash
+# ── First-run diagnostics (ONB-1) ─────────────────────────────
+mm doctor                          # 11 health checks with pass/warn/fail status
+mm doctor --json                   # machine-readable for scripting
+
+# ── Health & repair (HLT-1) ───────────────────────────────────
+mm repair --dry-run                # see what would be repaired without writing
+mm repair                          # repair all failing checks (prompts before each)
+mm repair --check=<name>           # repair only one check (e.g. fts, embeddings)
+mm repair --yes                    # skip the per-check confirmation prompt
+
+# ── Pipeline state machine (PIP-1) ────────────────────────────
+mm status <meeting_id>             # per-stage pipeline state (colored)
+mm resume <meeting_id>             # resume from the first non-succeeded stage
+mm resume <meeting_id> --from-stage=generate   # force-start from a specific stage
+mm resume --all                    # resume every meeting with a failed stage
+
+# ── Recording with disk preflight (DSK-1) ─────────────────────
+mm record start --planned-minutes=90    # size preflight against 90-min recording
+mm record start --force                  # skip the preflight warning entirely
+
+# ── Recurring-meeting series (REC-1) ──────────────────────────
+mm series detect                   # one-shot detection across your archive
+mm series list                     # all series with attendee names + cadence
+mm series show <series_id>         # full series detail
+
+# ── Cross-meeting analytics (ANA-1) ───────────────────────────
+mm stats rebuild                   # rebuild the topic-clusters cache (Panel 2)
+
+# ── Export to PDF / DOCX / Markdown (EXP-1) ───────────────────
+mm export <meeting_id> --format=pdf
+mm export <meeting_id> --format=docx --with-transcript
+mm export <meeting_id> --format=md --out=/path/to/out.md
+mm export --series=<series_id> --format=pdf   # bulk → ZIP
+```
+
 ---
 
 ## 7. Using the Web UI
@@ -735,16 +788,20 @@ Open [http://localhost:8080](http://localhost:8080) in your browser. The API doc
 
 | Page | URL | What it shows |
 |------|-----|---------------|
+| **Onboarding** | `/onboarding` | 11 diagnostic checks with per-check retry and copy-paste fix hints. Auto-opens on first visit when the `meetings` table is empty. |
 | **Meetings** | `/` | Calendar view with day list and inline meeting detail. Filter by type, search. |
-| **Meeting Detail** | `/meeting/:id` | Full minutes, transcript with audio player, action items, decisions, tags. |
+| **Meeting Detail** | `/meeting/:id` | Full minutes, transcript with audio player, action items, decisions, tags. **Export dropdown** (Markdown / PDF / DOCX / Obsidian) next to the Regenerate button. Shows "Part of series: ... →" when the meeting belongs to a recurring series. |
 | **Action Items** | `/actions` | All action items across meetings. Filter by owner, status, overdue. Check items off. |
 | **Decisions** | `/decisions` | Chronological log of all decisions, grouped by date. |
+| **Series** | `/series` | All detected recurring meeting series. Shows title, cadence (weekly/biweekly/monthly), member count, and last meeting date. |
+| **Series Detail** | `/series/:id` | Timeline of all member meetings, cross-meeting action items, decisions, recurring topics, plus a "Export all meetings (ZIP)" bulk action. |
+| **Brief** | `/brief` | Pre-meeting briefing with six pure-query sections (who/when last, open commitments, unresolved topics, sentiment sparklines, recent decisions, context excerpts) plus a pinned Start Recording panel pre-filled with speakers (via SPK-1) and carry-over notes. |
 | **Chat** | `/chat` | Talk to your meetings — ask natural-language questions across all meeting history with citations. |
-| **People** | `/people` | Directory of everyone who has appeared in meetings, with meeting counts and action items. Click a person to edit, delete, or merge. |
-| **Stats** | `/stats` | Charts: meetings over time, distribution by type, action item velocity, time in meetings. |
-| **Record** | `/record` | Start/stop recording with live timer, audio levels, auto-detected device. Shows concurrent pipeline job status. |
+| **People** | `/people` | Directory of everyone who has appeared in meetings, with meeting counts and action items. Click a person to edit, delete, or merge. Each person page has a "Start a briefing →" link. |
+| **Stats** | `/stats` | Tabbed dashboard: Meetings (existing charts), Commitments (per-person action completion), Topics (recurring unresolved topics), Sentiment (per-person trends), Effectiveness (per-meeting-type). |
+| **Record** | `/record` | Start/stop recording with live timer, audio levels, auto-detected device. Pre-flight disk check warns if free space is tight and offers inline cleanup of the oldest audio files. Shows concurrent pipeline job status. |
 | **Templates** | `/templates` | View, edit, and create meeting prompt templates. Built-in templates are protected from deletion. |
-| **Settings** | `/settings` | Visual configuration editor for all settings (audio device, Whisper model, LLM, pipeline mode). |
+| **Settings** | `/settings` | Visual configuration editor for all settings (audio device, Whisper model, LLM, pipeline mode, notifications, brief summarization). |
 
 ### 7.3 Navigation
 
@@ -1182,6 +1239,342 @@ Or view the status in the web UI Settings > Retention section.
 
 ---
 
+## 16. First-Run Onboarding
+
+When you start `mm serve` for the first time on a fresh install, the web UI auto-redirects to `/onboarding` — a single page showing eleven diagnostic checks with color-coded status and copy-paste fix hints. It covers:
+
+1. Python version (needs 3.11+)
+2. `ffmpeg` on PATH
+3. BlackHole aggregate device present (macOS)
+4. HuggingFace token + pyannote model license accepted
+5. LLM provider reachable (dry-run completion)
+6. Database integrity (`PRAGMA integrity_check`)
+7. Free disk space vs. retention settings
+8. GPU detection (MPS / CUDA / CPU fallback)
+9. Whisper model files present
+10. `sqlite-vec` extension loadable
+11. **WeasyPrint native libs** loadable (for PDF export; warn-level because optional)
+
+Each failing check shows a hint — for example, missing `ffmpeg` gets `Run: brew install ffmpeg` with a clipboard-copy icon. A per-check "Retry" button re-runs just that check without reloading the page.
+
+### From the CLI
+
+```bash
+mm doctor           # prints the full table; exit 0 if no failures
+mm doctor --json    # machine-readable (used internally by /onboarding)
+```
+
+### When to revisit
+
+- After upgrading to a new major version (dependencies or models may have changed).
+- When something stops working — `mm doctor` is usually faster than reading logs.
+- Before re-enabling a disabled feature (e.g. flipping diarization on).
+
+The sidebar does not link to `/onboarding` by design; navigate to it directly when you need it.
+
+---
+
+## 17. Pipeline Resume
+
+The pipeline is split into seven stages: `capture → transcribe → diarize → generate → ingest → embed → export`. Each stage's state is persisted to a `pipeline_stages` table, so a crash, a killed process, or an LLM failure mid-run no longer wastes prior work.
+
+### Seeing per-meeting state
+
+```bash
+mm status <meeting_id>
+```
+
+Prints a table with stage, status (`pending | running | succeeded | failed | skipped`), attempt count, last error, and timestamps.
+
+### Resuming
+
+```bash
+mm resume <meeting_id>                         # from first non-succeeded stage
+mm resume <meeting_id> --from-stage=generate   # force from a specific stage
+mm resume --all                                # every meeting with a failed stage
+```
+
+`capture` never re-runs (audio can't be programmatically re-recorded); `transcribe` + `diarize` always re-run together if either needs it.
+
+### Automatic supervisor
+
+On server startup, any stage still marked `running` older than 30 minutes is flipped to `failed` with `last_error='interrupted'`. This happens automatically — the server logs `"Reset N interrupted pipeline stages"`. You then decide whether to resume.
+
+### API surface
+
+- `GET /api/meetings/:id/pipeline` — list per-stage state
+- `POST /api/meetings/:id/resume` — kicks off resume in the background (202 + `job_ref`)
+- `GET /api/pipeline/interrupted` — all meetings with any failed or pending stage
+
+### Interaction with retention
+
+Audio files for meetings whose pipeline hasn't reached a terminal state are **preserved** by retention cleanup, even if they'd otherwise be age-eligible for deletion. Once `ingest` (or a later stage) succeeds, normal retention resumes.
+
+---
+
+## 18. Health Checks and Repair
+
+`mm repair` runs the same six integrity checks that happen at server startup, and offers to fix the repairable ones.
+
+### The six checks
+
+1. `PRAGMA integrity_check` — full SQLite integrity. Repair is unsafe here; escalates to a warning.
+2. `meetings_fts` row count matches `meetings` — rebuilds the FTS index on repair.
+3. Every `embedding_chunks.chunk_id` has a matching `embedding_vectors` row — re-embeds orphans.
+4. Every final meeting has a minutes row — warn-only (LLM work required to fix).
+5. Every `audio_file_path` either exists on disk or retention deleted it — warn-only.
+6. Every `person_voice_samples.meeting_id` still exists — orphan cleanup.
+
+### Running it
+
+```bash
+mm repair --dry-run           # show the plan; no writes
+mm repair                     # prompt before each repair
+mm repair --yes               # repair all without prompting
+mm repair --check=fts         # repair a single named check
+```
+
+### API
+
+`GET /api/health/full` returns the full report as JSON. The startup supervisor logs the same summary; failed checks do **not** auto-repair — you decide via the CLI.
+
+### When to run it
+
+- After an unclean shutdown.
+- If search or chat starts returning stale results (FTS index drift).
+- After restoring from a backup.
+- Before filing a bug — a clean `mm repair --dry-run` output is often informative in itself.
+
+---
+
+## 19. Disk-Space Preflight
+
+Before recording starts (via the web UI or `mm record start`), the app checks free disk space against an estimate of how much a planned-length FLAC will consume. The default planned length is 60 minutes; override with `--planned-minutes`.
+
+### Tiers
+
+| Tier | Free vs. estimated | Behavior |
+|---|---|---|
+| green  | ≥ 2× | Silent start. |
+| yellow | 1.2–2× | Warning modal with top-20-oldest-audio cleanup table; user can "Start anyway". |
+| orange | 1–1.2× | Stronger warning with same cleanup UI; user can still start anyway. |
+| red    | < 1× | Double-confirm warning ("Yes, I understand"); still allows start. |
+
+The CLI adds one extra guardrail: **non-interactive** mode (launchd / systemd) refuses red-tier starts. Use `--force` to override.
+
+### Mid-recording watchdog
+
+While recording, a daemon thread polls free-disk-space every 30 seconds. If free space drops below `0.5 × remaining_estimated_size`, the recording triggers a **graceful stop** — flushes the audio buffer, closes the FLAC file cleanly, and marks the meeting with an early-stop reason.
+
+### Cleanup helper
+
+The web modal lists the 20 oldest audio files **from meetings whose pipeline has reached a terminal state** (safe to delete). Tick the checkboxes, click "Delete selected" — these call `DELETE /api/retention/audio` with the meeting-id list. Non-terminal meetings' audio is never offered for deletion.
+
+---
+
+## 20. Speaker Identity Learning
+
+The app learns each person's voice from the meetings you actually record. There is **no 30-second enrollment step**.
+
+### How it works
+
+1. **First meeting for a person.** You map `SPEAKER_XX → Jon` in the usual Transcript-tab speaker rename UI. The pyannote embedding for that cluster is persisted to `person_voice_samples` as Jon's first confirmed sample.
+2. **Subsequent meetings.** Each cluster's embedding is cosine-matched against every person's centroid (mean of their last 20 confirmed samples):
+   - **≥ 0.85** — name is **pre-filled** with a green "suggested" badge.
+   - **0.70 – 0.85** — name is pre-filled with a yellow "?" badge. Confirm with Save; correct by picking a different person.
+   - **< 0.70** — blank field, manual selection. For clusters with **> 30 seconds of speech** and no match at all, an inline "Create new person" form offers to add them on the spot.
+3. **You hit Save.** The suggestions you accept become confirmed samples; the centroid recomputes automatically on the next match.
+
+### Corrections are handled correctly
+
+If you relabel a cluster (say you accepted "Jon" but it was actually "Sarah"), the system flips the sample previously added under Jon to `confirmed=false` and writes a new confirmed sample under Sarah. Drift across meetings is bounded: only the 20 most-recent confirmed samples per person feed the centroid.
+
+### Cold start
+
+The first **~3 meetings** for a given person still need manual naming — you can't match against a centroid that doesn't exist yet.
+
+### Clusters the system ignores
+
+- **< 5 seconds of speech** — too noisy to produce a reliable embedding. No sample row is written, no suggestion is offered.
+
+### Backfilling existing meetings
+
+There is **no one-shot backfill command** yet. To seed centroids from meetings you recorded before SPK-1 shipped:
+
+1. `mm rediarize <meeting_id>` — re-runs pyannote on existing audio; SPK-1 now writes unconfirmed sample rows.
+2. Open the meeting in the web UI → Transcript tab → hit **Save** on the speaker names (they're pre-filled from the prior mapping). Save calls `PATCH /api/meetings/:id/transcript/speakers`, which confirms the samples.
+
+A dedicated `mm spk1 backfill` command is documented as a follow-up in `specs/07-implementation-plan-batch3.md`.
+
+---
+
+## 21. Recurring Meetings and Series
+
+The app automatically detects recurring meetings — same attendee set, same meeting type, same cadence — and groups them into a **series**. Your weekly 1:1 with Jon becomes one series containing 20 meetings rather than 20 independent rows.
+
+### When detection runs
+
+- **Automatically**, best-effort, after each pipeline completes (runs inside a try/except — failures never block the pipeline).
+- **On demand** via `mm series detect` or `POST /api/series/detect` — useful after a bulk import or when you want to re-detect immediately.
+
+### Detection heuristic
+
+- Group meetings by `(meeting_type, attendee_hash)` where `attendee_hash` is a stable hash of sorted attendee IDs.
+- Require **≥ 3 meetings** per group.
+- Require **exact attendee-set match**. (80% overlap matching is a documented follow-up.)
+- Cadence classified from the median inter-meeting interval: 5–10 days → weekly; 11–18 → biweekly; 24–35 → monthly; else → irregular.
+
+### CLI
+
+```bash
+mm series detect              # run detection; prints diff of what changed
+mm series list                # all series, sorted by last meeting
+mm series show <series_id>    # full detail
+```
+
+### Web UI
+
+- **Sidebar → Series** — lists every series with title, cadence, member count, last meeting date.
+- **`/series/:id`** — timeline of member meetings, cross-meeting action items, decisions, recurring topics, plus a bulk "Export all meetings (ZIP)" button.
+- **Meeting detail pages** — show "Part of series: ... →" when the meeting belongs to one.
+- **Series detail also links to `/brief`** — "Start a briefing for the next one →" deep-links with the series's attendees pre-filled.
+
+### API surface
+
+- `GET /api/series` — list all series
+- `GET /api/series/:id` — detail with aggregates
+- `POST /api/series/detect` — run detection now
+- `GET /api/meetings/:id/series` — the series this meeting belongs to, if any
+- `GET /api/series/:id/export?format=pdf` — bulk series export (ZIP)
+
+---
+
+## 22. Cross-Meeting Analytics
+
+The `/stats` page has a tab bar. The original "Meetings" tab (meetings-over-time, by-type donut, action velocity, top attendees) is unchanged. Four new tabs turn the archive from episodic into longitudinal:
+
+### Commitments
+
+Per-person action-item completion rate over a rolling window. For each person: assigned count, completed count, overdue count, completion rate, and a 12-week sparkline of completed-per-week. API: `GET /api/stats/commitments?days=90&meeting_type=one_on_one`.
+
+### Topics
+
+Recurring topics that have come up in **3 or more meetings** but have **no corresponding decision** recorded. Powered by sqlite-vec approximate nearest-neighbour clustering (cosine ≥ 0.8 between topic chunks; resolved-filter removes clusters where a decision within cosine ≥ 0.7 exists).
+
+Clusters are cached in `topic_clusters_cache` and rebuilt on page load when the cache is older than 24 h, or manually:
+
+```bash
+mm stats rebuild
+```
+
+If `sqlite-vec` isn't loadable on your install, this panel returns an empty list with a `disabled_reason` — everything else in `/stats` still works.
+
+### Sentiment
+
+Line chart of sentiment over time, one line per person or per meeting type. Sentiment strings from `StructuredMinutesResponse` are mapped to numeric scores: `positive=1.0, constructive=0.7, neutral=0.5, tense=0.3, negative=0.0`.
+
+### Effectiveness
+
+Bar chart per meeting type: % of meetings with each of the four boolean effectiveness flags (had clear agenda, decisions made, action items assigned, unresolved items).
+
+### Series-scoped analytics
+
+All four endpoints accept `?series=<series_id>` to restrict aggregation to the members of one series. The series detail page (`/series/:id`) can embed these panels scoped to the series.
+
+---
+
+## 23. Pre-Meeting Briefing
+
+The `/brief` page consolidates the archive around a specific upcoming meeting. Pass `?person=<id>` (repeatable) and optionally `&type=<meeting_type>`.
+
+### Six sections rendered (all pure queries — no LLM call by default)
+
+1. **Who & when last** — attendee cards, last meeting date, cadence; surfaces the `series_id` if the attendees match one.
+2. **Open commitments** — action items assigned to the attendees, overdue flagged.
+3. **Unresolved topics** — recent `parking_lot` entries involving the attendees, newest first.
+4. **Recent sentiment** — micro-trend sparklines over the last 5 meetings, per person.
+5. **Recent decisions** — decisions involving these attendees, with one-sentence rationale.
+6. **Context excerpts** — top-3 retrieved transcript chunks via the existing embedding engine (falls back to newest summary/discussion chunks when semantic search is unavailable).
+
+### Inline Start Recording panel (pinned footer)
+
+- Editable title (auto-generated: "1:1 with Jon — 2026-04-20")
+- Meeting-type dropdown (pre-selected from URL or inferred)
+- Attendee list **pre-filled with SPK-1 centroid suggestions** so you don't have to re-type names
+- Live-note textarea pre-seeded with a "Carry-forward" bullet list of open commitments
+- **Start recording** button → `POST /api/recording/start` → navigate to `/record`
+
+### Optional LLM summary
+
+Gated by config `brief.summarize_with_llm` (default `false`). When enabled, a single 2-sentence LLM synthesis runs and its output goes into an extra `summary` field.
+
+### Deep-links
+
+- `/people/:id` has a "Start a briefing →" button
+- `/series/:id` has a "Start a briefing for the next one →" button that passes all series attendees
+
+---
+
+## 24. Desktop Notifications
+
+On macOS, the app fires a native desktop notification when a pipeline stage reaches `succeeded` for the final stage (effectively "pipeline complete") or `failed` for any stage.
+
+### Config
+
+```yaml
+notifications:
+  enabled: true              # default true on macOS, false elsewhere
+  sound: true
+```
+
+### Behavior
+
+- Notification title: "Meeting ready: {title}" or "Pipeline failed: {title}"
+- Body shows duration + action-item count (complete) or stage + short error (failed)
+- Click URL opens `http://localhost:8080/meeting/{meeting_id}` in your default browser. A custom `mm://` scheme is a documented follow-up.
+- `pync` is lazy-imported and platform-gated — Linux/Windows no-op cleanly with an INFO log once.
+
+Notifications never block or raise into the pipeline (wrapped in try/except at every call site).
+
+---
+
+## 25. Export to PDF and DOCX
+
+Each meeting can be exported to **Markdown** (existing behavior), **PDF** (via WeasyPrint), or **DOCX** (via python-docx). A whole series can be exported to a ZIP.
+
+### From the CLI
+
+```bash
+mm export <meeting_id> --format=pdf
+mm export <meeting_id> --format=docx --with-transcript
+mm export <meeting_id> --format=md --out=/path/to/out.md
+mm export --series=<series_id> --format=pdf   # bulk → ZIP
+```
+
+Default output path: `data/exports/{YYYY-MM-DD}_{slug(title)}.{ext}`.
+
+### From the web UI
+
+- **Meeting detail page** has an **Export ▾** dropdown next to the Regenerate button with options for Markdown / PDF / DOCX / Obsidian, plus an "Include full transcript" toggle.
+- **Series detail page** has an "Export all meetings (ZIP)" button.
+
+### From the API
+
+- `GET /api/meetings/:id/export?format=pdf|docx|md&with_transcript=false|true` — streams the file
+- `GET /api/series/:id/export?format=pdf` — streams a ZIP
+
+### PDF — WeasyPrint native deps
+
+PDF export needs native `pango`, `cairo`, `gdk-pixbuf`, `libffi` on macOS. These are **installed automatically** by `install.sh` and `mm upgrade` via Homebrew, and `AppConfig.model_post_init()` sets `DYLD_FALLBACK_LIBRARY_PATH=/opt/homebrew/lib` (or `/usr/local/lib` on Intel Macs) at runtime. You shouldn't need to do anything manually.
+
+If the natives are somehow missing, the PDF endpoint returns a clean 501 with an install hint instead of crashing, and `mm doctor` check #11 flags it as a warning.
+
+### DOCX template
+
+If `templates/export/docx_template.docx` exists, python-docx inherits paragraph and heading styles from it — drop in your corporate template there. Otherwise, plain defaults are used. Action items render as a proper Word table with Description / Owner / Due / Priority / Status columns.
+
+---
+
 ## 14. Troubleshooting
 
 ### Audio issues
@@ -1249,3 +1642,23 @@ Or view the status in the web UI Settings > Retention section.
 | **Charts not rendering on Stats page** | Chart.js must be installed: `cd web && npm install`. If charts appear but are blank, there may be no meeting data yet — record a few meetings first. |
 | **Recording page shows "disconnected"** | The WebSocket connection to the server failed. Make sure `mm serve` is running. The page will auto-reconnect when the server comes back. |
 | **Settings don't save** | Check that `config/config.yaml` is writable. The API writes changes to the YAML file on disk. |
+
+### Batch 3 features
+
+| Problem | Solution |
+|---------|----------|
+| **Meeting is stuck — `mm status` shows `generate` as `running` for hours** | Server probably crashed. Restart `mm serve`; the supervisor will flip stale `running` rows (>30 min old) to `failed/interrupted`. Then: `mm resume <meeting_id>`. |
+| **Search returns stale or missing results after a crash** | FTS index may have drifted. Run `mm repair --dry-run` first to see, then `mm repair` to rebuild `meetings_fts`. |
+| **Chat / semantic search stops working** | Embedding vectors may have orphaned. `mm repair` — check 3 re-embeds any missing chunks. |
+| **Recording won't start — red-tier disk warning** | Free disk space is below planned recording size. Either use the inline cleanup modal to delete old audio, or pass `--force` to start anyway. For launchd-managed services, add `--force` to the service config if intentional. |
+| **`mm doctor` says pyannote license not accepted** | Visit the three model pages listed in section 5.4 and accept each. Re-run `mm doctor`. |
+| **`mm doctor` fails check 5 (LLM provider)** | Provider is unreachable. For Anthropic/OpenAI: verify API key env var is set. For Ollama: confirm `ollama serve` is running at the configured URL. |
+| **Speaker suggestions never appear** | Cold start — need ≥ 3 confirmed meetings for a person before suggestions trigger. After that, check the Transcript tab; high-confidence matches show a green "suggested" badge on the dropdown. |
+| **Wrong speaker suggestion sticks across meetings** | Relabel the cluster (pick the correct person in the dropdown). This automatically invalidates the wrong sample and writes a new one under the correct person — the next meeting's suggestion will use the corrected centroid. |
+| **`mm series detect` finds no series** | Need ≥ 3 meetings with **exact** same attendee set + same meeting type. Check the People page for duplicate persons (same person, two entries) and merge them first — duplicates break the attendee-set match. |
+| **`/stats` Topics panel shows "sqlite-vec not available"** | The extension isn't loading. Try `pip install -e .` to rebuild. Fallback: the other three analytics tabs still work. |
+| **`/stats` Topics panel is empty** | Expected if you haven't accumulated 3+ meetings discussing the same subject without a decision. Also try `mm stats rebuild` to force a cache refresh. |
+| **PDF export returns 501** | WeasyPrint native libs missing. On macOS, run `mm upgrade` (which now auto-installs `pango cairo gdk-pixbuf libffi`) or manually: `brew install pango cairo gdk-pixbuf libffi`. Verify with `mm doctor` — check 11 should show green. |
+| **PDF export fails silently / empty file** | Check the server logs — WeasyPrint may have crashed on specific content. Try `--with-transcript=false` to narrow it down. Markdown and DOCX exports don't have native deps and are good fallbacks. |
+| **No desktop notification after pipeline completes** | On macOS only; confirm `notifications.enabled: true` in config. First-time setup may need to approve notifications in System Settings → Notifications → Terminal/Python. On non-macOS, notifications no-op (a web-UI toast mirror is a documented follow-up). |
+| **Export dropdown hidden / clipped at bottom of viewport** | Fixed in a recent release — the menu now flips upward automatically when space-below is tight. If you're on an older build, run `mm upgrade`. |
