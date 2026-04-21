@@ -566,7 +566,7 @@
         <!-- Meeting type picker -->
         <div class="mb-3">
           <label for="meeting-type" class="block text-xs font-medium text-[var(--text-secondary)] mb-1">
-            Meeting Type (optional — overrides auto-classification)
+            What kind of meeting is this?
           </label>
           <select
             id="meeting-type"
@@ -575,7 +575,7 @@
                    text-[var(--text-primary)] text-sm focus:outline-none focus:ring-2 focus:ring-[var(--accent)]
                    focus:border-transparent"
           >
-            <option value="">Auto-detect (use classifier)</option>
+            <option value="">Figure it out for me</option>
             {#each MEETING_TYPE_GROUPS as group}
               <optgroup label={group.group}>
                 {#each group.items as t}
@@ -585,34 +585,37 @@
             {/each}
           </select>
           <p class="text-xs text-[var(--text-muted)] mt-1">
-            Pick a template to force the meeting type. Leave on auto-detect to let the classifier decide.
+            Picking the right kind gives you tailored minutes (different structure for a 1-on-1 vs. a board meeting). Not sure? Leave it on "Figure it out for me".
           </p>
         </div>
 
         <!-- Speaker names -->
         <div class="mb-3">
           <label for="speaker-names" class="block text-xs font-medium text-[var(--text-secondary)] mb-1">
-            Speaker Names (comma-separated — helps identify who said what)
+            Who's in the meeting?
           </label>
           <input
             id="speaker-names"
             bind:value={speakerNames}
-            placeholder="e.g., Alice, Bob, Carol"
+            placeholder="Alice, Bob, Carol"
             class="w-full px-3 py-2 bg-[var(--bg-primary)] border border-[var(--border-subtle)] rounded-lg
                    text-[var(--text-primary)] text-sm focus:outline-none focus:ring-2 focus:ring-[var(--accent)]
                    focus:border-transparent placeholder-[var(--text-muted)]"
           />
+          <p class="text-xs text-[var(--text-muted)] mt-1">
+            Names separated by commas — helps us label who said what.
+          </p>
         </div>
 
         <!-- Meeting notes -->
         <div>
           <label for="meeting-notes" class="block text-xs font-medium text-[var(--text-secondary)] mb-1">
-            Meeting Notes (markdown — will be merged with transcript for better minutes)
+            Your notes
           </label>
           <textarea
             id="meeting-notes"
             bind:value={meetingNotes}
-            placeholder="Type your notes here as the meeting happens...&#10;&#10;- Key point discussed&#10;- Action item for Bob&#10;- Decision: go with option A"
+            placeholder="Jot things down as the meeting happens...&#10;&#10;- Key point discussed&#10;- Action for Bob&#10;- Decision: go with option A"
             rows="8"
             class="w-full px-3 py-2 bg-[var(--bg-primary)] border border-[var(--border-subtle)] rounded-lg
                    text-[var(--text-primary)] text-sm font-mono leading-relaxed
@@ -620,14 +623,14 @@
                    focus:border-transparent placeholder-[var(--text-muted)] resize-y"
           ></textarea>
           <p class="text-xs text-[var(--text-muted)] mt-1">
-            Your notes will appear in the meeting minutes and enhance the AI-generated content.
+            We'll blend your notes into the final minutes so nothing important gets missed.
           </p>
         </div>
 
         <!-- Custom LLM instructions -->
         <div class="mt-3 pt-3 border-t border-[var(--border-subtle)]">
           <label for="custom-instructions" class="block text-xs font-medium text-[var(--text-secondary)] mb-1">
-            Custom Instructions for AI (optional — tell the AI what to focus on)
+            Anything specific to focus on? <span class="text-[var(--text-muted)] font-normal">(optional)</span>
           </label>
           <textarea
             id="custom-instructions"
@@ -640,7 +643,7 @@
                    focus:border-transparent placeholder-[var(--text-muted)] resize-y"
           ></textarea>
           <p class="text-xs text-[var(--text-muted)] mt-1">
-            These instructions are added to the AI prompt — use them to steer what the minutes focus on.
+            Tell us what matters most — we'll lean the minutes that way.
           </p>
         </div>
       </div>
