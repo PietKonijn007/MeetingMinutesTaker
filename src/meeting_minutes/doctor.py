@@ -82,7 +82,10 @@ def check_ffmpeg() -> CheckResult:
 
 
 def check_blackhole_device() -> CheckResult:
-    """Check 3 — BlackHole aggregate device present (macOS only)."""
+    """Check 3 — virtual loopback capture device present (macOS only).
+
+    Accepts BlackHole-based aggregate devices or Rogue Amoeba Loopback devices.
+    """
     if platform.system() != "Darwin":
         return CheckResult(
             name="meeting_capture_device",
@@ -103,17 +106,22 @@ def check_blackhole_device() -> CheckResult:
 
     names = [d["name"].lower() for d in devices]
     for n in names:
-        if "meeting capture" in n or "meetingcapture" in n or "blackhole" in n:
+        if (
+            "meeting capture" in n
+            or "meetingcapture" in n
+            or "blackhole" in n
+            or "loopback" in n
+        ):
             return CheckResult(
                 name="meeting_capture_device",
                 status="ok",
-                detail="Meeting Capture / BlackHole device available",
+                detail="Meeting Capture / BlackHole / Loopback device available",
             )
     return CheckResult(
         name="meeting_capture_device",
         status="fail",
-        detail="No Meeting Capture / BlackHole aggregate device found",
-        fix_hint="Re-run install.sh to configure Meeting Capture device",
+        detail="No Meeting Capture, BlackHole, or Loopback device found",
+        fix_hint="Re-run install.sh for BlackHole, or configure a Rogue Amoeba Loopback device (see docs/USER_GUIDE.md §3)",
         fix_command="./install.sh",
     )
 

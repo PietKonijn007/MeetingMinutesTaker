@@ -85,6 +85,15 @@ def test_blackhole_missing(monkeypatch):
     assert "install.sh" in result.fix_command
 
 
+def test_loopback_device_accepted(monkeypatch):
+    """Rogue Amoeba Loopback device should count as a valid capture device."""
+    monkeypatch.setattr(doctor.platform, "system", lambda: "Darwin")
+    fake_sd = SimpleNamespace(query_devices=lambda: [{"name": "Loopback Audio"}])
+    monkeypatch.setitem(sys.modules, "sounddevice", fake_sd)
+    result = doctor.check_blackhole_device()
+    assert result.status == "ok"
+
+
 # ---------------------------------------------------------------------------
 # HF token
 # ---------------------------------------------------------------------------

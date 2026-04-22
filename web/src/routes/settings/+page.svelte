@@ -59,6 +59,48 @@
   let obsidian_vault_path = $state('');
   let testing_obsidian = $state(false);
 
+  // Transcription extras
+  let transcription_custom_vocabulary = $state('');
+
+  // LLM extras
+  let llm_fallback_provider = $state('');           // '' = disabled
+  let llm_fallback_model = $state('');
+  let llm_retry_attempts = $state(3);
+  let llm_timeout_seconds = $state(120);
+  let llm_ollama_base_url = $state('http://localhost:11434');
+  let llm_ollama_timeout_seconds = $state(300);
+
+  // Minutes generation (non-LLM)
+  let gen_length_mode = $state('concise');
+  let gen_generate_email_draft = $state(true);
+  let gen_confidentiality_default = $state('auto');
+  let gen_close_acknowledged_actions = $state(true);
+  let gen_prior_actions_lookback = $state(5);
+  let gen_vendors_text = $state('');                // newline-separated
+  let gen_templates_dir = $state('templates');
+
+  // Briefing
+  let brief_summarize_with_llm = $state(false);
+
+  // Notifications
+  let notifications_enabled = $state(null);         // null = auto
+  let notifications_sound = $state(true);
+  let notifications_click_url_base = $state('http://localhost:8080/meeting');
+
+  // Export
+  let export_default_out_dir = $state('data/exports');
+
+  // Advanced (requires service restart)
+  let advanced_open = $state(false);
+  let log_level = $state('INFO');
+  let api_host = $state('127.0.0.1');
+  let api_port = $state(8080);
+  let api_cors_text = $state('');                   // newline-separated
+  let disk_default_planned_minutes = $state(60);
+  let disk_flac_compression_factor = $state(0.6);
+  let disk_watchdog_interval_seconds = $state(30);
+  let disk_watchdog_graceful_stop_factor = $state(0.5);
+
   // Custom models (successfully used, loaded from API)
   let custom_models = $state({ anthropic: [], openai: [], openrouter: [], ollama: [] });
   let llm_custom_model = $state('');  // text input for typing a custom model
@@ -196,6 +238,53 @@
 
         const perf = c.performance || {};
         perf_pytorch_mps_fallback = perf.pytorch_mps_fallback !== false;
+
+        // Transcription extras
+        transcription_custom_vocabulary = t.custom_vocabulary ?? '';
+
+        // LLM extras
+        llm_fallback_provider = llm.fallback_provider ?? '';
+        llm_fallback_model = llm.fallback_model ?? '';
+        llm_retry_attempts = llm.retry_attempts ?? 3;
+        llm_timeout_seconds = llm.timeout_seconds ?? 120;
+        const ol = llm.ollama || {};
+        llm_ollama_base_url = ol.base_url || 'http://localhost:11434';
+        llm_ollama_timeout_seconds = ol.timeout_seconds ?? 300;
+
+        // Minutes generation (non-LLM)
+        gen_length_mode = g.length_mode || 'concise';
+        gen_generate_email_draft = g.generate_email_draft !== false;
+        gen_confidentiality_default = g.confidentiality_default || 'auto';
+        gen_close_acknowledged_actions = g.close_acknowledged_actions !== false;
+        gen_prior_actions_lookback = g.prior_actions_lookback_meetings ?? 5;
+        gen_vendors_text = Array.isArray(g.vendors) ? g.vendors.join('\n') : '';
+        gen_templates_dir = g.templates_dir || 'templates';
+
+        // Briefing
+        const br = c.brief || {};
+        brief_summarize_with_llm = br.summarize_with_llm === true;
+
+        // Notifications
+        const nt = c.notifications || {};
+        notifications_enabled = nt.enabled;           // may be null for auto
+        notifications_sound = nt.sound !== false;
+        notifications_click_url_base = nt.click_url_base || 'http://localhost:8080/meeting';
+
+        // Export
+        const ex = c.export || {};
+        export_default_out_dir = ex.default_out_dir || 'data/exports';
+
+        // Advanced
+        log_level = c.log_level || 'INFO';
+        const ap = c.api || {};
+        api_host = ap.host || '127.0.0.1';
+        api_port = ap.port || 8080;
+        api_cors_text = Array.isArray(ap.cors_origins) ? ap.cors_origins.join('\n') : '';
+        const dk = c.disk || {};
+        disk_default_planned_minutes = dk.default_planned_minutes ?? 60;
+        disk_flac_compression_factor = dk.flac_compression_factor ?? 0.6;
+        disk_watchdog_interval_seconds = dk.watchdog_interval_seconds ?? 30;
+        disk_watchdog_graceful_stop_factor = dk.watchdog_graceful_stop_factor ?? 0.5;
       }
 
       // Load custom models
@@ -239,8 +328,14 @@
   async function saveConfig() {
     saving = true;
     try {
+      const vendors = gen_vendors_text
+        .split('\n').map(s => s.trim()).filter(Boolean);
+      const cors = api_cors_text
+        .split('\n').map(s => s.trim()).filter(Boolean);
+
       await api.updateConfig({
         data_dir: storage_data_dir,
+        log_level: log_level,
         recording: {
           audio_device: recording_device,
           sample_rate: recording_sample_rate,
@@ -249,7 +344,8 @@
         transcription: {
           primary_engine: transcription_engine,
           whisper_model: transcription_model,
-          language: transcription_language
+          language: transcription_language,
+          custom_vocabulary: transcription_custom_vocabulary.trim() || null
         },
         diarization: {
           enabled: diarization_enabled
@@ -258,9 +354,27 @@
           llm: {
             primary_provider: llm_provider,
             model: llm_model,
+            fallback_provider: llm_fallback_provider || null,
+            fallback_model: llm_fallback_model.trim() || null,
             temperature: llm_temperature,
-            max_output_tokens: llm_max_tokens
-          }
+            max_output_tokens: llm_max_tokens,
+            retry_attempts: llm_retry_attempts,
+            timeout_seconds: llm_timeout_seconds,
+            ollama: {
+              base_url: llm_ollama_base_url,
+              timeout_seconds: llm_ollama_timeout_seconds
+            }
+          },
+          templates_dir: gen_templates_dir,
+          vendors: vendors,
+          length_mode: gen_length_mode,
+          generate_email_draft: gen_generate_email_draft,
+          confidentiality_default: gen_confidentiality_default,
+          close_acknowledged_actions: gen_close_acknowledged_actions,
+          prior_actions_lookback_meetings: gen_prior_actions_lookback
+        },
+        brief: {
+          summarize_with_llm: brief_summarize_with_llm
         },
         pipeline: {
           mode: pipeline_mode
@@ -273,9 +387,22 @@
           backup_dir: backup_dir,
           interval_hours: backup_interval
         },
+        export: {
+          default_out_dir: export_default_out_dir
+        },
         obsidian: {
           enabled: obsidian_enabled,
           vault_path: obsidian_vault_path
+        },
+        notifications: {
+          enabled: notifications_enabled,
+          sound: notifications_sound,
+          click_url_base: notifications_click_url_base
+        },
+        api: {
+          host: api_host,
+          port: api_port,
+          cors_origins: cors
         },
         security: {
           encryption_enabled: security_encryption_enabled,
@@ -289,6 +416,12 @@
         },
         performance: {
           pytorch_mps_fallback: perf_pytorch_mps_fallback
+        },
+        disk: {
+          default_planned_minutes: disk_default_planned_minutes,
+          flac_compression_factor: disk_flac_compression_factor,
+          watchdog_interval_seconds: disk_watchdog_interval_seconds,
+          watchdog_graceful_stop_factor: disk_watchdog_graceful_stop_factor
         }
       });
       addToast('Settings saved', 'success');
@@ -297,6 +430,11 @@
     } finally {
       saving = false;
     }
+  }
+
+  async function reloadConfig() {
+    await loadConfig();
+    addToast('Reloaded from config.yaml', 'info');
   }
 
   onMount(loadConfig);
@@ -433,6 +571,18 @@
                      focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
             />
             <p class="text-xs text-[var(--text-muted)] mt-1">ISO 639-1 code (e.g., en, es, fr). Leave blank for auto-detect.</p>
+          </div>
+
+          <div>
+            <label class="block text-sm font-medium text-[var(--text-primary)] mb-1">Custom Vocabulary File</label>
+            <input
+              type="text"
+              bind:value={transcription_custom_vocabulary}
+              placeholder="(optional) path/to/vocabulary.txt"
+              class="w-full px-3 py-2 bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg text-sm text-[var(--text-primary)] font-mono
+                     focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
+            />
+            <p class="text-xs text-[var(--text-muted)] mt-1">Newline-separated custom terms (company names, jargon, acronyms). Leave blank to disable.</p>
           </div>
         </div>
       </section>
@@ -716,7 +866,203 @@
                      focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
             />
           </div>
+
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="block text-sm font-medium text-[var(--text-primary)] mb-1">Retry Attempts</label>
+              <input
+                type="number"
+                bind:value={llm_retry_attempts}
+                min="0" max="10" step="1"
+                class="w-full px-3 py-2 bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg text-sm text-[var(--text-primary)]
+                       focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
+              />
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-[var(--text-primary)] mb-1">Timeout (seconds)</label>
+              <input
+                type="number"
+                bind:value={llm_timeout_seconds}
+                min="10" max="600" step="10"
+                class="w-full px-3 py-2 bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg text-sm text-[var(--text-primary)]
+                       focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
+              />
+            </div>
+          </div>
+
+          <div class="pt-2 border-t border-[var(--border-subtle)]">
+            <p class="text-sm font-medium text-[var(--text-primary)] mb-2">Fallback Provider</p>
+            <p class="text-xs text-[var(--text-muted)] mb-2">Used if the primary provider fails after all retries.</p>
+            <div class="grid grid-cols-2 gap-3">
+              <select
+                bind:value={llm_fallback_provider}
+                class="w-full px-3 py-2 bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg text-sm text-[var(--text-primary)]
+                       focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
+              >
+                <option value="">Disabled</option>
+                <option value="anthropic">Anthropic</option>
+                <option value="openai">OpenAI</option>
+                <option value="openrouter">OpenRouter</option>
+                <option value="ollama">Ollama (local)</option>
+              </select>
+              <input
+                type="text"
+                bind:value={llm_fallback_model}
+                placeholder="fallback model id"
+                disabled={!llm_fallback_provider}
+                class="w-full px-3 py-2 bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg text-sm text-[var(--text-primary)] font-mono
+                       focus:outline-none focus:ring-2 focus:ring-[var(--accent)] disabled:opacity-50"
+              />
+            </div>
+          </div>
+
+          {#if llm_provider === 'ollama' || llm_fallback_provider === 'ollama'}
+            <div class="pt-2 border-t border-[var(--border-subtle)]">
+              <p class="text-sm font-medium text-[var(--text-primary)] mb-2">Ollama Server</p>
+              <div class="grid grid-cols-2 gap-3">
+                <div>
+                  <label class="block text-xs text-[var(--text-muted)] mb-1">Base URL</label>
+                  <input
+                    type="text"
+                    bind:value={llm_ollama_base_url}
+                    placeholder="http://localhost:11434"
+                    class="w-full px-3 py-2 bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg text-sm text-[var(--text-primary)] font-mono
+                           focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
+                  />
+                </div>
+                <div>
+                  <label class="block text-xs text-[var(--text-muted)] mb-1">Timeout (seconds)</label>
+                  <input
+                    type="number"
+                    bind:value={llm_ollama_timeout_seconds}
+                    min="30" max="1800" step="30"
+                    class="w-full px-3 py-2 bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg text-sm text-[var(--text-primary)]
+                           focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
+                  />
+                </div>
+              </div>
+              <p class="text-xs text-[var(--text-muted)] mt-1">Local models can be slow — give them a generous timeout.</p>
+            </div>
+          {/if}
         </div>
+      </section>
+
+      <!-- Minutes Content -->
+      <section>
+        <h2 class="text-lg font-semibold text-[var(--text-primary)] mb-1">Minutes Content</h2>
+        <p class="text-sm text-[var(--text-muted)] mb-4">Controls what the generated minutes include and how verbose they are.</p>
+
+        <div class="space-y-4">
+          <div>
+            <label class="block text-sm font-medium text-[var(--text-primary)] mb-1">Length Mode</label>
+            <select
+              bind:value={gen_length_mode}
+              class="w-full px-3 py-2 bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg text-sm text-[var(--text-primary)]
+                     focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
+            >
+              <option value="concise">Concise (~150–400 words, TL;DR-first) — recommended</option>
+              <option value="standard">Standard (~400–900 words)</option>
+              <option value="verbose">Verbose (~900–1500 words)</option>
+            </select>
+          </div>
+
+          <div>
+            <label class="block text-sm font-medium text-[var(--text-primary)] mb-1">Default Confidentiality</label>
+            <select
+              bind:value={gen_confidentiality_default}
+              class="w-full px-3 py-2 bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg text-sm text-[var(--text-primary)]
+                     focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
+            >
+              <option value="auto">Auto (LLM classifies)</option>
+              <option value="public">Public</option>
+              <option value="internal">Internal</option>
+              <option value="confidential">Confidential</option>
+              <option value="restricted">Restricted</option>
+            </select>
+            <p class="text-xs text-[var(--text-muted)] mt-1">Floor for confidentiality labelling on generated minutes.</p>
+          </div>
+
+          <label class="flex items-start gap-3 cursor-pointer">
+            <input
+              type="checkbox"
+              bind:checked={gen_generate_email_draft}
+              class="mt-0.5 w-4 h-4 rounded border-[var(--border-subtle)] text-[var(--accent)]
+                     focus:ring-[var(--accent)] focus:ring-2"
+            />
+            <div>
+              <span class="text-sm font-medium text-[var(--text-primary)]">Generate follow-up email draft</span>
+              <p class="text-xs text-[var(--text-muted)]">Emit a ready-to-send email draft section per meeting.</p>
+            </div>
+          </label>
+
+          <label class="flex items-start gap-3 cursor-pointer">
+            <input
+              type="checkbox"
+              bind:checked={gen_close_acknowledged_actions}
+              class="mt-0.5 w-4 h-4 rounded border-[var(--border-subtle)] text-[var(--accent)]
+                     focus:ring-[var(--accent)] focus:ring-2"
+            />
+            <div>
+              <span class="text-sm font-medium text-[var(--text-primary)]">Close acknowledged prior actions</span>
+              <p class="text-xs text-[var(--text-muted)]">Auto-close open action items from earlier meetings when acknowledged done.</p>
+            </div>
+          </label>
+
+          <div>
+            <label class="block text-sm font-medium text-[var(--text-primary)] mb-1">Prior actions lookback (meetings)</label>
+            <input
+              type="number"
+              bind:value={gen_prior_actions_lookback}
+              min="0" max="20" step="1"
+              class="w-full px-3 py-2 bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg text-sm text-[var(--text-primary)]
+                     focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
+            />
+            <p class="text-xs text-[var(--text-muted)] mt-1">How many previous meetings to scan for open actions.</p>
+          </div>
+
+          <div>
+            <label class="block text-sm font-medium text-[var(--text-primary)] mb-1">Vendors</label>
+            <textarea
+              bind:value={gen_vendors_text}
+              rows="3"
+              placeholder="AWS&#10;NetApp"
+              class="w-full px-3 py-2 bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg text-sm text-[var(--text-primary)] font-mono
+                     focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
+            ></textarea>
+            <p class="text-xs text-[var(--text-muted)] mt-1">One vendor name per line. Each gets a service-feedback sub-section in the template.</p>
+          </div>
+
+          <div>
+            <label class="block text-sm font-medium text-[var(--text-primary)] mb-1">Templates Directory</label>
+            <input
+              type="text"
+              bind:value={gen_templates_dir}
+              placeholder="templates"
+              class="w-full px-3 py-2 bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg text-sm text-[var(--text-primary)] font-mono
+                     focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
+            />
+            <p class="text-xs text-[var(--text-muted)] mt-1">Directory containing .md.j2 Jinja templates.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- Briefing -->
+      <section>
+        <h2 class="text-lg font-semibold text-[var(--text-primary)] mb-1">Pre-meeting Briefing</h2>
+        <p class="text-sm text-[var(--text-muted)] mb-4">Settings for the per-meeting briefing page.</p>
+
+        <label class="flex items-start gap-3 cursor-pointer">
+          <input
+            type="checkbox"
+            bind:checked={brief_summarize_with_llm}
+            class="mt-0.5 w-4 h-4 rounded border-[var(--border-subtle)] text-[var(--accent)]
+                   focus:ring-[var(--accent)] focus:ring-2"
+          />
+          <div>
+            <span class="text-sm font-medium text-[var(--text-primary)]">Summarize briefing with LLM</span>
+            <p class="text-xs text-[var(--text-muted)]">Run a two-sentence LLM synthesis over the briefing sections. Off by default (DB-only).</p>
+          </div>
+        </label>
       </section>
 
       <!-- Pipeline -->
@@ -1096,6 +1442,191 @@
         </div>
       </section>
 
+      <!-- Notifications -->
+      <section>
+        <h2 class="text-lg font-semibold text-[var(--text-primary)] mb-1">Notifications</h2>
+        <p class="text-sm text-[var(--text-muted)] mb-4">Desktop notifications on pipeline events (macOS only).</p>
+
+        <div class="space-y-4">
+          <div>
+            <label class="block text-sm font-medium text-[var(--text-primary)] mb-1">Enabled</label>
+            <select
+              value={notifications_enabled === null ? 'auto' : notifications_enabled ? 'on' : 'off'}
+              onchange={(e) => {
+                const v = e.target.value;
+                notifications_enabled = v === 'auto' ? null : v === 'on';
+              }}
+              class="w-full px-3 py-2 bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg text-sm text-[var(--text-primary)]
+                     focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
+            >
+              <option value="auto">Auto (on for macOS, off elsewhere)</option>
+              <option value="on">Always on</option>
+              <option value="off">Always off</option>
+            </select>
+          </div>
+
+          <label class="flex items-start gap-3 cursor-pointer">
+            <input
+              type="checkbox"
+              bind:checked={notifications_sound}
+              class="mt-0.5 w-4 h-4 rounded border-[var(--border-subtle)] text-[var(--accent)]
+                     focus:ring-[var(--accent)] focus:ring-2"
+            />
+            <div>
+              <span class="text-sm font-medium text-[var(--text-primary)]">Play sound</span>
+              <p class="text-xs text-[var(--text-muted)]">Play the default notification sound.</p>
+            </div>
+          </label>
+
+          <div>
+            <label class="block text-sm font-medium text-[var(--text-primary)] mb-1">Click URL base</label>
+            <input
+              type="text"
+              bind:value={notifications_click_url_base}
+              placeholder="http://localhost:8080/meeting"
+              class="w-full px-3 py-2 bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg text-sm text-[var(--text-primary)] font-mono
+                     focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
+            />
+            <p class="text-xs text-[var(--text-muted)] mt-1">Meeting ID is appended to this URL when the user clicks a notification.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- Export -->
+      <section>
+        <h2 class="text-lg font-semibold text-[var(--text-primary)] mb-1">Export</h2>
+        <p class="text-sm text-[var(--text-muted)] mb-4">Default output location for CLI exports (PDF, DOCX, Obsidian).</p>
+
+        <div>
+          <label class="block text-sm font-medium text-[var(--text-primary)] mb-1">Default Output Directory</label>
+          <input
+            type="text"
+            bind:value={export_default_out_dir}
+            placeholder="data/exports"
+            class="w-full px-3 py-2 bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg text-sm text-[var(--text-primary)] font-mono
+                   focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
+          />
+          <p class="text-xs text-[var(--text-muted)] mt-1">Relative paths resolve against <code class="text-[11px]">data_dir</code>.</p>
+        </div>
+      </section>
+
+      <!-- Advanced -->
+      <section>
+        <button
+          type="button"
+          onclick={() => (advanced_open = !advanced_open)}
+          class="w-full flex items-center justify-between text-left"
+        >
+          <h2 class="text-lg font-semibold text-[var(--text-primary)] mb-1">Advanced</h2>
+          <span class="text-sm text-[var(--text-muted)]">{advanced_open ? '▾' : '▸'}</span>
+        </button>
+        <p class="text-sm text-[var(--text-muted)] mb-4">Infrastructure settings. Changes to server bindings, log level, and disk tuning require a service restart.</p>
+
+        {#if advanced_open}
+          <div class="space-y-4 p-4 bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg">
+
+            <div>
+              <label class="block text-sm font-medium text-[var(--text-primary)] mb-1">Log level</label>
+              <select
+                bind:value={log_level}
+                class="w-full px-3 py-2 bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg text-sm text-[var(--text-primary)]
+                       focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
+              >
+                <option value="DEBUG">DEBUG</option>
+                <option value="INFO">INFO</option>
+                <option value="WARNING">WARNING</option>
+                <option value="ERROR">ERROR</option>
+              </select>
+            </div>
+
+            <div class="pt-2 border-t border-[var(--border-subtle)]">
+              <p class="text-sm font-medium text-[var(--text-primary)] mb-2">HTTP Server</p>
+              <p class="text-xs text-yellow-600 dark:text-yellow-400 mb-2">Changing host/port/CORS requires restarting <code>mm serve</code>.</p>
+              <div class="grid grid-cols-2 gap-3">
+                <div>
+                  <label class="block text-xs text-[var(--text-muted)] mb-1">Host</label>
+                  <input
+                    type="text"
+                    bind:value={api_host}
+                    placeholder="127.0.0.1"
+                    class="w-full px-3 py-2 bg-[var(--bg-elevated)] border border-[var(--border-subtle)] rounded-lg text-sm text-[var(--text-primary)] font-mono
+                           focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
+                  />
+                </div>
+                <div>
+                  <label class="block text-xs text-[var(--text-muted)] mb-1">Port</label>
+                  <input
+                    type="number"
+                    bind:value={api_port}
+                    min="1" max="65535" step="1"
+                    class="w-full px-3 py-2 bg-[var(--bg-elevated)] border border-[var(--border-subtle)] rounded-lg text-sm text-[var(--text-primary)]
+                           focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
+                  />
+                </div>
+              </div>
+              <div class="mt-2">
+                <label class="block text-xs text-[var(--text-muted)] mb-1">CORS origins (one per line)</label>
+                <textarea
+                  bind:value={api_cors_text}
+                  rows="4"
+                  placeholder="http://localhost:8080"
+                  class="w-full px-3 py-2 bg-[var(--bg-elevated)] border border-[var(--border-subtle)] rounded-lg text-sm text-[var(--text-primary)] font-mono
+                         focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
+                ></textarea>
+              </div>
+            </div>
+
+            <div class="pt-2 border-t border-[var(--border-subtle)]">
+              <p class="text-sm font-medium text-[var(--text-primary)] mb-2">Disk Watchdog</p>
+              <p class="text-xs text-[var(--text-muted)] mb-2">Pre-flight disk space + mid-recording watchdog tuning.</p>
+              <div class="grid grid-cols-2 gap-3">
+                <div>
+                  <label class="block text-xs text-[var(--text-muted)] mb-1">Default planned minutes</label>
+                  <input
+                    type="number"
+                    bind:value={disk_default_planned_minutes}
+                    min="5" max="480" step="5"
+                    class="w-full px-3 py-2 bg-[var(--bg-elevated)] border border-[var(--border-subtle)] rounded-lg text-sm text-[var(--text-primary)]
+                           focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
+                  />
+                </div>
+                <div>
+                  <label class="block text-xs text-[var(--text-muted)] mb-1">FLAC compression factor</label>
+                  <input
+                    type="number"
+                    bind:value={disk_flac_compression_factor}
+                    min="0.3" max="1.0" step="0.05"
+                    class="w-full px-3 py-2 bg-[var(--bg-elevated)] border border-[var(--border-subtle)] rounded-lg text-sm text-[var(--text-primary)]
+                           focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
+                  />
+                </div>
+                <div>
+                  <label class="block text-xs text-[var(--text-muted)] mb-1">Watchdog interval (seconds)</label>
+                  <input
+                    type="number"
+                    bind:value={disk_watchdog_interval_seconds}
+                    min="5" max="300" step="5"
+                    class="w-full px-3 py-2 bg-[var(--bg-elevated)] border border-[var(--border-subtle)] rounded-lg text-sm text-[var(--text-primary)]
+                           focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
+                  />
+                </div>
+                <div>
+                  <label class="block text-xs text-[var(--text-muted)] mb-1">Graceful-stop factor</label>
+                  <input
+                    type="number"
+                    bind:value={disk_watchdog_graceful_stop_factor}
+                    min="0.1" max="1.0" step="0.1"
+                    class="w-full px-3 py-2 bg-[var(--bg-elevated)] border border-[var(--border-subtle)] rounded-lg text-sm text-[var(--text-primary)]
+                           focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
+                  />
+                </div>
+              </div>
+            </div>
+
+          </div>
+        {/if}
+      </section>
+
       <!-- Appearance -->
       <section>
         <h2 class="text-lg font-semibold text-[var(--text-primary)] mb-1">Appearance</h2>
@@ -1116,8 +1647,8 @@
         </label>
       </section>
 
-      <!-- Save button -->
-      <div class="pt-6 border-t border-[var(--border-subtle)]">
+      <!-- Save / Reload buttons -->
+      <div class="pt-6 border-t border-[var(--border-subtle)] flex items-center gap-3">
         <button
           onclick={saveConfig}
           disabled={saving}
@@ -1125,6 +1656,15 @@
                  hover:bg-[var(--accent-hover)] disabled:opacity-50 transition-colors duration-150"
         >
           {saving ? 'Saving...' : 'Save Settings'}
+        </button>
+        <button
+          onclick={reloadConfig}
+          disabled={loading || saving}
+          title="Re-read config.yaml from disk (picks up external edits)"
+          class="px-4 py-2.5 bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg text-sm font-medium text-[var(--text-primary)]
+                 hover:bg-[var(--bg-hover)] disabled:opacity-50 transition-colors duration-150"
+        >
+          Reload from YAML
         </button>
       </div>
     </div>
