@@ -25,21 +25,20 @@ generation:
     max_output_tokens: 4096
     retry_attempts: 3
     timeout_seconds: 120
+    ollama:
+      base_url: http://localhost:11434
+      timeout_seconds: 300
   templates_dir: templates
-  # Vendors rendered as per-vendor service feedback sub-sections.
-  # Empty list → single generic vendor-feedback block.
   vendors:
-    - AWS
-    - NetApp
-  # concise | standard | verbose — controls detailed-notes length.
+  - AWS
+  - NetApp
   length_mode: concise
-  # Also generate a follow-up email draft artifact per meeting.
   generate_email_draft: true
-  # auto | public | internal | confidential | restricted
   confidentiality_default: auto
-  # Carry prior open action items into prompt and close any acknowledged done.
   close_acknowledged_actions: true
   prior_actions_lookback_meetings: 5
+brief:
+  summarize_with_llm: false
 storage:
   database: sqlite
   sqlite_path: db/meetings.db
@@ -47,9 +46,15 @@ backup:
   enabled: true
   backup_dir: backups
   interval_hours: 1
+export:
+  default_out_dir: data/exports
 obsidian:
   enabled: true
   vault_path: /Users/jurgenhofkens/Documents/NetApp
+notifications:
+  enabled: null
+  sound: true
+  click_url_base: http://localhost:8080/meeting
 api:
   host: 127.0.0.1
   port: 8080
@@ -68,3 +73,8 @@ security:
   encryption_key: ''
 performance:
   pytorch_mps_fallback: true
+disk:
+  default_planned_minutes: 60
+  flac_compression_factor: 0.6
+  watchdog_interval_seconds: 30
+  watchdog_graceful_stop_factor: 0.5
