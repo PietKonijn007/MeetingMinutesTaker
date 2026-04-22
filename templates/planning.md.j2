@@ -4,6 +4,9 @@ Summarize a planning meeting (sprint, quarterly, roadmap). Capture scope, priori
 {% import '_shared.md.j2' as m %}
 {{ m.meeting_header('Planning', title, date, duration, attendees, organizer) }}
 
+## Transcript
+{{ transcript_text }}
+
 ---
 
 {{ m.omission_rule() }}

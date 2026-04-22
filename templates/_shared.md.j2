@@ -92,10 +92,19 @@ The following action items from previous meetings are still open. For each one t
 **Duration:** {{ duration }}
 **Attendees:** {{ attendees | join(attendee_join) }}
 {% if organizer %}**Organizer:** {{ organizer }}
-{% endif %}
-## Transcript
-{{ transcript_text }}
+{% endif -%}
 {%- endmacro -%}
+
+{#
+   NOTE ON MACRO DESIGN: every macro here takes all the data it renders as
+   explicit parameters. A previous version of `meeting_header` referenced
+   `{{ transcript_text }}` directly, which silently resolved to empty in
+   templates (because `{% import '_shared.md.j2' as m %}` imports without
+   caller context by default). That meant 17 of 18 templates were sending
+   prompts to the LLM with an empty "## Transcript" block. Don't do that
+   again — keep macros fully parameterized, and render `{{ transcript_text }}`
+   inline in each template right after the header.
+#}
 
 {%- macro closing_instructions(length_mode='concise') -%}
 ---
