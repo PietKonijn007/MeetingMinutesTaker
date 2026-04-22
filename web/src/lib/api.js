@@ -136,7 +136,12 @@ export const api = {
   startRecording: (data = {}) => request('/recording/start', { method: 'POST', body: JSON.stringify(data) }),
   stopRecording: (data = {}) => request('/recording/stop', { method: 'POST', body: JSON.stringify(data) }),
   getRecordingStatus: () => request('/recording/status'),
-  getAudioDevices: () => request('/audio-devices'),
+  // Pass { refresh: true } for the Refresh button (forces PortAudio re-scan to
+  // pick up newly-plugged Bluetooth/USB devices). The default path avoids the
+  // re-scan entirely, so the periodic 3s poll can't race with a live recording
+  // stream (see PR #16 / #17 fallout).
+  getAudioDevices: ({ refresh = false } = {}) =>
+    request('/audio-devices' + (refresh ? '?refresh=true' : '')),
   getLanguages: () => request('/languages'),
   getPipelines: () => request('/pipelines'),
 

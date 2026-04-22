@@ -115,45 +115,63 @@ def test_start_recording_waits_for_audio_lock(client):
     assert result["status"] == 200, result
 
 
-def test_list_audio_devices_does_not_terminate_while_recording(client, monkeypatch):
-    """After a recording starts, list_audio_devices must NEVER call
-    sd._terminate() — doing so silently kills the live PortAudio stream
-    (the FLAC ends up empty / silent, elapsed counts up but no audio
-    is actually captured). This was a regression introduced when
-    start_recording first started taking _audio_lock: it released the
-    lock before flipping state to "recording", and a list-refresh that
-    fired in between would see "idle" and nuke the stream.
+def test_list_audio_devices_default_never_terminates(client, monkeypatch):
+    """The default (`GET /api/audio-devices`) must NEVER call sd._terminate().
+
+    The UI polls this endpoint every 3 s. If the poll terminates PortAudio
+    while a stream is live, the recording goes silent (FLAC is empty,
+    elapsed counts up, nothing gets captured). The re-scan is now opt-in
+    via `?refresh=true` so the periodic poll is harmless. Tested both
+    with and without an active recording — neither case should terminate.
     """
     terminate_calls = []
-    initialize_calls = []
-
     fake_sd = type("sd", (), {
         "_terminate": lambda: terminate_calls.append(1),
-        "_initialize": lambda: initialize_calls.append(1),
+        "_initialize": lambda: None,
         "query_devices": lambda: [],
     })
     monkeypatch.setitem(__import__("sys").modules, "sounddevice", fake_sd)
 
-    # 1. Start recording.
-    resp = client.post("/api/recording/start", json={})
-    assert resp.status_code == 200, resp.text
+    # Default path, no recording active.
+    for _ in range(5):
+        assert client.get("/api/audio-devices").status_code == 200
+    assert terminate_calls == [], "default poll terminated PortAudio while idle"
 
-    # 2. Hit the device-list endpoint several times. None of these must
-    #    terminate PortAudio while we are actively recording.
+    # Default path with an active recording.
+    assert client.post("/api/recording/start", json={}).status_code == 200
     for _ in range(10):
-        resp = client.get("/api/audio-devices")
-        assert resp.status_code == 200
+        assert client.get("/api/audio-devices").status_code == 200
 
     assert terminate_calls == [], (
-        f"sd._terminate() was called {len(terminate_calls)} times while a "
-        "recording was active — this silently kills the stream and the "
-        "FLAC ends up silent. State check in list_audio_devices must be "
-        "under _audio_lock."
+        f"sd._terminate() was called {len(terminate_calls)} times during the "
+        "default poll — this silently kills any live stream. The re-scan "
+        "must remain opt-in via ?refresh=true."
     )
-    assert initialize_calls == [], (
-        f"sd._initialize() was called {len(initialize_calls)} times while "
-        "recording. _initialize() is a no-op after an active-stream "
-        "_terminate() but we shouldn't be calling it either."
+
+
+def test_list_audio_devices_refresh_triggers_rescan_when_idle(client, monkeypatch):
+    """The Refresh button (?refresh=true) must call sd._terminate() when
+    nothing is recording, so newly-plugged Bluetooth/USB devices are picked
+    up. And it must NOT call it when a recording is active — crashing the
+    stream during a manual refresh is still a crash."""
+    terminate_calls = []
+    fake_sd = type("sd", (), {
+        "_terminate": lambda: terminate_calls.append(1),
+        "_initialize": lambda: None,
+        "query_devices": lambda: [],
+    })
+    monkeypatch.setitem(__import__("sys").modules, "sounddevice", fake_sd)
+
+    # Idle: refresh=true SHOULD call _terminate.
+    assert client.get("/api/audio-devices?refresh=true").status_code == 200
+    assert len(terminate_calls) == 1, "refresh=true did not force a PortAudio re-scan"
+
+    # While recording: refresh=true must STILL not terminate.
+    assert client.post("/api/recording/start", json={}).status_code == 200
+    assert client.get("/api/audio-devices?refresh=true").status_code == 200
+    assert len(terminate_calls) == 1, (
+        "refresh=true terminated PortAudio while recording — this would crash "
+        "the live stream. The state check must gate the terminate."
     )
 
 

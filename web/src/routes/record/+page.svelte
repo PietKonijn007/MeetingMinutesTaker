@@ -271,9 +271,12 @@
 
   let autoDetectedDevice = $state(null);
 
-  async function loadDevices() {
+  // Default (no arg / refresh=false): a cheap enumeration — safe to call on a
+  // 3-second interval during an active recording. The Refresh button passes
+  // { refresh: true } to force PortAudio to re-scan for newly-plugged devices.
+  async function loadDevices({ refresh = false } = {}) {
     try {
-      const data = await api.getAudioDevices();
+      const data = await api.getAudioDevices({ refresh });
       const newDevices = data.devices || data || [];
 
       // Check if device list actually changed
@@ -306,7 +309,7 @@
 
   async function refreshDevices() {
     refreshingDevices = true;
-    await loadDevices();
+    await loadDevices({ refresh: true });
     refreshingDevices = false;
   }
 

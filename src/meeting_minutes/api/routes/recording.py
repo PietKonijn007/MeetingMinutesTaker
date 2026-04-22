@@ -397,29 +397,40 @@ def auto_detect_device():
 
 
 @router.get("/api/audio-devices", response_model=list[AudioDeviceResponse])
-def list_audio_devices():
+def list_audio_devices(refresh: bool = False):
     """List all available audio devices (input, output, and bidirectional).
 
-    Forces PortAudio to re-scan devices on each call so newly connected
-    Bluetooth/USB devices (AirPods, headsets, etc.) are detected.
+    By default this just enumerates what PortAudio already knows about —
+    cheap and safe to call while a recording is active.
+
+    Pass ``?refresh=true`` (wired to the UI's Refresh button) to force a
+    full PortAudio ``_terminate() + _initialize()`` cycle; that picks up
+    newly-plugged Bluetooth/USB devices (AirPods, headsets, etc.) that
+    weren't present at startup.
+
+    Why this is opt-in: the UI polls this endpoint every 3 s while idle so
+    the device dropdown stays fresh. Previously every poll forced a
+    re-scan, which:
+      - corrupted PortAudio state if a recording stream was mid-open
+        (PR #16), and
+      - silently killed the live stream when the state check raced with
+        start_recording (PR #17).
+    Gating the re-scan behind an explicit flag removes both races entirely
+    for the hot path.
     """
     try:
         import sounddevice as sd
 
-        # Force PortAudio to re-scan — but ONLY when not recording.
-        # Calling _terminate() during an active recording stream causes
-        # a bus error crash (PortAudio internal state corruption) AND/OR
-        # silently kills the stream so the FLAC ends up empty.
-        #
-        # The state-check MUST be inside _audio_lock, not outside: if we
-        # check outside and then block on the lock, start_recording could
-        # flip state to "recording" while we wait — and we'd still call
-        # _terminate() on a stream that just opened. Re-check after
-        # acquiring the lock to be race-safe.
-        with _audio_lock:
-            if _current_recording["state"] != "recording":
-                sd._terminate()
-                sd._initialize()
+        if refresh:
+            # Hard-reset PortAudio — but ONLY when not recording.
+            # Calling _terminate() during an active stream crashes PortAudio
+            # or silently kills the stream so the FLAC ends up empty.
+            # The state check must be INSIDE _audio_lock to avoid racing
+            # with start_recording flipping state.
+            with _audio_lock:
+                if _current_recording["state"] != "recording":
+                    sd._terminate()
+                    sd._initialize()
 
         devices = sd.query_devices()
         result = []
