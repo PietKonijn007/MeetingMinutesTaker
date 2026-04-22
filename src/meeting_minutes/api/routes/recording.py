@@ -81,13 +81,24 @@ def start_recording(
 
         logger.info("Starting recording — device: %s", rec_config.audio_device)
 
-        engine = AudioCaptureEngine(
-            rec_config,
-            output_dir=recordings_dir,
-            app_config=config,
-            planned_minutes=body.planned_minutes,
-        )
-        meeting_id = engine.start()
+        # Serialize PortAudio access with list_audio_devices / auto_detect_device.
+        # Those endpoints call sd._terminate() + sd._initialize() under
+        # _audio_lock to pick up newly-plugged Bluetooth/USB devices; opening a
+        # stream during that window raises "Error querying device -1" /
+        # "Could not obtain stream info" and surfaces to the user as a "Failed
+        # to start recording" toast. The UI polls the device list every 3s
+        # while idle, so the race is user-visible when clicking Start right
+        # after stopping a previous meeting. Holding the lock during engine
+        # construction + .start() (which itself may open probe streams via
+        # auto_select_capture_device) is the minimal-blast-radius fix.
+        with _audio_lock:
+            engine = AudioCaptureEngine(
+                rec_config,
+                output_dir=recordings_dir,
+                app_config=config,
+                planned_minutes=body.planned_minutes,
+            )
+            meeting_id = engine.start()
 
         _current_recording["state"] = "recording"
         _current_recording["meeting_id"] = meeting_id
@@ -372,7 +383,11 @@ def list_languages():
 def auto_detect_device():
     """Auto-detect the best capture device for meeting recording."""
     from meeting_minutes.system1.capture import auto_select_capture_device
-    device = auto_select_capture_device()
+    # auto_select_capture_device opens short probe streams to each candidate
+    # device; serialize with list_audio_devices so the probe can't race with
+    # a PortAudio _terminate()/_initialize() refresh (same race as start).
+    with _audio_lock:
+        device = auto_select_capture_device()
     return {"device": device, "auto": True}
 
 
