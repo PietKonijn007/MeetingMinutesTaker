@@ -105,7 +105,12 @@ After initialization, the project has this structure:
 
 ## 3. Audio Setup (macOS)
 
-To capture both sides of a virtual meeting (your voice **and** the remote participants), you need a virtual audio loopback. This section walks you through it using BlackHole, a free open-source driver.
+To capture both sides of a virtual meeting (your voice **and** the remote participants), you need a virtual audio loopback. Two routes are supported:
+
+- **Option A — BlackHole** (free, open-source, recommended default). Requires creating a Multi-Output Device and an Aggregate Device in Audio MIDI Setup. Sections 3.1 – 3.8 below.
+- **Option B — Rogue Amoeba Loopback** ($99, commercial). Single-app setup: one virtual device combines mic + system audio in one place, no Audio MIDI Setup steps needed. Section 3.9 below.
+
+Both paths produce a device the app will auto-detect. Pick one — they're interchangeable from the app's perspective.
 
 ### 3.1 Install BlackHole 2ch
 
@@ -216,6 +221,74 @@ python -c "import sounddevice; print(sounddevice.query_devices())"
 ```
 
 Use the exact device name from this list in your config.
+
+### 3.9 Option B — Rogue Amoeba Loopback (alternative to BlackHole)
+
+[Loopback](https://rogueamoeba.com/loopback/) is a paid commercial app ($99) that replaces the BlackHole + Multi-Output + Aggregate Device setup with a single pre-mixed virtual device. If you already own it, or prefer a GUI over Audio MIDI Setup, use this instead of §3.1 – 3.7. The rest of the app (auto-detect, transcription, pipeline) is identical — the app detects both backends the same way.
+
+**What Loopback gives you that BlackHole doesn't:**
+- Single virtual device combining mic + system audio, no Audio MIDI Setup needed
+- Per-application source routing (capture Zoom only — not Slack pings, not Spotify)
+- Drag-and-drop UI, survives OS updates more reliably, full vendor support
+
+**Trade-off:** $99 one-time. BlackHole is $0.
+
+#### 3.9.1 Install Loopback
+
+Download from [rogueamoeba.com/loopback](https://rogueamoeba.com/loopback/) and install. Launch the app once and grant it the permissions it requests (microphone + audio routing).
+
+#### 3.9.2 Create a virtual device
+
+1. In the Loopback app, click **New Virtual Device** (bottom-left)
+2. Name it **Meeting Capture** — this is what lets the app auto-detect it
+3. In the **Sources** column, click **+** and add:
+   - Your **microphone** (e.g. MacBook Pro Microphone)
+   - **Pass-Thru** and/or the meeting apps you record (Zoom, Teams, Slack, Chrome, etc.) — this is the system-audio side that would otherwise need BlackHole
+4. In the **Output Channels** section, leave the default stereo mapping
+5. In the **Monitors** column (right side), click **+** → add your **headphones/speakers** so you still hear the meeting
+
+That's it. No Multi-Output Device, no Aggregate Device.
+
+#### 3.9.3 Tell the app to use it
+
+If you named the device **Meeting Capture**, auto-detect picks it up — no config change needed. Otherwise, set the exact Loopback device name in `config/config.yaml`:
+
+```yaml
+recording:
+  audio_device: "Meeting Capture"   # or "Loopback Audio" (default Loopback name)
+```
+
+You can also leave it as `"auto"` — the app's auto-detect prefers devices named "Meeting Capture" or containing "Loopback" in their name.
+
+#### 3.9.4 Audio signal flow with Loopback
+
+```
+Remote participants (Zoom/Teams/etc.)
+        │
+        ▼
+  Meeting app (Zoom/Teams/Slack/Chrome)
+        │
+        ▼
+  🎙 Meeting Capture (Loopback virtual device)
+        ├──► Source: Built-in Microphone (your voice)
+        ├──► Source: App audio (Zoom/Teams/Slack) — captured, not routed through BlackHole
+        └──► Monitor: Built-in Output (you hear the meeting)
+        │
+        ▼
+  Meeting Minutes Taker (captures the combined stream)
+```
+
+Compare this to §3.6: no Multi-Output Device in the chain, and system audio capture is per-app rather than global.
+
+#### 3.9.5 Verifying detection
+
+After configuring, run:
+
+```bash
+mm doctor
+```
+
+Check #3 (**meeting_capture_device**) should pass and report "Meeting Capture / BlackHole / Loopback device available." If it fails with Loopback installed, confirm the Loopback app is running (it must be open for the virtual device to appear in Core Audio) and that at least one source is mapped.
 
 ---
 

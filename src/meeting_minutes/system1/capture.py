@@ -175,10 +175,11 @@ def auto_select_capture_device() -> str | None:
     """Auto-detect the best capture device for meeting recording.
 
     Priority:
-    1. MeetingCapture aggregate devices (contain BlackHole for loopback)
-       — prefer the one whose non-BlackHole sub-device is currently online
-    2. Any aggregate/multi-channel device with BlackHole in it
-    3. System default input device
+    1. MeetingCapture aggregate devices (BlackHole-based or Loopback-based)
+       — prefer the one whose sub-devices are currently online
+    2. Rogue Amoeba Loopback devices (self-contained virtual capture)
+    3. Any aggregate/multi-channel device with BlackHole in it
+    4. System default input device
 
     Returns the device name, or None if no suitable device found.
     """
@@ -202,6 +203,11 @@ def auto_select_capture_device() -> str | None:
             if "meetingcapture" in name_lower or "meeting capture" in name_lower:
                 score += 100
 
+            # Rogue Amoeba Loopback (self-contained virtual mic+system mix).
+            # Skip if it's a BlackHole device that happens to have "loopback" in its name.
+            if "loopback" in name_lower and "blackhole" not in name_lower:
+                score += 90
+
             # Prefer aggregate/multi-channel devices (likely have BlackHole)
             if channels >= 2:
                 score += 10
@@ -211,12 +217,12 @@ def auto_select_capture_device() -> str | None:
                 score += 5
 
             # Penalize raw hardware devices (no loopback)
-            if channels == 1 and score < 100:
+            if channels == 1 and score < 90:
                 score -= 5
 
             # Test if the device is actually functional by checking if it can be opened
             # (offline aggregate sub-devices cause open errors)
-            if score >= 100:
+            if score >= 90:
                 try:
                     test_stream = sd.InputStream(
                         device=i, channels=1, samplerate=d["default_samplerate"],

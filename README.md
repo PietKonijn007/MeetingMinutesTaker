@@ -124,7 +124,7 @@ mm service uninstall  # Remove auto-start
 
 - Python 3.11+
 - macOS 12+ (recommended: macOS 14+ on Apple Silicon)
-- [BlackHole 2ch](https://github.com/ExistentialAudio/BlackHole) for virtual meeting capture
+- [BlackHole 2ch](https://github.com/ExistentialAudio/BlackHole) (free) **or** [Rogue Amoeba Loopback](https://rogueamoeba.com/loopback/) ($99) for virtual meeting capture
 
 ### Install
 
@@ -157,15 +157,15 @@ OLLAMA_BASE_URL=http://localhost:11434   # Optional, defaults to localhost
 
 ### Configure audio
 
-Set up BlackHole with two virtual devices (see [User Guide](docs/USER_GUIDE.md#3-audio-setup-macos) for step-by-step instructions):
+Pick one backend (both are auto-detected — see [User Guide §3](docs/USER_GUIDE.md#3-audio-setup-macos) for full instructions):
 
-- Set your system output to **Meeting Output** (Multi-Output Device that sends audio to speakers + BlackHole)
-- In the Meeting Minutes app, select **Meeting Capture** (Aggregate Device combining mic + BlackHole) as input, or use auto-detect which prefers MeetingCapture aggregate devices automatically
+- **BlackHole (free, default).** Set your system output to **Meeting Output** (Multi-Output Device sending audio to speakers + BlackHole). Select **Meeting Capture** (Aggregate Device combining mic + BlackHole) as input, or use auto-detect.
+- **Rogue Amoeba Loopback ($99, optional).** One virtual device combining mic + system audio. No Multi-Output or Aggregate Device needed. Name the device "Meeting Capture" and auto-detect handles the rest. See [User Guide §3.9](docs/USER_GUIDE.md#39-option-b--rogue-amoeba-loopback-alternative-to-blackhole).
 
 ```yaml
 # config/config.yaml
 recording:
-  audio_device: "Meeting Capture"
+  audio_device: "Meeting Capture"   # name works for either backend; or "auto"
 ```
 
 Leave audio settings in Zoom/Meet/Teams at their defaults — the system-level routing handles everything.
