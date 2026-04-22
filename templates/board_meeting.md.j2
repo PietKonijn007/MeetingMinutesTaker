@@ -4,6 +4,9 @@ Summarize a board or investor update meeting. These minutes may be filed as an o
 {% import '_shared.md.j2' as m %}
 {{ m.meeting_header('Board Meeting', title, date, duration, attendees, organizer) }}
 
+## Transcript
+{{ transcript_text }}
+
 ---
 
 {{ m.omission_rule() }}

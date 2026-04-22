@@ -4,6 +4,9 @@ Summarize a 1:1 where the user is the manager and the other party is their direc
 {% import '_shared.md.j2' as m %}
 {{ m.meeting_header('1:1 (Direct Report)', title, date, duration, attendees, organizer, attendee_join=' & ') }}
 
+## Transcript
+{{ transcript_text }}
+
 ---
 
 {{ m.omission_rule() }}

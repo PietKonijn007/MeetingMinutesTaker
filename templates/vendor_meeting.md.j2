@@ -4,6 +4,9 @@ Summarize a vendor, partner, or procurement meeting — a QBR, pricing negotiati
 {% import '_shared.md.j2' as m %}
 {{ m.meeting_header('Vendor Meeting', title, date, duration, attendees, organizer) }}
 
+## Transcript
+{{ transcript_text }}
+
 ---
 
 {{ m.omission_rule() }}

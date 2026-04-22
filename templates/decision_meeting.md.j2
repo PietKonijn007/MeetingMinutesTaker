@@ -4,6 +4,9 @@ Summarize a decision-making meeting. Capture every decision, the options conside
 {% import '_shared.md.j2' as m %}
 {{ m.meeting_header('Decision Meeting', title, date, duration, attendees, organizer) }}
 
+## Transcript
+{{ transcript_text }}
+
 ---
 
 {{ m.omission_rule() }}

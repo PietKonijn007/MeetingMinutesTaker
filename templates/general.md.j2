@@ -4,6 +4,9 @@ Generate professional meeting minutes from the transcript below. The reader is a
 {% import '_shared.md.j2' as m %}
 {{ m.meeting_header('Meeting', title, date, duration, attendees, organizer) }}
 
+## Transcript
+{{ transcript_text }}
+
 ---
 
 {{ m.omission_rule() }}
