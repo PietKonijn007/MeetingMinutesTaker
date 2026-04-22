@@ -115,6 +115,48 @@ def test_start_recording_waits_for_audio_lock(client):
     assert result["status"] == 200, result
 
 
+def test_list_audio_devices_does_not_terminate_while_recording(client, monkeypatch):
+    """After a recording starts, list_audio_devices must NEVER call
+    sd._terminate() — doing so silently kills the live PortAudio stream
+    (the FLAC ends up empty / silent, elapsed counts up but no audio
+    is actually captured). This was a regression introduced when
+    start_recording first started taking _audio_lock: it released the
+    lock before flipping state to "recording", and a list-refresh that
+    fired in between would see "idle" and nuke the stream.
+    """
+    terminate_calls = []
+    initialize_calls = []
+
+    fake_sd = type("sd", (), {
+        "_terminate": lambda: terminate_calls.append(1),
+        "_initialize": lambda: initialize_calls.append(1),
+        "query_devices": lambda: [],
+    })
+    monkeypatch.setitem(__import__("sys").modules, "sounddevice", fake_sd)
+
+    # 1. Start recording.
+    resp = client.post("/api/recording/start", json={})
+    assert resp.status_code == 200, resp.text
+
+    # 2. Hit the device-list endpoint several times. None of these must
+    #    terminate PortAudio while we are actively recording.
+    for _ in range(10):
+        resp = client.get("/api/audio-devices")
+        assert resp.status_code == 200
+
+    assert terminate_calls == [], (
+        f"sd._terminate() was called {len(terminate_calls)} times while a "
+        "recording was active — this silently kills the stream and the "
+        "FLAC ends up silent. State check in list_audio_devices must be "
+        "under _audio_lock."
+    )
+    assert initialize_calls == [], (
+        f"sd._initialize() was called {len(initialize_calls)} times while "
+        "recording. _initialize() is a no-op after an active-stream "
+        "_terminate() but we shouldn't be calling it either."
+    )
+
+
 def test_start_recording_succeeds_under_concurrent_device_list(client):
     """Simulate the exact user scenario: a background thread hammers the
     device-list endpoint while the user clicks Start. All starts must

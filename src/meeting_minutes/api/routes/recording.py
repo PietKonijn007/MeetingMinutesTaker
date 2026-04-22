@@ -86,11 +86,16 @@ def start_recording(
         # _audio_lock to pick up newly-plugged Bluetooth/USB devices; opening a
         # stream during that window raises "Error querying device -1" /
         # "Could not obtain stream info" and surfaces to the user as a "Failed
-        # to start recording" toast. The UI polls the device list every 3s
-        # while idle, so the race is user-visible when clicking Start right
-        # after stopping a previous meeting. Holding the lock during engine
-        # construction + .start() (which itself may open probe streams via
-        # auto_select_capture_device) is the minimal-blast-radius fix.
+        # to start recording" toast.
+        #
+        # IMPORTANT: flip _current_recording["state"] to "recording" INSIDE
+        # the lock, *before* releasing. list_audio_devices gates on this
+        # state (under the same lock) and skips _terminate() when we're
+        # recording. If we released the lock while state was still "idle",
+        # a list-refresh would acquire the lock, see idle, and wipe out the
+        # live PortAudio stream — silencing the recording without any
+        # error, and only detectable via a zero-byte/silent FLAC at stop
+        # time.
         with _audio_lock:
             engine = AudioCaptureEngine(
                 rec_config,
@@ -100,11 +105,11 @@ def start_recording(
             )
             meeting_id = engine.start()
 
-        _current_recording["state"] = "recording"
-        _current_recording["meeting_id"] = meeting_id
-        _current_recording["start_time"] = time.time()
-        _current_recording["engine"] = engine
-        _current_recording["language"] = language
+            _current_recording["state"] = "recording"
+            _current_recording["meeting_id"] = meeting_id
+            _current_recording["start_time"] = time.time()
+            _current_recording["engine"] = engine
+            _current_recording["language"] = language
 
         # Also write state file for CLI interop
         state_file = Path("/tmp/mm_recording_state.json")
@@ -403,9 +408,16 @@ def list_audio_devices():
 
         # Force PortAudio to re-scan — but ONLY when not recording.
         # Calling _terminate() during an active recording stream causes
-        # a bus error crash (PortAudio internal state corruption).
-        if _current_recording["state"] != "recording":
-            with _audio_lock:
+        # a bus error crash (PortAudio internal state corruption) AND/OR
+        # silently kills the stream so the FLAC ends up empty.
+        #
+        # The state-check MUST be inside _audio_lock, not outside: if we
+        # check outside and then block on the lock, start_recording could
+        # flip state to "recording" while we wait — and we'd still call
+        # _terminate() on a stream that just opened. Re-check after
+        # acquiring the lock to be race-safe.
+        with _audio_lock:
+            if _current_recording["state"] != "recording":
                 sd._terminate()
                 sd._initialize()
 
