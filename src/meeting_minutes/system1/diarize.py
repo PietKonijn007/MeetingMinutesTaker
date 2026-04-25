@@ -101,7 +101,18 @@ class DiarizationEngine:
 
             err_str = str(exc)
             hint = ""
-            if "AudioDecoder" in err_str or "torchcodec" in err_str.lower():
+            # NameError on AudioDecoder means pyannote loaded *before* torchcodec
+            # was importable — its `try: from torchcodec.decoders import AudioDecoder`
+            # at io.py swallowed the failure and left the name unbound. The deps
+            # may now be fine on disk; the running process just has stale module
+            # state. Reinstalling won't help — restart the process.
+            if isinstance(exc, NameError) and "AudioDecoder" in err_str:
+                hint = (
+                    " — FIX: stale process — pyannote loaded before torchcodec was importable. "
+                    "Restart this process (e.g. kill the `mm serve` server and relaunch). "
+                    "Reinstalling deps is NOT the fix."
+                )
+            elif "AudioDecoder" in err_str or "torchcodec" in err_str.lower():
                 hint = (
                     " — FIX: pyannote.audio 4.x requires torchcodec + ffmpeg. "
                     "Run: brew install ffmpeg && pip install torchcodec"
