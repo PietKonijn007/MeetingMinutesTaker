@@ -12,7 +12,7 @@ You spend hours each week in meetings. Key decisions get made, action items get 
 - **Meeting-type intelligence** — A standup gets a per-person Done/Today/Blockers breakdown. A decision meeting gets an options matrix with rationale. A customer call gets client requests and commitments. An incident review gets a blameless timeline and contributing factors. 18 built-in templates covering the real exec calendar (board, leadership, vendor, architecture review, interview debrief, three 1:1 variants, and more) — fully customizable.
 - **Talk to your meetings** — Ask "What did Jon commit to about lead times since April?" and get a synthesized answer with citations to the specific meetings, powered by local semantic search over your entire meeting history.
 - **Speaker identification** — Automatic speaker diarization labels who said what. Enter names once and they propagate through transcripts, minutes, action items, and decisions.
-- **Action item tracking** — Every action item extracted across every meeting, filterable by owner, status, and due date. Mark items complete from anywhere in the app.
+- **Action items you actually own** — Extracted action items land as **proposals** on the meeting page. You Accept (turns into a tracked action), Edit (fix wording / owner / due date before accepting), or Reject the LLM's suggestions. Only confirmed actions reach the global tracker, the prior-action carryover that feeds the next meeting's prompt, the Obsidian export, and the DOCX export — so the tracker stays a list of things you actually agreed to, not a stream of LLM guesses.
 - **Actually searchable** — Full-text keyword search AND semantic vector search across all transcripts, minutes, and structured data. Find meetings by what was discussed, not just when they happened.
 - **Runs on your hardware, optimized for it** — Auto-detects Apple Silicon (Metal), NVIDIA (CUDA), AMD (ROCm), or CPU and configures Whisper and pyannote accordingly. A 13-minute meeting transcribes in under a minute on an M-series Mac or modern GPU.
 
@@ -37,7 +37,7 @@ Record Audio ──► Transcribe ──► Generate Minutes ──► Store & S
 
 **System 1 — Recording & Transcription**: Captures audio from virtual and physical meetings via system audio loopback (BlackHole on macOS), transcribes with a pluggable transcription engine — Faster Whisper (CTranslate2, default) or Whisper.cpp (GGML quantized, lower memory) — including Distil-Whisper models with Metal/CUDA acceleration. Identifies speakers with pyannote.audio (GPU-accelerated via MPS/CUDA), maps speaker labels to user-provided names in first-speaking order, enriches with calendar metadata, and supports live note-taking during recording. Separate `mm rediarize` command can re-run speaker diarization on existing audio without re-transcribing. Hardware auto-detection recommends optimal models for your GPU/RAM.
 
-**System 2 — Minutes Generation**: Auto-detects meeting type using an LLM classifier (Claude Haiku, with a calendar-title + content + attendee-count keyword fallback), routes transcripts to meeting-type-specific prompt templates, generates structured minutes via LLM. Supports **four providers**: Anthropic Claude (tool_use for guaranteed JSON), OpenAI, OpenRouter (200+ models), and **Ollama for fully local/offline summarization** (JSON-mode structured generation). Produces four layers of output per meeting: a ~100-word executive **TL;DR**, a short `summary`, a `detailed_notes` narrative (length controlled by `generation.length_mode` = `concise` / `standard` / `verbose`), and structured lists for decisions, action items, risks, open questions, follow-ups, and a ready-to-send email draft. Extracts sentiment, meeting effectiveness, a confidentiality classification, and carries open action items forward from prior meetings — automatically closing them in the DB when they're acknowledged as done in a later meeting. Vendor-feedback sub-sections are driven by a configurable `generation.vendors` list (default `[AWS, NetApp]`). Supports custom LLM instructions provided during recording.
+**System 2 — Minutes Generation**: Auto-detects meeting type using an LLM classifier (Claude Haiku, with a calendar-title + content + attendee-count keyword fallback), routes transcripts to meeting-type-specific prompt templates, generates structured minutes via LLM. Supports **four providers**: Anthropic Claude (tool_use for guaranteed JSON), OpenAI, OpenRouter (200+ models), and **Ollama for fully local/offline summarization** (JSON-mode structured generation). Produces four layers of output per meeting: a ~100-word executive **TL;DR**, a short `summary`, a `detailed_notes` narrative (length controlled by `generation.length_mode` = `concise` / `standard` / `verbose`), and structured lists for decisions, action items, risks, open questions, follow-ups, and a ready-to-send email draft. Action items are emitted as **proposals** that you confirm before they enter the tracker (see "Action item review workflow" below). Extracts sentiment, meeting effectiveness, a confidentiality classification, and carries forward only **confirmed** open action items from prior meetings — automatically closing them in the DB when they're acknowledged as done in a later meeting. Vendor-feedback sub-sections are driven by a configurable `generation.vendors` list (default `[AWS, NetApp]`). Supports custom LLM instructions provided during recording.
 
 **System 3 — Storage & Search**: Stores everything in SQLite with full-text search (FTS5) and **semantic vector search** (via `sqlite-vec` + `sentence-transformers`). Provides a CLI for searching, browsing, and managing meetings and action items. **"Chat with your meetings"** feature uses RAG (Retrieval-Augmented Generation) to answer natural-language questions across all your meeting history — e.g., _"Summarize all actions Jon Porter has taken on lead times since April 1st"_. Supports encryption at rest, configurable retention policies, and in-calendar search with filters.
 
@@ -186,7 +186,9 @@ mm search "budget" --type decision_meeting        # Filter by type
 mm search "sprint" --after 2026-03-01             # Filter by date
 mm list                                           # Recent meetings
 mm show <meeting_id>                              # View meeting details
-mm actions                                        # Open action items
+mm actions                                        # Confirmed open action items (the tracker)
+mm actions --proposed                             # Proposals awaiting your review
+mm actions --all-states                           # Confirmed + proposed + rejected
 mm actions --owner alice@company.com              # Filter by owner
 mm actions complete <action_id>                   # Mark done
 ```
@@ -201,7 +203,7 @@ mm actions complete <action_id>                   # Mark done
 | `mm search <query>` | Full-text search (supports `--type`, `--after`, `--before`) |
 | `mm list` | List meetings (supports `--person`, `--limit`) |
 | `mm show <id>` | Show meeting details and minutes |
-| `mm actions` | List open action items (supports `--owner`, `--overdue`) |
+| `mm actions` | List **confirmed** open action items (supports `--owner`, `--overdue`, `--status`, `--proposed`, `--all-states`) |
 | `mm actions complete <id>` | Mark action item as done |
 | `mm generate <id>` | Generate minutes from transcript |
 | `mm reprocess <id>` | Re-run generation + ingestion (skips transcription/diarization) |
@@ -325,6 +327,28 @@ On macOS the WeasyPrint native libs (`pango`, `cairo`, `gdk-pixbuf`, `libffi`) i
 
 DOCX users can drop a styled template at `templates/export/docx_template.docx`; python-docx inherits its heading + paragraph styles.
 
+## Action item review workflow (proposed → confirmed)
+
+Action items extracted from a transcript are **proposals**, not commitments. Every newly-extracted item lands with `proposal_state = "proposed"` and stays out of:
+
+- the global `/actions` tracker (default filter is **Confirmed**)
+- the prior-action carryover injected into the next meeting's prompt
+- the rendered `## Action Items` section in `data/minutes/{id}.md`
+- the Obsidian export, DOCX export, embeddings used by the chat feature, and the `open_actions` count on the Stats overview
+
+Until you review them. The meeting detail page's **Actions** tab shows a "N proposed actions to review" banner with **Accept all** / **Reject all**, plus per-row **Accept · Edit · Reject** controls. Editing lets you fix the wording, owner, or due date before accepting. Rejected items are kept as `proposal_state = "rejected"` so the same suggestion isn't re-confirmed by accident on regenerate.
+
+On every Accept / Reject the server re-renders the on-disk minutes JSON + Markdown, refreshes the FTS index, and re-exports to Obsidian — so the curated set is what shows up in search, exports, and your vault. **Regenerate** a meeting and the items go back to `proposed` (you re-review). The `## Action Items` section in the markdown is empty until at least one item is confirmed.
+
+The global `/actions` page has a chip filter — **Confirmed** (default) / **Proposed** / **All** — so you can sweep an entire backlog from one place. A small "Confirm all proposals from before a date…" affordance is there for the one-time clear right after upgrading: the migration that introduces this workflow flips every historical action item to `proposed`, so on first run after the upgrade you'll see them all queued for review.
+
+REST surface:
+
+- `GET /api/action-items?proposal_state={confirmed|proposed|rejected|all}` — defaults to `confirmed`.
+- `PATCH /api/action-items/{id}` — accepts `{status, proposal_state, description, owner, due_date}` (all optional).
+- `POST /api/action-items/bulk-review/{meeting_id}` — body `{confirm: [ids], reject: [ids]}`.
+- `POST /api/action-items/confirm-before` — body `{before_date: "YYYY-MM-DD"}`, the post-migration backlog clear.
+
 ## Web UI
 
 A browser-based interface built with Svelte + Tailwind CSS at `localhost:8080` with calendar view, action items, decisions, people, **series** (REC-1), stats (with four ANA-1 tabbed panels), recording controls, template manager, and settings.
@@ -337,7 +361,7 @@ mm serve
 open http://localhost:8080
 ```
 
-**Pages**: Meetings (calendar view with day list + inline detail + search with filters), **Chat** (talk to your meetings — ask natural-language questions across all meeting history with citations), **Brief** (BRF-1 pre-meeting briefing with six data sections + inline Start Recording panel), Meeting Detail, Action Items, Decisions, People, Stats (charts), Record (live waveform + concurrent pipeline status + live note-taking), Templates (view/edit/create prompt templates), Settings (LLM provider/model selection with custom model support, Performance & Hardware, Security, Retention, and CORS config).
+**Pages**: Meetings (calendar view with day list + inline detail + search with filters; meeting cards show an "N to review" badge when the meeting has proposed actions waiting), **Chat** (talk to your meetings — ask natural-language questions across all meeting history with citations), **Brief** (BRF-1 pre-meeting briefing with six data sections + inline Start Recording panel), Meeting Detail (Actions tab surfaces the Accept / Edit / Reject review banner for proposed items), Action Items (Confirmed / Proposed / All chip filter + admin "Confirm all proposals from before a date" sweep), Decisions, People, Stats (charts), Record (live waveform + concurrent pipeline status + live note-taking), Templates (view/edit/create prompt templates), Settings (LLM provider/model selection with custom model support, Performance & Hardware, Security, Retention, and CORS config).
 
 **Features**: Dark mode, full-text search with `Cmd+K`, in-calendar search with type filter chips, keyboard navigation, responsive layout, meeting type color coding, WebSocket-based real-time updates, concurrent pipeline processing (record a new meeting while the previous one processes in background), auto-detect capture device, auto-save recovery every 5 minutes during recording, live note-taking during recording (title, speaker names, notes, custom LLM instructions), inline-editable meeting title on the detail page (rewrites the embedded title in the minutes JSON/MD, refreshes the FTS index, and renames the Obsidian export), structured card-based minutes view with collapsible discussion topics, color-coded transcript per-speaker with inline "Name speakers" editor, **post-hoc external-notes tab** (paste notes from Teams/Zoom/Meet/Otter to auto-rename speakers + regenerate the summary), people management (edit / delete / merge duplicate entities with automatic historical attribution updates), Performance & Hardware settings (Apple Silicon MPS toggle), encryption at rest, retention policies with automatic cleanup.
 

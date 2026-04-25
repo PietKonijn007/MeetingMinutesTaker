@@ -72,6 +72,7 @@
         attendees: m.attendee_names || [],
         summary: m.summary,
         action_count: m.action_item_count || 0,
+        proposed_action_count: m.proposed_action_count || 0,
         decision_count: m.decision_count || 0,
         effectiveness_score: m.effectiveness_score || 0,
       }));
@@ -277,6 +278,7 @@
             {selectedMeetingId}
             onSelectMeeting={handleSelectMeeting}
             onUpload={handleUploadClick}
+            onDeleteMeeting={handleMeetingDeleted}
           />
         {/if}
       </div>

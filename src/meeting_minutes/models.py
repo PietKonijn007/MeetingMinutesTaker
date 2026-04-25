@@ -39,6 +39,19 @@ class ActionItemStatus(str, Enum):
     CANCELLED = "cancelled"
 
 
+class ActionItemProposalState(str, Enum):
+    """Review lifecycle for an extracted action item.
+
+    Independent of :class:`ActionItemStatus`. New extractions land as
+    ``proposed`` — out of carryover, exports, and the global tracker — until
+    the user confirms (or rejects) them on the meeting's Actions tab.
+    """
+
+    PROPOSED = "proposed"
+    CONFIRMED = "confirmed"
+    REJECTED = "rejected"
+
+
 class ReviewStatus(str, Enum):
     DRAFT = "draft"
     REVIEWED = "reviewed"
@@ -115,6 +128,7 @@ class ActionItem(BaseModel):
     mentioned_at_seconds: float | None = None
     priority: str | None = None  # high, medium, low
     transcript_segment_ids: list[int] = []
+    proposal_state: ActionItemProposalState = ActionItemProposalState.PROPOSED
 
 
 class Decision(BaseModel):

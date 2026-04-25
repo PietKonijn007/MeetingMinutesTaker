@@ -193,10 +193,19 @@ class MinutesJSONWriter:
                 lines.append(section.content)
                 lines.append("")
 
-        if minutes.action_items:
+        # Only confirmed action items reach the rendered markdown — proposed
+        # ones live in the DB / Actions tab until the user reviews them, and
+        # rejected ones are dropped. After review the markdown is re-rendered
+        # by the review endpoint so Obsidian / exports pick up the change.
+        confirmed_actions = [
+            ai for ai in minutes.action_items
+            if (getattr(ai, "proposal_state", None) and
+                getattr(ai.proposal_state, "value", ai.proposal_state) == "confirmed")
+        ]
+        if confirmed_actions:
             lines.append("## Action Items")
             lines.append("")
-            for item in minutes.action_items:
+            for item in confirmed_actions:
                 check = "x" if item.status.value == "done" else " "
                 priority_tag = f" [{item.priority.upper()}]" if getattr(item, "priority", None) else ""
                 line = f"- [{check}]{priority_tag} {item.description}"

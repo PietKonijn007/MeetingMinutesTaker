@@ -147,7 +147,8 @@ Each meeting card shows:
 - **Date** (right-aligned, secondary text)
 - **Metadata row**: meeting type badge (colored pill), duration, attendee names (truncated with `+N more`)
 - **Summary snippet**: first 1-2 lines of the summary, faded overflow
-- **Counts row**: action item count, decision count — clickable to jump to those sections
+- **Counts row**: action item count (confirmed-only, matching the global tracker), decision count — clickable to jump to those sections
+- **"N to review" pill**: when the meeting has any `proposal_state == "proposed"` items, a small accent-colored pill appears on the metadata row (`MeetingListItem.proposed_action_count` from the API). One click jumps to the meeting's Actions tab so the user can review without context-switching.
 - **Hover**: subtle lift shadow, entire card is clickable
 
 **Grid View**:
@@ -238,7 +239,7 @@ The richest page. Shows everything about a single meeting.
 |-----|---------|
 | **Minutes** (default) | Rendered markdown of the generated minutes. Clean typography. |
 | **Transcript** | Full transcript with speaker labels and timestamps. Optionally with audio player synced to timestamps. |
-| **Actions** | Action items from this meeting with status toggles (checkbox to mark done). Badge shows count. |
+| **Actions** | Action items extracted from this meeting. Newly-generated items render as **proposals** with Accept / Edit / Reject controls (see § 3.2.7). Confirmed items render with a status checkbox. Badge format: `Actions (N)` when nothing's pending, `Actions (M to review)` when only proposals exist, `Actions (C · M to review)` when both confirmed and proposed items are present. |
 | **Decisions** | Decisions made in this meeting. Each with description and who made it. |
 
 #### 3.2.3 Header Section
@@ -257,7 +258,7 @@ Structured card layout (replaces the old flat markdown render):
 - **Summary card**: accent left-border, sentiment badge in the corner, summary text.
 - **Key topics chips**: hashtag-style chips from `key_topics`.
 - **Discussion section**: collapsible cards for each item in `discussion_points`. Header bar shows topic title, sentiment badge, and participant avatars (up to 3 + overflow). Click to expand for full summary and complete participant list. "Expand all / Collapse all" toggle above the cards.
-- **Outcomes grid** (2 columns): Decisions (◆) and Action items (○) preview. Each shows the top 3 with "View all →" deep-link to the respective tab.
+- **Outcomes grid** (2 columns): Decisions (◆) and Action items preview. Each shows the top 3 with "View all →" deep-link to the respective tab. The Actions card subhead reads `{C} confirmed` (when nothing's pending) or `{C} confirmed · {M} to review` (when proposals are queued); the deep-link label flips from "View all →" to "Review →" while there's anything to triage. Each preview row uses `○` for confirmed/done items and `?` for proposed ones; rejected items are line-through.
 - **Risks & Concerns**: yellow left-border card with ⚠ icon per item.
 - **Open Questions**: blue left-border card with ? icon per item; shows `raised_by` and `owner` chips.
 - **Follow-ups**: card with owner/timeframe badges per item.
@@ -295,7 +296,40 @@ Card data comes from `MinutesResponse`: `tldr`, `confidentiality`, `sentiment`, 
 - **"✎ Name speakers" button** (top-right of legend bar): when any generic `SPEAKER_XX` labels are present, this button opens an inline editor with one text input per unique speaker. Saving calls `PATCH /api/meetings/:id/transcript/speakers` which rewrites segments and the speakers array in the transcript JSON, updates `data/notes/{id}.json` so reprocess/regenerate use the names, and optionally regenerates minutes with the new names. Use "Save only" to update transcript without regenerating.
 - **Click-to-seek**: Click any timestamp to jump audio to that point.
 
-#### 3.2.6 Action Bar
+#### 3.2.7 Actions Tab — Review Workflow
+
+LLM-extracted action items land as **proposals** on this tab and only become tracked actions after the user accepts them. The contract is the same one specified in `specs/02-minutes-generation.md` § 4A.3.3: only `proposal_state == "confirmed"` items reach the global tracker, the rendered markdown, the Obsidian / DOCX exports, the chat embeddings, and the prior-action carryover.
+
+**Review banner** (rendered at the top of the tab when `proposedActions.length > 0`):
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  5 proposed actions to review                               │
+│  Accept turns each into a tracked action.   [Accept all]    │
+│  Edit before accepting if the wording is off. [Reject all]  │
+└─────────────────────────────────────────────────────────────┘
+```
+
+- **Accept all** → `POST /api/action-items/bulk-review/{meeting_id}` with every proposed id under `confirm`.
+- **Reject all** → same endpoint with every proposed id under `reject`.
+
+**ActionItemRow states** (`web/src/lib/components/ActionItemRow.svelte`):
+
+| State | Marker | Body | Trailing controls |
+|-------|--------|------|------|
+| Proposed | dashed-border `?` circle, dashed-border container, `PROPOSED` chip | description + owner + due chips | **Accept · Edit · Reject** |
+| Edit (proposed only) | same `?` circle | three inline inputs: description / owner / due_date (date picker) | **Save · Cancel** |
+| Confirmed, open | square checkbox | description + owner/due chips | (none — checkbox toggles done) |
+| Confirmed, done | filled green checkbox | line-through description | (checkbox toggles back to open) |
+| Rejected | dashed-border `?` (muted, opacity 50%), `REJECTED` chip, line-through description | — | **Restore** (flips back to confirmed) |
+
+Per-row Accept / Reject calls `PATCH /api/action-items/{id}` with `{proposal_state: "confirmed" | "rejected"}`. **Edit** opens an inline editor that PATCHes `{description, owner, due_date}` and (when the user clicks the green Accept on the form) flips `proposal_state` to `confirmed` in the same request.
+
+After any Accept / Reject / Edit, the parent `MeetingDetail` refetches the meeting via `onActionRowUpdate` so counts, the tab label, the outcomes preview card, and the rendered minutes markdown all stay in sync. The server side already re-rendered the on-disk `## Action Items` section + Obsidian export via `resync_action_items_artifacts`, so an Obsidian user pivots to their vault and sees the curated set immediately.
+
+**Regenerate caveat.** Hitting **Regenerate** on a meeting wipes and re-extracts action items; every fresh item lands back as `proposed` and the user re-reviews. This is intentional and called out in the regenerate confirmation modal.
+
+#### 3.2.8 Action Bar
 
 Bottom of the page, sticky on scroll:
 
@@ -309,13 +343,15 @@ Bottom of the page, sticky on scroll:
 
 ### 3.3 Action Items Page (`/actions`)
 
-A Kanban-inspired board or filterable list of all action items across meetings.
+A filterable list of all action items across meetings. The page is scoped to **confirmed** actions by default — proposals live on the per-meeting Actions tab and don't pollute the global tracker until you bless them.
 
 #### 3.3.1 Default: List View
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  Action Items                       [Owner ▾] [Status ▾]   │
+│  Action Items     [Confirmed | Proposed | All] [Owner ▾]   │
+│                                          [Status ▾]         │
+│  Confirm all proposals from before a date…                  │
 │                                                             │
 │  ☐  Review API spec                                        │
 │     Bob · Due Mar 29 · from Daily Standup (Mar 28)         │
@@ -341,10 +377,18 @@ A Kanban-inspired board or filterable list of all action items across meetings.
 
 #### 3.3.2 Filters
 
+- **Review state** (chip group, defaults to **Confirmed**):
+  - **Confirmed** — what shows up in the tracker today.
+  - **Proposed** — every still-unreviewed extraction across the workspace; rows render with the proposed-state ActionItemRow chrome (dashed border, Accept / Edit / Reject buttons) so you can triage in bulk without bouncing between meetings.
+  - **All** — confirmed + proposed + rejected, useful for audit.
 - **Owner**: Dropdown of all people with assigned actions
 - **Status**: Open / In Progress / Done / All
 - **Due date**: Overdue / Due This Week / Due This Month / All
 - **Meeting**: Filter to a specific meeting's actions
+
+#### 3.3.3 Backlog clear (admin)
+
+A subtle inline link — **Confirm all proposals from before a date…** — sits between the filter row and the list. Clicking it expands a date picker + **Confirm all** button. Submitting calls `POST /api/action-items/confirm-before` with `{before_date}`; the server flips every still-proposed action from meetings on or before that date to `confirmed` and re-renders each affected meeting's markdown + Obsidian export. Designed for the one-time clear right after the proposal-state migration leaves a backlog of historical extractions queued for review — not a permanent admin tool.
 
 ---
 

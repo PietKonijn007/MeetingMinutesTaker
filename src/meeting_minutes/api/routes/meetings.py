@@ -66,6 +66,13 @@ def _meeting_to_list_item(m: MeetingORM) -> MeetingListItem:
         except Exception:
             pass
 
+    confirmed_count = sum(
+        1 for ai in m.action_items if (ai.proposal_state or "proposed") == "confirmed"
+    )
+    proposed_count = sum(
+        1 for ai in m.action_items if (ai.proposal_state or "proposed") == "proposed"
+    )
+
     return MeetingListItem(
         meeting_id=m.meeting_id,
         title=m.title,
@@ -75,7 +82,8 @@ def _meeting_to_list_item(m: MeetingORM) -> MeetingListItem:
         organizer=m.organizer,
         summary=m.minutes.summary if m.minutes else None,
         attendee_names=[a.name for a in m.attendees],
-        action_item_count=len(m.action_items),
+        action_item_count=confirmed_count,
+        proposed_action_count=proposed_count,
         decision_count=len(m.decisions),
         effectiveness_score=effectiveness_score,
     )
@@ -185,8 +193,10 @@ def _meeting_to_detail(m: MeetingORM) -> MeetingDetail:
             owner=ai.owner,
             due_date=ai.due_date,
             status=ai.status or "open",
+            proposal_state=ai.proposal_state or "proposed",
             meeting_id=m.meeting_id,
             meeting_title=m.title,
+            meeting_date=m.date.isoformat() if m.date else None,
         )
         for ai in m.action_items
     ]

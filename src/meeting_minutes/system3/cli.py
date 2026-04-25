@@ -239,27 +239,58 @@ def actions_cmd(
     owner: Optional[str] = typer.Option(None, "--owner", help="Filter by owner email"),
     overdue: bool = typer.Option(False, "--overdue", help="Show only overdue items"),
     status: Optional[str] = typer.Option(None, "--status", help="Filter by status"),
+    proposed: bool = typer.Option(
+        False,
+        "--proposed",
+        help="Show proposed actions awaiting review instead of confirmed ones",
+    ),
+    all_states: bool = typer.Option(
+        False,
+        "--all-states",
+        help="Show actions in every proposal state (confirmed + proposed + rejected)",
+    ),
 ):
-    """List action items."""
+    """List action items.
+
+    Defaults to confirmed-only (matches the global tracker UI). Use ``--proposed``
+    to triage proposals from the CLI, or ``--all-states`` to see everything.
+    """
     if ctx.invoked_subcommand is not None:
         return
 
     from meeting_minutes.system3.storage import ActionItemFilters
 
     storage, _ = _get_storage_and_search()
-    filters = ActionItemFilters(owner=owner, status=status or "open", overdue=overdue)
+    if all_states:
+        ps_filter: Optional[str] = None
+    elif proposed:
+        ps_filter = "proposed"
+    else:
+        ps_filter = "confirmed"
+    filters = ActionItemFilters(
+        owner=owner,
+        status=status or "open",
+        overdue=overdue,
+        proposal_state=ps_filter,
+    )
     items = storage.get_action_items(filters)
 
     if not items:
         console.print("[yellow]No action items found.[/yellow]")
         return
 
-    table = Table(title="Action Items")
+    title = "Action Items"
+    if ps_filter == "proposed":
+        title = "Action Items — Proposed (awaiting review)"
+    elif ps_filter is None:
+        title = "Action Items — All states"
+    table = Table(title=title)
     table.add_column("ID", style="dim", width=10)
     table.add_column("Description")
     table.add_column("Owner")
     table.add_column("Due Date")
     table.add_column("Status")
+    table.add_column("Review")
     table.add_column("Meeting ID", style="dim")
 
     for item in items:
@@ -269,6 +300,7 @@ def actions_cmd(
             item.owner or "",
             item.due_date or "",
             item.status or "open",
+            item.proposal_state or "proposed",
             item.meeting_id[:8] + "..." if item.meeting_id else "",
         )
 

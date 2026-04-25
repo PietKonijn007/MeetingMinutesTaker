@@ -331,6 +331,7 @@ def _build_open_commitments(
             ActionItemORM.meeting_id.in_(meeting_ids),
             ActionItemORM.owner.in_(owner_names),
             ActionItemORM.status != "done",
+            ActionItemORM.proposal_state == "confirmed",
         )
         .all()
     )

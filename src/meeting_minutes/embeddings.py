@@ -117,22 +117,26 @@ class EmbeddingEngine:
                             "owner": None,
                         })
 
-                # Action items
+                # Action items — only embed confirmed ones so the chat
+                # search doesn't surface unreviewed LLM proposals as facts.
                 for ai in mdata.get("action_items", []) or []:
-                    if isinstance(ai, dict) and ai.get("description"):
-                        owner = ai.get("owner")
-                        text = ai["description"]
-                        if owner:
-                            text = f"[Action for {owner}] {text}"
-                        chunks.append({
-                            "meeting_id": meeting_id,
-                            "chunk_type": "action_item",
-                            "speaker": None,
-                            "text": text,
-                            "meeting_date": meeting_date,
-                            "meeting_type": meeting_type,
-                            "owner": owner,
-                        })
+                    if not isinstance(ai, dict) or not ai.get("description"):
+                        continue
+                    if (ai.get("proposal_state") or "proposed") != "confirmed":
+                        continue
+                    owner = ai.get("owner")
+                    text = ai["description"]
+                    if owner:
+                        text = f"[Action for {owner}] {text}"
+                    chunks.append({
+                        "meeting_id": meeting_id,
+                        "chunk_type": "action_item",
+                        "speaker": None,
+                        "text": text,
+                        "meeting_date": meeting_date,
+                        "meeting_type": meeting_type,
+                        "owner": owner,
+                    })
 
                 # Decisions
                 for d in mdata.get("decisions", []) or []:

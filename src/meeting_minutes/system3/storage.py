@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from meeting_minutes.models import (
     ActionItem,
+    ActionItemProposalState,
     ActionItemStatus,
     MinutesData,
 )
@@ -44,10 +45,12 @@ class ActionItemFilters:
         owner: str | None = None,
         status: str | None = None,
         overdue: bool = False,
+        proposal_state: str | None = None,
     ) -> None:
         self.owner = owner
         self.status = status
         self.overdue = overdue
+        self.proposal_state = proposal_state
 
 
 class StorageEngine:
@@ -115,9 +118,12 @@ class StorageEngine:
             transcript_orm.language = tj.metadata.language
             transcript_orm.audio_file_path = tj.metadata.audio_file
 
-        # Delete old action items and re-insert
+        # Delete old action items and re-insert. Regeneration always
+        # produces fresh proposals — the user re-reviews after a regen.
         self._session.query(ActionItemORM).filter_by(meeting_id=mj.meeting_id).delete()
         for ai in mj.action_items:
+            ps = getattr(ai, "proposal_state", None)
+            ps_value = ps.value if hasattr(ps, "value") else (ps or ActionItemProposalState.PROPOSED.value)
             self._session.add(
                 ActionItemORM(
                     action_item_id=ai.id,
@@ -128,6 +134,7 @@ class StorageEngine:
                     status=ai.status.value,
                     mentioned_at_seconds=ai.mentioned_at_seconds,
                     priority=getattr(ai, "priority", None),
+                    proposal_state=ps_value,
                 )
             )
 
@@ -271,6 +278,8 @@ class StorageEngine:
                 query = query.filter(ActionItemORM.owner == filters.owner)
             if filters.status:
                 query = query.filter(ActionItemORM.status == filters.status)
+            if filters.proposal_state:
+                query = query.filter(ActionItemORM.proposal_state == filters.proposal_state)
         return query.all()
 
     def update_action_item_status(self, action_id: str, status: str) -> bool:
@@ -280,6 +289,98 @@ class StorageEngine:
         item.status = status
         self._session.commit()
         return True
+
+    def update_action_item(
+        self,
+        action_id: str,
+        *,
+        status: str | None = None,
+        proposal_state: str | None = None,
+        description: str | None = None,
+        owner: str | None = None,
+        due_date: str | None = None,
+    ) -> ActionItemORM | None:
+        """Partial update of an action item. Returns the row, or None if missing.
+
+        Pass ``None`` for fields you don't want to change. ``owner``/``due_date``
+        accept empty strings to clear the value (mapped to NULL); use
+        ``description="<new>"`` to rename. Caller commits — no implicit
+        commit so bulk callers can batch.
+        """
+        item = self._session.get(ActionItemORM, action_id)
+        if item is None:
+            return None
+        if status is not None:
+            item.status = status
+        if proposal_state is not None:
+            item.proposal_state = proposal_state
+        if description is not None:
+            item.description = description
+        if owner is not None:
+            item.owner = owner.strip() or None
+        if due_date is not None:
+            item.due_date = due_date.strip() or None
+        self._session.commit()
+        return item
+
+    def bulk_review_action_items(
+        self,
+        meeting_id: str,
+        confirm_ids: list[str],
+        reject_ids: list[str],
+    ) -> tuple[int, int]:
+        """Set proposal_state on a batch of action items in one transaction.
+
+        IDs are intersected with rows belonging to ``meeting_id`` to keep the
+        operation scoped — IDs from other meetings are silently ignored.
+        Returns ``(confirmed_count, rejected_count)``.
+        """
+        confirmed = 0
+        rejected = 0
+        if confirm_ids:
+            q = self._session.query(ActionItemORM).filter(
+                ActionItemORM.meeting_id == meeting_id,
+                ActionItemORM.action_item_id.in_(confirm_ids),
+            )
+            for item in q.all():
+                item.proposal_state = ActionItemProposalState.CONFIRMED.value
+                confirmed += 1
+        if reject_ids:
+            q = self._session.query(ActionItemORM).filter(
+                ActionItemORM.meeting_id == meeting_id,
+                ActionItemORM.action_item_id.in_(reject_ids),
+            )
+            for item in q.all():
+                item.proposal_state = ActionItemProposalState.REJECTED.value
+                rejected += 1
+        if confirmed or rejected:
+            self._session.commit()
+        return confirmed, rejected
+
+    def confirm_proposed_before(self, before_dt: datetime) -> tuple[int, list[str]]:
+        """Bulk-confirm every still-proposed action item from meetings on or
+        before ``before_dt``.
+
+        Returns ``(updated_count, affected_meeting_ids)``. Used by the
+        admin "Confirm all proposals from before date" affordance — the
+        one-time backlog clear after the proposal-state migration.
+        """
+        rows = (
+            self._session.query(ActionItemORM, MeetingORM)
+            .join(MeetingORM, ActionItemORM.meeting_id == MeetingORM.meeting_id)
+            .filter(ActionItemORM.proposal_state == ActionItemProposalState.PROPOSED.value)
+            .filter(MeetingORM.date <= before_dt)
+            .all()
+        )
+        affected: set[str] = set()
+        updated = 0
+        for ai, _m in rows:
+            ai.proposal_state = ActionItemProposalState.CONFIRMED.value
+            affected.add(ai.meeting_id)
+            updated += 1
+        if updated:
+            self._session.commit()
+        return updated, sorted(affected)
 
     def get_open_action_items_for_attendees(
         self,
@@ -326,6 +427,9 @@ class StorageEngine:
             self._session.query(ActionItemORM)
             .filter(ActionItemORM.meeting_id.in_(matching_meeting_ids))
             .filter(ActionItemORM.status == ActionItemStatus.OPEN.value)
+            # Proposed/rejected items aren't real yet — don't bleed them into
+            # the next meeting's prompt.
+            .filter(ActionItemORM.proposal_state == ActionItemProposalState.CONFIRMED.value)
             .all()
         )
         return items

@@ -1,13 +1,49 @@
 <script>
   import MeetingTypeBadge from './MeetingTypeBadge.svelte';
+  import ConfirmModal from './ConfirmModal.svelte';
+  import { api } from '$lib/api.js';
 
   /** @type {{
    *   date: string,
    *   meetings: Array<{id: string, title: string, type: string, duration: number|null, attendees: string[]}>,
    *   selectedMeetingId: string|null,
-   *   onSelectMeeting: (id: string) => void
+   *   onSelectMeeting: (id: string) => void,
+   *   onUpload?: (date: string) => void,
+   *   onDeleteMeeting?: (id: string) => void
    * }} */
-  let { date = '', meetings = [], selectedMeetingId = null, onSelectMeeting, onUpload } = $props();
+  let {
+    date = '',
+    meetings = [],
+    selectedMeetingId = null,
+    onSelectMeeting,
+    onUpload,
+    onDeleteMeeting
+  } = $props();
+
+  let showDeleteModal = $state(false);
+  let pendingDelete = $state(null); // { id, title }
+  let deleteError = $state('');
+
+  function requestDelete(meeting, e) {
+    e.stopPropagation();
+    pendingDelete = { id: meeting.id, title: meeting.title || 'Untitled Meeting' };
+    deleteError = '';
+    showDeleteModal = true;
+  }
+
+  async function confirmDelete() {
+    if (!pendingDelete) return;
+    const id = pendingDelete.id;
+    try {
+      await api.deleteMeeting(id);
+      onDeleteMeeting?.(id);
+    } catch (err) {
+      deleteError = 'Failed to delete meeting';
+      console.error('Delete failed:', err);
+    } finally {
+      pendingDelete = null;
+    }
+  }
 
   const formattedDate = $derived(formatDate(date));
 
@@ -85,38 +121,77 @@
     <div class="space-y-1">
       {#each meetings as meeting (meeting.id)}
         {@const isSelected = meeting.id === selectedMeetingId}
-        <button
-          onclick={() => onSelectMeeting(meeting.id)}
-          class="w-full text-left p-3 rounded-lg transition-colors duration-150
-                 {isSelected
-                   ? 'bg-[var(--accent)] bg-opacity-10 border-l-2 border-[var(--accent)] pl-2.5'
-                   : 'hover:bg-[var(--bg-surface-hover)] border-l-2 border-transparent pl-2.5'}"
-        >
-          <div class="flex items-start justify-between gap-2">
-            <h4 class="text-sm font-medium text-[var(--text-primary)] truncate flex-1">
-              {meeting.title || 'Untitled Meeting'}
-            </h4>
-          </div>
-          <div class="flex items-center gap-2 mt-1.5 flex-wrap">
-            <MeetingTypeBadge type={meeting.type} />
-            <span class="text-[10px] text-[var(--text-muted)]">
-              {formatDuration(meeting.duration)}
-            </span>
-            {#if meeting.effectiveness_score > 0}
-              <span class="text-[10px] inline-flex gap-px" title="Effectiveness: {meeting.effectiveness_score}/5">
-                {#each Array(5) as _, i}
-                  <span class="{i < meeting.effectiveness_score ? 'text-yellow-400' : 'text-[var(--text-muted)] opacity-30'}">★</span>
-                {/each}
+        <div class="group relative">
+          <button
+            onclick={() => onSelectMeeting(meeting.id)}
+            class="w-full text-left p-3 pr-9 rounded-lg transition-colors duration-150
+                   {isSelected
+                     ? 'bg-[var(--accent)] bg-opacity-10 border-l-2 border-[var(--accent)] pl-2.5'
+                     : 'hover:bg-[var(--bg-surface-hover)] border-l-2 border-transparent pl-2.5'}"
+          >
+            <div class="flex items-start justify-between gap-2">
+              <h4 class="text-sm font-medium text-[var(--text-primary)] truncate flex-1">
+                {meeting.title || 'Untitled Meeting'}
+              </h4>
+            </div>
+            <div class="flex items-center gap-2 mt-1.5 flex-wrap">
+              <MeetingTypeBadge type={meeting.type} />
+              <span class="text-[10px] text-[var(--text-muted)]">
+                {formatDuration(meeting.duration)}
               </span>
+              {#if meeting.effectiveness_score > 0}
+                <span class="text-[10px] inline-flex gap-px" title="Effectiveness: {meeting.effectiveness_score}/5">
+                  {#each Array(5) as _, i}
+                    <span class="{i < meeting.effectiveness_score ? 'text-yellow-400' : 'text-[var(--text-muted)] opacity-30'}">★</span>
+                  {/each}
+                </span>
+              {/if}
+              {#if meeting.proposed_action_count > 0}
+                <span
+                  class="text-[10px] px-1.5 py-0.5 rounded bg-[var(--accent)]/10 text-[var(--accent)] font-medium"
+                  title="{meeting.proposed_action_count} proposed action{meeting.proposed_action_count === 1 ? '' : 's'} need review"
+                >
+                  {meeting.proposed_action_count} to review
+                </span>
+              {/if}
+            </div>
+            {#if meeting.attendees?.length}
+              <p class="text-[10px] text-[var(--text-muted)] mt-1 truncate">
+                {meeting.attendees.slice(0, 3).join(', ')}{meeting.attendees.length > 3 ? ` +${meeting.attendees.length - 3}` : ''}
+              </p>
             {/if}
-          </div>
-          {#if meeting.attendees?.length}
-            <p class="text-[10px] text-[var(--text-muted)] mt-1 truncate">
-              {meeting.attendees.slice(0, 3).join(', ')}{meeting.attendees.length > 3 ? ` +${meeting.attendees.length - 3}` : ''}
-            </p>
-          {/if}
-        </button>
+          </button>
+          <button
+            type="button"
+            onclick={(e) => requestDelete(meeting, e)}
+            class="absolute top-2 right-2 p-1 rounded text-[var(--text-muted)] opacity-0 group-hover:opacity-100 focus:opacity-100 hover:text-[var(--danger)] hover:bg-[var(--bg-surface-hover)] transition-opacity duration-150"
+            title="Delete meeting"
+            aria-label="Delete meeting"
+          >
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6M1 7h22M9 7V4a1 1 0 011-1h4a1 1 0 011 1v3"/>
+            </svg>
+          </button>
+        </div>
       {/each}
     </div>
   {/if}
 </div>
+
+<ConfirmModal
+  bind:open={showDeleteModal}
+  title="Delete Meeting"
+  message={pendingDelete
+    ? `This will permanently delete "${pendingDelete.title}" and all associated data. This action cannot be undone.`
+    : 'This will permanently delete this meeting and all associated data. This action cannot be undone.'}
+  confirmLabel="Delete"
+  danger={true}
+  onConfirm={confirmDelete}
+  onCancel={() => { pendingDelete = null; }}
+/>
+
+{#if deleteError}
+  <div class="fixed bottom-4 right-4 z-40 px-4 py-2 rounded-lg bg-[var(--danger)] text-white text-sm shadow-lg">
+    {deleteError}
+  </div>
+{/if}

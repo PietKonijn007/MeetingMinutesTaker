@@ -35,12 +35,45 @@ class ActionItemResponse(BaseModel):
     owner: str | None = None
     due_date: str | None = None
     status: str
+    proposal_state: str = "proposed"
     meeting_id: str | None = None
     meeting_title: str | None = None
+    meeting_date: str | None = None
 
 
 class ActionItemUpdate(BaseModel):
-    status: str
+    """Partial update for an action item.
+
+    All fields are optional — callers send only the fields they want to change.
+    Used for both review actions (``proposal_state``) and inline edits while
+    reviewing (``description``/``owner``/``due_date``) or post-confirmation
+    status flips (``status``).
+    """
+
+    status: str | None = None
+    proposal_state: str | None = None
+    description: str | None = None
+    owner: str | None = None
+    due_date: str | None = None
+
+
+class BulkActionReviewRequest(BaseModel):
+    """Bulk Accept/Reject of proposed action items on one meeting.
+
+    Either or both lists may be non-empty. IDs that don't belong to this
+    meeting or are already in the requested state are ignored silently.
+    """
+
+    confirm: list[str] = []
+    reject: list[str] = []
+
+
+class BulkConfirmBeforeRequest(BaseModel):
+    """One-time admin sweep — confirm every still-proposed item from meetings
+    on or before ``before_date``. Used to clear the historical review backlog
+    that surfaces after the proposal-state migration."""
+
+    before_date: str  # ISO date (``YYYY-MM-DD``) or full ISO datetime.
 
 
 # ---------------------------------------------------------------------------
@@ -94,7 +127,8 @@ class MeetingListItem(BaseModel):
     organizer: str | None = None
     summary: str | None = None
     attendee_names: list[str] = []
-    action_item_count: int = 0
+    action_item_count: int = 0  # confirmed-only — what shows in the global tracker
+    proposed_action_count: int = 0  # surfaces "X to review" badge on the card
     decision_count: int = 0
     effectiveness_score: int = 0  # 0-5, 0 = unknown
 

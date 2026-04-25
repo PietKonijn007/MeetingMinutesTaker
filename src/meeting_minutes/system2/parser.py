@@ -8,6 +8,7 @@ from typing import Optional
 
 from meeting_minutes.models import (
     ActionItem,
+    ActionItemProposalState,
     ActionItemStatus,
     Decision,
     MeetingContext,
@@ -204,6 +205,7 @@ class MinutesParser:
                     owner=owner,
                     due_date=due_date,
                     status=ActionItemStatus.OPEN,
+                    proposal_state=ActionItemProposalState.PROPOSED,
                 )
             )
 
@@ -218,6 +220,7 @@ class MinutesParser:
                     ActionItem(
                         description=description,
                         status=ActionItemStatus.OPEN,
+                        proposal_state=ActionItemProposalState.PROPOSED,
                     )
                 )
 
@@ -313,6 +316,7 @@ class StructuredMinutesAdapter:
                 priority=ai.priority,
                 transcript_segment_ids=ai.transcript_segment_ids,
                 status=ActionItemStatus.OPEN,
+                proposal_state=ActionItemProposalState.PROPOSED,
             )
             for ai in structured.action_items
         ]
