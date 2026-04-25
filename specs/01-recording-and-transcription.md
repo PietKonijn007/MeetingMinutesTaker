@@ -148,6 +148,8 @@ Remote participants (Zoom/Teams/etc.)
 
 During an active recording, users can provide additional context via the web UI:
 
+- **Title**: Optional user-set meeting title. When non-empty, the pipeline uses it verbatim for the minutes header, the markdown `# heading`, and the FTS index, and skips the LLM title-generation step. Leave blank to let the LLM generate one from the transcript.
+- **Meeting type**: Optional template override. When set, the pipeline routes straight to the matching template and skips the LLM type classifier.
 - **Speaker names**: Comma-separated list of participant names to assist with diarization speaker mapping
 - **Notes**: Free-form text notes taken during the meeting, included as context for minutes generation
 - **Custom LLM instructions**: Specific instructions for the LLM when generating minutes (e.g., "focus on budget discussions", "use bullet points only")
@@ -156,12 +158,15 @@ Notes are saved to `data/notes/{meeting_id}.json` and automatically loaded by th
 
 ```json
 {
-  "meeting_id": "uuid",
-  "speaker_names": ["Alice", "Bob"],
+  "title": "Q3 budget review with finance",
+  "meeting_type": "leadership_meeting",
+  "speakers": ["Alice", "Bob"],
   "notes": "Discussed Q3 budget...",
-  "custom_instructions": "Focus on action items for the engineering team"
+  "instructions": "Focus on action items for the engineering team"
 }
 ```
+
+The title can also be edited post-hoc on the meeting detail page; that path mirrors the new title back into this sidecar so a later regeneration won't overwrite the user's choice.
 
 ---
 

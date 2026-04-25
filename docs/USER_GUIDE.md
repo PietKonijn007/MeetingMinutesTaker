@@ -953,7 +953,7 @@ Search features in the calendar view:
 
 The richest page. Shows everything about one meeting.
 
-**Header**: Title, metadata pills (type, duration, date, attendee count), attendee list, tags.
+**Header**: Title, metadata pills (type, duration, date, attendee count), attendee list, tags. Hover over the title and an **Edit** button appears next to it — click to rename the meeting inline. `Enter` saves, `Esc` cancels. Renaming rewrites the embedded `# Title` heading in `data/minutes/{id}.md` and the `metadata.title` field in `data/minutes/{id}.json`, refreshes the full-text-search index, mirrors the new title to `data/notes/{id}.json` (so a later regeneration won't overwrite it), and renames the Obsidian export file. The internal data files in `recordings/`, `transcripts/`, `minutes/`, and `notes/` are keyed by `meeting_id` (UUID) and stay put — only their contents change where the title is embedded.
 
 **Four tabs**:
 
@@ -1000,7 +1000,7 @@ Start and stop recordings directly from the browser.
 
 - **Idle state**: Large record button, auto-detected audio device (prefers MeetingCapture aggregate devices, skips offline devices like disconnected AirPods) with an "auto-detected" indicator, recent recordings list. You can also select a device manually.
 - **Recording state**: Pulsing red indicator, elapsed time counter, audio level bars, Pause and Stop buttons. A small red dot also appears in the top bar so you can see recording status from any page. Audio is auto-saved every 5 minutes as a recovery file in case of crashes.
-- **Live note-taking**: While recording, you can enter speaker names (comma-separated), free-form notes, and custom instructions for the LLM. Speaker names help the diarization engine map speakers. Notes are included as context in the minutes generation prompt. Custom instructions let you tell the LLM to focus on specific topics or use a particular format. Notes are saved to `data/notes/{meeting_id}.json` and automatically loaded during pipeline processing.
+- **Live note-taking**: While recording, you can enter a meeting title, speaker names (comma-separated), free-form notes, and custom instructions for the LLM. The title is optional — set one yourself for a stable, predictable name, or leave it blank and the LLM generates one from the transcript. A user-set title is honored verbatim and the LLM title-generation step is skipped. Speaker names help the diarization engine map speakers. Notes are included as context in the minutes generation prompt. Custom instructions let you tell the LLM to focus on specific topics or use a particular format. Notes are saved to `data/notes/{meeting_id}.json` and automatically loaded during pipeline processing. The title is also editable post-hoc on the meeting detail page (see §7.5).
 - **Processing state**: Below the recording controls, a "Processing" section shows per-meeting pipeline status. Each job displays steps — Transcribe, Generate, Index — with checkmarks as they complete. Pipeline jobs run sequentially (queued) to avoid memory thrashing with Whisper.
 
 You can record a new meeting immediately after stopping the previous one — the previous meeting's pipeline continues processing in the background.

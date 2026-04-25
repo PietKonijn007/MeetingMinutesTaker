@@ -243,7 +243,7 @@ The richest page. Shows everything about a single meeting.
 
 #### 3.2.3 Header Section
 
-- **Title**: Large heading
+- **Title**: Large heading. Inline-editable — hover reveals an **Edit** button that swaps the heading for a text input + **Save** / **Cancel** buttons. `Enter` saves, `Esc` cancels. Saving calls `PATCH /api/meetings/:id` with `{title}`; the server rewrites the embedded title in `data/minutes/{id}.md` (`# heading`) and `data/minutes/{id}.json` (`metadata.title`), refreshes the FTS index, mirrors the new title to `data/notes/{id}.json` (so a future regeneration won't overwrite it), and renames the Obsidian export from `{date} {old_safe_title}.md` to `{date} {new_safe_title}.md`. Internal data files under `recordings/`, `transcripts/`, `minutes/`, and `notes/` are keyed by `meeting_id` (UUID) and are not renamed.
 - **Metadata pills**: Meeting type (colored badge), duration, date, attendee count — in a horizontal row
 - **Attendees**: Expandable. Shows first 5 names, `+N more` to expand.
 - **Tags**: Inline editable. Click `+` to add, click `×` on tag to remove.
@@ -618,7 +618,11 @@ GET    /api/meetings/:id                     # Meeting detail — includes: tldr
 GET    /api/meetings/:id/transcript          # Full transcript with segments (id, start, end, speaker, text) + speakers mapping
 PATCH  /api/meetings/:id/transcript/speakers # Rename speakers. Body: {"mapping": {"SPEAKER_00": "Tom"}} or {"ordered_names": ["Tom", "Mary"]}
 GET    /api/meetings/:id/audio               # Stream audio file
-PATCH  /api/meetings/:id                     # Update tags, status
+PATCH  /api/meetings/:id                     # Update tags, status, title.
+                                              # A title change rewrites the embedded title in the on-disk minutes
+                                              # JSON/MD, refreshes the FTS index, mirrors the new title to the
+                                              # notes sidecar, and renames the Obsidian export. Internal files
+                                              # are keyed by UUID and stay put. Body: {"title": "..."}
 DELETE /api/meetings/:id                     # Delete meeting + all data
 
 GET    /api/search?q=<query>                 # Full-text search

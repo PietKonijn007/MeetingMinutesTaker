@@ -19,6 +19,7 @@
   let plannedMinutes = $state(60);
 
   // Live note-taking during recording
+  let meetingTitle = $state('');
   let speakerNames = $state('');
   let meetingNotes = $state('');
   let customInstructions = $state('');
@@ -243,6 +244,7 @@
     stoppingRecording = true;
     try {
       const body = {};
+      if (meetingTitle.trim()) body.title = meetingTitle.trim();
       if (meetingNotes.trim()) body.notes = meetingNotes.trim();
       if (speakerNames.trim()) body.speakers = speakerNames.trim();
       if (customInstructions.trim()) body.instructions = customInstructions.trim();
@@ -254,6 +256,7 @@
       recElapsed = 0;
       levelHistory = new Array(24).fill(0);
       // Clear notes for next recording
+      meetingTitle = '';
       meetingNotes = '';
       speakerNames = '';
       customInstructions = '';
@@ -566,6 +569,24 @@
 
       <!-- Live note-taking area -->
       <div class="w-full max-w-2xl bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-xl p-4 mb-6">
+        <!-- Meeting title -->
+        <div class="mb-3">
+          <label for="meeting-title" class="block text-xs font-medium text-[var(--text-secondary)] mb-1">
+            Title <span class="text-[var(--text-muted)] font-normal">(optional)</span>
+          </label>
+          <input
+            id="meeting-title"
+            bind:value={meetingTitle}
+            placeholder="e.g., Q2 planning with marketing"
+            class="w-full px-3 py-2 bg-[var(--bg-primary)] border border-[var(--border-subtle)] rounded-lg
+                   text-[var(--text-primary)] text-sm focus:outline-none focus:ring-2 focus:ring-[var(--accent)]
+                   focus:border-transparent placeholder-[var(--text-muted)]"
+          />
+          <p class="text-xs text-[var(--text-muted)] mt-1">
+            Set a title yourself, or leave blank and we'll generate one from the transcript.
+          </p>
+        </div>
+
         <!-- Meeting type picker -->
         <div class="mb-3">
           <label for="meeting-type" class="block text-xs font-medium text-[var(--text-secondary)] mb-1">

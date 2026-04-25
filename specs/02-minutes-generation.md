@@ -342,7 +342,7 @@ The primary method for generating structured meeting minutes is via Anthropic's 
 
 The tool definition includes these fields:
 
-- `title` (str): Specific, descriptive meeting title
+- `title` (str): Specific, descriptive meeting title — used only when the user did NOT provide a title at recording time (or post-hoc via the detail page). A user-set title is read from `data/notes/{id}.json` and used verbatim; the LLM's `title` field is then ignored. The post-hoc rename path (`PATCH /api/meetings/:id` with `{title}`) also writes back to the notes sidecar so a future regeneration keeps the user's title.
 - `tldr` (str): ~100-word executive digest — biggest decision, biggest risk, most urgent action, single takeaway
 - `summary` (str): Executive summary (2-6 sentences depending on meeting type)
 - `detailed_notes` (str): Long-form narrative of how the conversation unfolded; length governed by `generation.length_mode`

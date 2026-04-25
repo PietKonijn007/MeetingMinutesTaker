@@ -581,6 +581,7 @@ class PipelineOrchestrator:
         user_speakers = []
         user_instructions = ""
         user_meeting_type: str | None = None
+        user_title: str | None = None
         external_notes = ""
         notes_file = self._data_dir / "notes" / f"{meeting_id}.json"
         if notes_file.exists():
@@ -591,6 +592,8 @@ class PipelineOrchestrator:
                 user_instructions = notes_data.get("instructions", "")
                 raw_type = (notes_data.get("meeting_type") or "").strip()
                 user_meeting_type = raw_type or None
+                raw_title = (notes_data.get("title") or "").strip()
+                user_title = raw_title or None
                 # Post-hoc external notes pasted from a meeting app. Folded
                 # into user_notes below so the existing "Organizer's Meeting
                 # Notes" injection rail carries them to the LLM.
@@ -605,6 +608,8 @@ class PipelineOrchestrator:
                     _console(f"  Custom instructions: {user_instructions[:100]}...")
                 if user_meeting_type:
                     _console(f"  User-picked meeting type: {user_meeting_type}", "cyan")
+                if user_title:
+                    _console(f"  User-picked title: {user_title}", "cyan")
             except Exception:
                 pass
 
@@ -679,7 +684,7 @@ class PipelineOrchestrator:
         attendees = user_speakers if user_speakers else [s.name or s.label for s in tj.speakers]
         context = MeetingContext(
             meeting_id=meeting_id,
-            title=f"Meeting {meeting_id[:8]}",
+            title=user_title or f"Meeting {meeting_id[:8]}",
             date=tj.metadata.timestamp_start.strftime("%Y-%m-%d"),
             duration=f"{int(tj.metadata.duration_seconds // 60)} minutes",
             attendees=attendees,
@@ -798,8 +803,8 @@ class PipelineOrchestrator:
             adapter = StructuredMinutesAdapter()
             parsed_minutes = adapter.adapt(structured, context)
 
-            # Use LLM-generated title
-            if parsed_minutes.title:
+            # Use LLM-generated title only if the user didn't provide one
+            if parsed_minutes.title and not user_title:
                 context.title = parsed_minutes.title
 
             # N11: Meeting type refinement — check if LLM suggests a different type.
@@ -878,10 +883,10 @@ class PipelineOrchestrator:
             parser = MinutesParser()
             parsed_minutes = parser.parse(llm_response.text, context)
 
-            if parsed_minutes.title:
+            if parsed_minutes.title and not user_title:
                 context.title = parsed_minutes.title
 
-        _console(f"    Title: {parsed_minutes.title}")
+        _console(f"    Title: {context.title}")
         _console(f"    Summary: {len(parsed_minutes.summary)} chars")
         _console(f"    Sections: {len(parsed_minutes.sections)}")
         _console(f"    Action items: {len(parsed_minutes.action_items)}")

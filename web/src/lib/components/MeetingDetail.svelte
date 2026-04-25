@@ -60,6 +60,12 @@
   let pendingType = $state(null);            // value selected in the dropdown
   let submittingTypeChange = $state(false);
   let showTypeChangeModal = $state(false);
+
+  // Title-edit state. Inline-editable header; on save we PATCH the meeting
+  // and the server rewrites the on-disk minutes JSON/MD + Obsidian export.
+  let editingTitle = $state(false);
+  let pendingTitle = $state('');
+  let savingTitle = $state(false);
   // Single poller for any in-flight regeneration (type change, speaker
   // rename, etc.). The server uses one regen_status field across all
   // triggers — only one regen runs at a time per meeting.
@@ -551,6 +557,51 @@
     }
   }
 
+  function openTitleEditor() {
+    pendingTitle = meeting?.title || '';
+    editingTitle = true;
+  }
+
+  function cancelTitleEdit() {
+    editingTitle = false;
+    pendingTitle = '';
+  }
+
+  async function saveTitle() {
+    const next = (pendingTitle || '').trim();
+    if (!next) {
+      addToast('Title cannot be empty', 'warning');
+      return;
+    }
+    if (next === (meeting?.title || '')) {
+      editingTitle = false;
+      return;
+    }
+    savingTitle = true;
+    try {
+      await api.updateMeeting(meetingId, { title: next });
+      // Reload so the embedded markdown heading + any other derived fields
+      // pick up the new title.
+      await loadMeeting(meetingId);
+      editingTitle = false;
+      addToast('Title updated', 'success');
+    } catch (e) {
+      addToast(`Failed to update title: ${e.message}`, 'error');
+    } finally {
+      savingTitle = false;
+    }
+  }
+
+  function handleTitleKeydown(event) {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      saveTitle();
+    } else if (event.key === 'Escape') {
+      event.preventDefault();
+      cancelTitleEdit();
+    }
+  }
+
   function sentimentColor(sentiment) {
     switch (sentiment) {
       case 'positive': return 'bg-green-400';
@@ -602,9 +653,47 @@
     </div>
   {:else if meeting}
     <!-- Header -->
-    <h1 class="text-2xl font-bold text-[var(--text-primary)] mb-3">
-      {meeting.title || 'Untitled Meeting'}
-    </h1>
+    {#if editingTitle}
+      <div class="flex items-center gap-2 mb-3">
+        <input
+          type="text"
+          bind:value={pendingTitle}
+          onkeydown={handleTitleKeydown}
+          disabled={savingTitle}
+          maxlength="200"
+          placeholder="Meeting title"
+          autofocus
+          class="flex-1 text-2xl font-bold text-[var(--text-primary)] bg-[var(--bg-primary)] border border-[var(--border-subtle)] rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
+        />
+        <button
+          onclick={saveTitle}
+          disabled={savingTitle || !pendingTitle.trim()}
+          class="px-3 py-1.5 bg-[var(--accent)] text-white rounded-lg text-sm font-medium hover:opacity-90 disabled:opacity-40"
+        >
+          {savingTitle ? 'Saving…' : 'Save'}
+        </button>
+        <button
+          onclick={cancelTitleEdit}
+          disabled={savingTitle}
+          class="px-3 py-1.5 bg-[var(--bg-surface)] border border-[var(--border-subtle)] text-[var(--text-secondary)] rounded-lg text-sm hover:text-[var(--text-primary)]"
+        >
+          Cancel
+        </button>
+      </div>
+    {:else}
+      <div class="flex items-center gap-2 mb-3 group">
+        <h1 class="text-2xl font-bold text-[var(--text-primary)]">
+          {meeting.title || 'Untitled Meeting'}
+        </h1>
+        <button
+          onclick={openTitleEditor}
+          class="text-xs text-[var(--text-muted)] hover:text-[var(--accent)] underline-offset-2 hover:underline opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity"
+          title="Rename this meeting"
+        >
+          Edit
+        </button>
+      </div>
+    {/if}
 
     <!-- Metadata pills -->
     <div class="flex items-center gap-3 mb-4 flex-wrap">

@@ -134,6 +134,7 @@ class MeetingDetail(BaseModel):
 class MeetingUpdate(BaseModel):
     status: str | None = None
     tags: list[str] | None = None
+    title: str | None = None
 
 
 class ExportRequest(BaseModel):
@@ -284,6 +285,10 @@ class RecordingStopRequest(BaseModel):
     # template stem present in templates/ (custom templates are supported).
     # Leave null/empty to let the auto-classifier pick the type.
     meeting_type: str | None = None
+    # User-provided meeting title. When set (non-empty), the pipeline uses
+    # this verbatim and skips the LLM-generated title. Leave null/empty to
+    # let the LLM come up with one from the transcript.
+    title: str | None = None
 
 
 class RecordingStartResponse(BaseModel):

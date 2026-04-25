@@ -339,7 +339,18 @@ open http://localhost:8080
 
 **Pages**: Meetings (calendar view with day list + inline detail + search with filters), **Chat** (talk to your meetings — ask natural-language questions across all meeting history with citations), **Brief** (BRF-1 pre-meeting briefing with six data sections + inline Start Recording panel), Meeting Detail, Action Items, Decisions, People, Stats (charts), Record (live waveform + concurrent pipeline status + live note-taking), Templates (view/edit/create prompt templates), Settings (LLM provider/model selection with custom model support, Performance & Hardware, Security, Retention, and CORS config).
 
-**Features**: Dark mode, full-text search with `Cmd+K`, in-calendar search with type filter chips, keyboard navigation, responsive layout, meeting type color coding, WebSocket-based real-time updates, concurrent pipeline processing (record a new meeting while the previous one processes in background), auto-detect capture device, auto-save recovery every 5 minutes during recording, live note-taking during recording (speaker names, notes, custom LLM instructions), structured card-based minutes view with collapsible discussion topics, color-coded transcript per-speaker with inline "Name speakers" editor, **post-hoc external-notes tab** (paste notes from Teams/Zoom/Meet/Otter to auto-rename speakers + regenerate the summary), people management (edit / delete / merge duplicate entities with automatic historical attribution updates), Performance & Hardware settings (Apple Silicon MPS toggle), encryption at rest, retention policies with automatic cleanup.
+**Features**: Dark mode, full-text search with `Cmd+K`, in-calendar search with type filter chips, keyboard navigation, responsive layout, meeting type color coding, WebSocket-based real-time updates, concurrent pipeline processing (record a new meeting while the previous one processes in background), auto-detect capture device, auto-save recovery every 5 minutes during recording, live note-taking during recording (title, speaker names, notes, custom LLM instructions), inline-editable meeting title on the detail page (rewrites the embedded title in the minutes JSON/MD, refreshes the FTS index, and renames the Obsidian export), structured card-based minutes view with collapsible discussion topics, color-coded transcript per-speaker with inline "Name speakers" editor, **post-hoc external-notes tab** (paste notes from Teams/Zoom/Meet/Otter to auto-rename speakers + regenerate the summary), people management (edit / delete / merge duplicate entities with automatic historical attribution updates), Performance & Hardware settings (Apple Silicon MPS toggle), encryption at rest, retention policies with automatic cleanup.
+
+### Meeting titles
+
+Pick a title up-front during recording, or leave it blank and the LLM will generate one from the transcript. Either way, the title is editable post-hoc on the meeting detail page (click the **Edit** button next to the heading). A rename:
+
+- updates the title in the database and the full-text-search index,
+- rewrites the `# Title` heading inside `data/minutes/{id}.md` and the `metadata.title` field inside `data/minutes/{id}.json`,
+- mirrors the new title to the notes sidecar so a later regeneration won't overwrite it,
+- and renames the Obsidian export from `{date} {old_safe_title}.md` to `{date} {new_safe_title}.md`.
+
+Internal data files under `recordings/`, `transcripts/`, `minutes/`, and `notes/` are keyed by `meeting_id` (UUID) and are not renamed — only their contents change where the title is embedded.
 
 ### External notes (post-hoc)
 

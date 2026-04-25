@@ -835,8 +835,18 @@ def update_meeting(
     body: MeetingUpdate,
     storage: Annotated[StorageEngine, Depends(get_storage)],
     session: Annotated[Session, Depends(get_db_session)],
+    config: Annotated[AppConfig, Depends(get_config)],
 ):
-    """Update meeting metadata (status, tags)."""
+    """Update meeting metadata (status, tags, title).
+
+    A title change rewrites the embedded title inside the on-disk minutes
+    JSON + Markdown, refreshes the FTS index, mirrors the new title to the
+    notes sidecar (so a future regeneration won't overwrite it), and renames
+    the Obsidian export from ``{date} {old_safe_title}.md`` to ``{date}
+    {new_safe_title}.md``. The internal data files under ``recordings/``,
+    ``transcripts/``, ``minutes/`` and ``notes/`` are keyed by ``meeting_id``
+    (UUID) and are NOT renamed — only their contents are touched.
+    """
     m = storage.get_meeting(meeting_id)
     if m is None:
         raise HTTPException(status_code=404, detail=f"No meeting with ID {meeting_id}")
@@ -844,9 +854,185 @@ def update_meeting(
     if body.status is not None:
         m.status = body.status
 
+    if body.title is not None:
+        new_title = body.title.strip()
+        if not new_title:
+            raise HTTPException(status_code=400, detail="Title cannot be empty")
+        if len(new_title) > 200:
+            raise HTTPException(status_code=400, detail="Title too long (max 200 chars)")
+
+        old_title = m.title or ""
+        if new_title != old_title:
+            m.title = new_title
+
+            new_md = _sync_meeting_title_files(
+                meeting_id=meeting_id,
+                new_title=new_title,
+                old_title=old_title,
+                config=config,
+            )
+            # Keep the DB-cached markdown in sync with the on-disk file so
+            # the API's `minutes.markdown_content` reflects the new heading.
+            if new_md is not None and m.minutes is not None:
+                m.minutes.markdown_content = new_md
+
+            # Refresh FTS index so search hits use the new title.
+            from sqlalchemy import text
+            transcript_text = m.transcript.full_text if m.transcript else ""
+            minutes_text = m.minutes.markdown_content if m.minutes else ""
+            session.execute(
+                text("DELETE FROM meetings_fts WHERE meeting_id = :mid"),
+                {"mid": meeting_id},
+            )
+            session.execute(
+                text(
+                    "INSERT INTO meetings_fts(meeting_id, title, transcript_text, minutes_text) "
+                    "VALUES (:mid, :title, :tt, :mt)"
+                ),
+                {
+                    "mid": meeting_id,
+                    "title": new_title,
+                    "tt": transcript_text or "",
+                    "mt": minutes_text or "",
+                },
+            )
+
     session.commit()
     session.refresh(m)
     return _meeting_to_detail(m)
+
+
+def _safe_obsidian_title(title: str) -> str:
+    """Filename-safe title used by the Obsidian exporter and matched here
+    when we need to delete the previous export. Kept in lockstep with
+    :func:`meeting_minutes.obsidian.export_to_obsidian`."""
+    return "".join(c if c.isalnum() or c in " -_" else "_" for c in title).strip()[:80]
+
+
+def _sync_meeting_title_files(
+    meeting_id: str,
+    new_title: str,
+    old_title: str,
+    config: AppConfig,
+) -> str | None:
+    """Rewrite the title in the on-disk minutes JSON + MD, mirror the new
+    title to the notes sidecar (for future regenerations), and rename the
+    Obsidian export.
+
+    Returns the updated markdown content (so callers can refresh the DB
+    cache), or ``None`` if no markdown file existed.
+    """
+    import json as _json
+
+    data_dir = Path(config.data_dir).expanduser()
+    minutes_dir = data_dir / "minutes"
+    json_path = minutes_dir / f"{meeting_id}.json"
+    md_path = minutes_dir / f"{meeting_id}.md"
+    notes_path = data_dir / "notes" / f"{meeting_id}.json"
+
+    enc_key = (
+        config.security.encryption_key
+        if config.security.encryption_enabled
+        else None
+    )
+
+    minutes_date: str | None = None
+    new_md_content: str | None = None
+
+    # 1. Minutes JSON: bump metadata.title in place.
+    if json_path.exists():
+        try:
+            if enc_key:
+                from meeting_minutes.encryption import decrypt_file_text, encrypt_file
+                raw = decrypt_file_text(json_path, enc_key)
+            else:
+                raw = json_path.read_text(encoding="utf-8")
+            data = _json.loads(raw)
+            metadata = data.get("metadata") or {}
+            metadata["title"] = new_title
+            data["metadata"] = metadata
+            minutes_date = metadata.get("date")
+            json_path.write_text(_json.dumps(data, indent=2), encoding="utf-8")
+            if enc_key:
+                from meeting_minutes.encryption import encrypt_file
+                encrypt_file(json_path, enc_key)
+        except Exception as exc:
+            print(f"  ⚠ Failed to update minutes JSON title for {meeting_id}: {exc}")
+
+    # 2. Minutes Markdown: replace the first `# ...` heading.
+    if md_path.exists():
+        try:
+            if enc_key:
+                from meeting_minutes.encryption import decrypt_file_text, encrypt_file
+                content = decrypt_file_text(md_path, enc_key)
+            else:
+                content = md_path.read_text(encoding="utf-8")
+            lines = content.split("\n")
+            for i, line in enumerate(lines):
+                if line.startswith("# "):
+                    lines[i] = f"# {new_title}"
+                    break
+            new_md_content = "\n".join(lines)
+            md_path.write_text(new_md_content, encoding="utf-8")
+            if enc_key:
+                encrypt_file(md_path, enc_key)
+        except Exception as exc:
+            print(f"  ⚠ Failed to update minutes MD title for {meeting_id}: {exc}")
+
+    # 3. Notes sidecar: mirror the title so a future regeneration (e.g. a
+    # meeting-type change) re-uses it instead of letting the LLM invent a
+    # new one. Best-effort — a missing/unreadable sidecar is fine.
+    try:
+        notes_data: dict = {}
+        if notes_path.exists():
+            try:
+                notes_data = _json.loads(notes_path.read_text())
+                if not isinstance(notes_data, dict):
+                    notes_data = {}
+            except Exception:
+                notes_data = {}
+        notes_data["title"] = new_title
+        notes_path.parent.mkdir(parents=True, exist_ok=True)
+        notes_path.write_text(_json.dumps(notes_data, indent=2), encoding="utf-8")
+    except Exception as exc:
+        print(f"  ⚠ Failed to mirror title into notes sidecar for {meeting_id}: {exc}")
+
+    # 4. Obsidian: delete the file with the old safe-title, then re-export.
+    if config.obsidian.enabled and config.obsidian.vault_path and minutes_date:
+        try:
+            vault_path = Path(config.obsidian.vault_path).expanduser()
+            try:
+                date_obj = datetime.fromisoformat(minutes_date.split("T")[0])
+            except Exception:
+                date_obj = None
+            if date_obj is not None:
+                year = date_obj.strftime("%Y")
+                year_month = date_obj.strftime("%Y-%m")
+                date_str = date_obj.strftime("%Y-%m-%d")
+                if old_title:
+                    old_obsidian_file = (
+                        vault_path / "Meeting Minutes" / year / year_month
+                        / f"{date_str} {_safe_obsidian_title(old_title)}.md"
+                    )
+                    if old_obsidian_file.exists():
+                        new_obsidian_file = (
+                            vault_path / "Meeting Minutes" / year / year_month
+                            / f"{date_str} {_safe_obsidian_title(new_title)}.md"
+                        )
+                        if old_obsidian_file != new_obsidian_file:
+                            try:
+                                old_obsidian_file.unlink()
+                            except Exception:
+                                pass
+
+            # Re-export reads the freshly-updated JSON for the new title.
+            from meeting_minutes.pipeline import PipelineOrchestrator
+            orchestrator = PipelineOrchestrator(config)
+            orchestrator._export_to_obsidian_from_file(meeting_id)
+        except Exception as exc:
+            print(f"  ⚠ Obsidian rename failed for {meeting_id}: {exc}")
+
+    return new_md_content
 
 
 @router.delete("/{meeting_id}")
