@@ -244,8 +244,8 @@ def _meeting_to_detail(m: MeetingORM) -> MeetingDetail:
     external_notes_text: str | None = None
     external_notes_status: str | None = None
     external_notes_error: str | None = None
-    meeting_type_status: str | None = None
-    meeting_type_error: str | None = None
+    regen_status: str | None = None
+    regen_error: str | None = None
     try:
         from meeting_minutes import external_notes as _ext
         from meeting_minutes.config import ConfigLoader as _ConfigLoader
@@ -255,8 +255,8 @@ def _meeting_to_detail(m: MeetingORM) -> MeetingDetail:
         external_notes_text = _sidecar.get("external_notes") or None
         external_notes_status = _sidecar.get("external_notes_status") or None
         external_notes_error = _sidecar.get("external_notes_error") or None
-        meeting_type_status = _sidecar.get("meeting_type_status") or None
-        meeting_type_error = _sidecar.get("meeting_type_error") or None
+        regen_status = _sidecar.get("regen_status") or None
+        regen_error = _sidecar.get("regen_error") or None
     except Exception:
         pass
 
@@ -279,8 +279,8 @@ def _meeting_to_detail(m: MeetingORM) -> MeetingDetail:
         external_notes=external_notes_text,
         external_notes_status=external_notes_status,
         external_notes_error=external_notes_error,
-        meeting_type_status=meeting_type_status,
-        meeting_type_error=meeting_type_error,
+        regen_status=regen_status,
+        regen_error=regen_error,
     )
 
 
@@ -586,17 +586,39 @@ def update_transcript_speakers(
         { "mapping": {"SPEAKER_00": "Tom", "SPEAKER_01": "Mary"} }
         { "ordered_names": ["Tom", "Mary"] }  # first-appearance order
 
-    Optional SPK-1 field to confirm the voice sample under a specific person:
+    Optional SPK-1 field to bind the voice sample to a specific person:
         { "mapping": {...}, "person_mapping": {"SPEAKER_00": "p-jon"} }
 
-    When ``person_mapping`` is provided, confirm_sample() fires for each
-    cluster-to-person pair, and any prior sample for that cluster under a
-    different person is demoted to confirmed=False (invalidate_contamination).
+    Optional flag — defaults to ``True`` — to schedule an async minutes regen
+    after the rename is applied:
+        { "mapping": {...}, "regenerate": true }
+
+    Person resolution (when ``person_mapping`` is missing or partial):
+      - If a name in ``mapping`` matches an existing ``persons.name`` (case
+        insensitive), that person's ID is used and the voice sample is
+        confirmed under them. This is the same effect as if the user had
+        picked the suggestion in the UI.
+      - If no match, a new ``persons`` row is created with that name and the
+        voice sample is confirmed under the new person. Closes the
+        previously-orphaned-voice-sample gap for free-form typing.
+
+    For each (cluster_id → person_id) pair the endpoint runs:
+      ``invalidate_contamination`` (demotes prior samples for that cluster
+      under a *different* person to ``confirmed=False``) followed by
+      ``confirm_sample`` (flips the new pair's sample to ``confirmed=True``).
 
     Also updates data/notes/{meeting_id}.json so the names persist for
-    regenerate/reprocess.
+    regenerate/reprocess. When ``regenerate=true`` the endpoint sets
+    ``regen_status=processing`` on the sidecar and schedules a fire-and-forget
+    asyncio task; callers should poll ``GET /meetings/{id}`` for
+    ``regen_status`` to flip to ``ready`` (or ``error``).
     """
     import json as _json
+    import uuid as _uuid
+
+    from meeting_minutes import external_notes as ext_mod
+    from meeting_minutes import regen as regen_mod
+    from meeting_minutes.system3.db import PersonORM
 
     m = storage.get_meeting(meeting_id)
     if m is None:
@@ -638,34 +660,97 @@ def update_transcript_speakers(
 
     updated, seen_labels = apply_speaker_mapping(data_dir, meeting_id, mapping)
 
-    # SPK-1: when the caller supplies person_mapping, confirm or invalidate
-    # the voice samples for each relabelled cluster.
-    spk1_result: dict = {"confirmed": 0, "invalidated": 0}
-    person_mapping = body.get("person_mapping") or {}
-    if isinstance(person_mapping, dict) and person_mapping:
-        from meeting_minutes.system1 import speaker_identity as si
+    # SPK-1: bind each cluster to a person and (in)validate voice samples.
+    #
+    # The caller may pass an explicit ``person_mapping``. For any cluster not
+    # covered there, we fall back to name resolution: case-insensitive match
+    # against ``persons.name``, else create a new Person on the fly. This
+    # closes the previously-orphaned-sample gap when the user just types a
+    # free-form name into the rename editor.
+    from meeting_minutes.system1 import speaker_identity as si
 
-        for cluster_id, person_id in person_mapping.items():
-            if not cluster_id:
-                continue
-            # Demote any sample previously written for this cluster under a
-            # different person.
-            invalidated = si.invalidate_contamination(
-                session, meeting_id, cluster_id, person_id,
+    explicit_person_mapping = body.get("person_mapping") or {}
+    if not isinstance(explicit_person_mapping, dict):
+        explicit_person_mapping = {}
+
+    spk1_result: dict = {"confirmed": 0, "invalidated": 0, "created_persons": []}
+    resolved_person_mapping: dict[str, str] = {}
+
+    for cluster_id, name in mapping.items():
+        if not cluster_id or not name:
+            continue
+        person_id = explicit_person_mapping.get(cluster_id) or ""
+        if not person_id:
+            # Try to resolve by case-insensitive name match.
+            existing = (
+                session.query(PersonORM)
+                .filter(PersonORM.name.ilike(name))
+                .first()
             )
-            spk1_result["invalidated"] += invalidated
-            if person_id:
-                confirmed = si.confirm_sample(
-                    session, meeting_id, cluster_id, person_id,
+            if existing is not None:
+                person_id = existing.person_id
+            else:
+                # Create a new person on the fly. Email is unknown — leaving
+                # it null is fine; the user can fill it in later from the
+                # People page.
+                created = PersonORM(
+                    person_id=f"p-{_uuid.uuid4().hex[:8]}",
+                    name=name,
+                    email=None,
                 )
-                if confirmed is not None:
-                    spk1_result["confirmed"] += 1
+                session.add(created)
+                session.flush()  # we need created.person_id below
+                person_id = created.person_id
+                spk1_result["created_persons"].append(
+                    {"person_id": person_id, "name": name}
+                )
+        resolved_person_mapping[cluster_id] = person_id
+
+        # Demote any sample previously written for this cluster under a
+        # different person, then confirm the new pair.
+        invalidated = si.invalidate_contamination(
+            session, meeting_id, cluster_id, person_id,
+        )
+        spk1_result["invalidated"] += invalidated
+        confirmed = si.confirm_sample(
+            session, meeting_id, cluster_id, person_id,
+        )
+        if confirmed is not None:
+            spk1_result["confirmed"] += 1
+
+    if spk1_result["created_persons"]:
+        session.commit()
+
+    # ----- Async regeneration (default on) -----------------------------
+    #
+    # The frontend used to call ``POST /regenerate`` synchronously after
+    # this PATCH; we now do it server-side so the browser doesn't block
+    # for 15-60s of LLM time. Caller can opt out with ``regenerate=false``
+    # (matches the existing "Save only" button in the speaker editor).
+    regenerate = bool(body.get("regenerate", True))
+    regen_status: str | None = None
+    if regenerate:
+        sidecar = ext_mod.load_notes_sidecar(data_dir, meeting_id)
+        if sidecar.get("regen_status") == regen_mod.STATUS_PROCESSING:
+            # Don't double-fire. The rename + sample-confirm work above is
+            # already committed to disk and DB; the in-flight regen will
+            # pick it up on its next pass. Surface that to the caller so
+            # they don't trigger their own poll twice.
+            regen_status = regen_mod.STATUS_PROCESSING
+        else:
+            sidecar["regen_status"] = regen_mod.STATUS_PROCESSING
+            sidecar.pop("regen_error", None)
+            ext_mod.write_notes_sidecar(data_dir, meeting_id, sidecar)
+            regen_mod.schedule_background_regen(config, meeting_id)
+            regen_status = regen_mod.STATUS_PROCESSING
 
     return {
         "updated": updated,
         "mapping": mapping,
         "speakers": seen_labels,
         "spk1": spk1_result,
+        "person_mapping": resolved_person_mapping,
+        "regen_status": regen_status,
     }
 
 
@@ -964,8 +1049,8 @@ async def change_meeting_type(
 
     Synchronous side effects before returning 202:
       - Update ``data/notes/{id}.json``: set ``meeting_type`` to the new
-        value and ``meeting_type_status`` to ``processing``. The pipeline
-        reads ``meeting_type`` from the sidecar at the start of the next
+        value and ``regen_status`` to ``processing``. The pipeline reads
+        ``meeting_type`` from the sidecar at the start of the next
         ``run_generation``, so the new value is automatically picked up by
         the background task.
 
@@ -976,7 +1061,7 @@ async def change_meeting_type(
         ``## External notes`` post-append so the verbatim paste survives.
     """
     from meeting_minutes import external_notes as ext
-    from meeting_minutes import meeting_type_change as retype
+    from meeting_minutes import regen
     from meeting_minutes.models import MeetingType
 
     m = storage.get_meeting(meeting_id)
@@ -1013,28 +1098,30 @@ async def change_meeting_type(
             ),
         )
 
-    # Don't double-fire: if a previous retype is still in flight, refuse.
+    # Don't double-fire: if any regen (type change, speaker rename, …) is
+    # still in flight, refuse — running two reprocesses in parallel would
+    # race for the same on-disk minutes.
     sidecar = ext.load_notes_sidecar(data_dir, meeting_id)
-    if sidecar.get("meeting_type_status") == retype.STATUS_PROCESSING:
+    if sidecar.get("regen_status") == regen.STATUS_PROCESSING:
         raise HTTPException(
             status_code=409,
-            detail="A meeting-type change is already in progress for this meeting",
+            detail="A regeneration is already in progress for this meeting",
         )
 
     # --- Sync portion: write sidecar + flip status ---------------------
     sidecar["meeting_type"] = new_type
-    sidecar["meeting_type_status"] = retype.STATUS_PROCESSING
-    sidecar.pop("meeting_type_error", None)
+    sidecar["regen_status"] = regen.STATUS_PROCESSING
+    sidecar.pop("regen_error", None)
     ext.write_notes_sidecar(data_dir, meeting_id, sidecar)
 
     # --- Async portion: reprocess + replay external notes --------------
-    retype.schedule_background_retype(config, meeting_id)
+    regen.schedule_background_regen(config, meeting_id)
 
     return {
         "status": "accepted",
         "meeting_id": meeting_id,
         "meeting_type": new_type,
-        "meeting_type_status": retype.STATUS_PROCESSING,
+        "regen_status": regen.STATUS_PROCESSING,
     }
 
 

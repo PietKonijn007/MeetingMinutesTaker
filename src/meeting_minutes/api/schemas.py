@@ -123,11 +123,12 @@ class MeetingDetail(BaseModel):
     # keep polling.
     external_notes_status: str | None = None
     external_notes_error: str | None = None
-    # Status of the post-hoc meeting-type-change job (see
-    # ``POST /meetings/{id}/meeting-type``). Same lifecycle as
-    # ``external_notes_status``: "processing" → "ready" | "error" | null.
-    meeting_type_status: str | None = None
-    meeting_type_error: str | None = None
+    # Status of any in-flight post-hoc regeneration (meeting-type change,
+    # speaker rename, etc.). One field, regardless of trigger — only one
+    # regen runs at a time per meeting. Lifecycle:
+    # null → "processing" → "ready" | "error".
+    regen_status: str | None = None
+    regen_error: str | None = None
 
 
 class MeetingUpdate(BaseModel):

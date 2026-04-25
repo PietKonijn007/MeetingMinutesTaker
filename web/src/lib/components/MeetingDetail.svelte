@@ -37,6 +37,11 @@
   let speakerSuggestions = $state({});    // { "SPEAKER_00": {suggested_name, suggestion_tier, score, speech_seconds, suggested_person_id} }
   // Inline "create new person" form state, keyed by cluster id.
   let newPersonForms = $state({});        // { "SPEAKER_00": { open, name, email, saving } }
+  // All known people, fetched once when the speaker editor opens. Used as
+  // the autocomplete source for the rename inputs (<datalist>) and for the
+  // case-insensitive name → person_id resolve so we can show "Will link to
+  // <name>" feedback before the user even submits.
+  let knownPeople = $state([]);           // [{ person_id, name, email }, ...]
   // REC-1: series this meeting belongs to, if any.
   let meetingSeries = $state(null);
 
@@ -50,12 +55,15 @@
 
   // Meeting-type-change state. The dropdown sits beside the type badge in the
   // Minutes tab; on change we POST to the server (202) and start polling
-  // /meetings/{id} so meeting_type_status flips from "processing" to "ready".
+  // /meetings/{id} so regen_status flips from "processing" to "ready".
   let editingType = $state(false);
   let pendingType = $state(null);            // value selected in the dropdown
   let submittingTypeChange = $state(false);
   let showTypeChangeModal = $state(false);
-  let meetingTypePoller = null;
+  // Single poller for any in-flight regeneration (type change, speaker
+  // rename, etc.). The server uses one regen_status field across all
+  // triggers — only one regen runs at a time per meeting.
+  let regenPoller = null;
 
   async function loadMeetingSeries(id) {
     try {
@@ -79,7 +87,7 @@
     }
   }
 
-  function openSpeakerEditor() {
+  async function openSpeakerEditor() {
     const uniques = [...new Set((transcript?.segments || []).map(s => s.speaker).filter(Boolean))];
     const edits = {};
     const personIds = {};
@@ -100,6 +108,28 @@
     speakerPersonIds = personIds;
     newPersonForms = {};
     showSpeakerEditor = true;
+    // Load people in the background for autocomplete. Don't block opening
+    // the editor on this — the <datalist> is purely additive, the editor is
+    // usable without it.
+    try {
+      const payload = await api.getPeople();
+      knownPeople = (payload.items || []).map(p => ({
+        person_id: p.person_id, name: p.name, email: p.email,
+      }));
+    } catch (e) {
+      knownPeople = [];
+    }
+  }
+
+  // Resolve a typed name against knownPeople (case-insensitive exact match).
+  // Returns the matched person object or null. Used to show ambient feedback
+  // ("Will link to <name>") and to fill speakerPersonIds before submit so the
+  // server doesn't have to redo the lookup. The server *does* still resolve
+  // independently — this is a UX hint, not a correctness gate.
+  function resolveTypedName(name) {
+    const trimmed = (name || '').trim().toLowerCase();
+    if (!trimmed) return null;
+    return knownPeople.find(p => (p.name || '').toLowerCase() === trimmed) || null;
   }
 
   function openNewPersonForm(label) {
@@ -145,6 +175,9 @@
       for (const [label, name] of Object.entries(speakerEdits)) {
         if (name && name.trim()) mapping[label] = name.trim();
       }
+      // Best-effort prefill of person_mapping from local state. The server
+      // resolves any clusters we miss by case-insensitive name match (or
+      // creates a new Person on the fly), so this is a UX hint only.
       for (const [label, pid] of Object.entries(speakerPersonIds)) {
         if (pid && mapping[label]) personMapping[label] = pid;
       }
@@ -152,28 +185,35 @@
         addToast('No speaker names entered', 'warning');
         return;
       }
-      const payload = { mapping };
+      const payload = { mapping, regenerate };
       if (Object.keys(personMapping).length > 0) {
         payload.person_mapping = personMapping;
       }
       const resp = await api.updateTranscriptSpeakers(meetingId, payload);
       const renamed = Object.keys(mapping).length;
       const confirmed = resp?.spk1?.confirmed || 0;
-      addToast(
-        confirmed > 0
-          ? `Renamed ${renamed} speaker(s); ${confirmed} voice sample(s) confirmed`
-          : `Renamed ${renamed} speaker(s)`,
-        'success',
-      );
+      const created = resp?.spk1?.created_persons || [];
+      // Build a single toast that summarises what happened — rename count,
+      // voice samples confirmed, and any newly-created persons.
+      const parts = [`Renamed ${renamed} speaker(s)`];
+      if (confirmed > 0) parts.push(`${confirmed} voice sample(s) saved`);
+      if (created.length > 0) {
+        parts.push(`created ${created.length} new person(s): ${created.map(p => p.name).join(', ')}`);
+      }
+      addToast(parts.join('; '), 'success');
       showSpeakerEditor = false;
-      // Reload transcript to show new labels
+      // Reload transcript right away so the new labels show even before the
+      // async regen completes.
       await loadTranscript(meetingId);
       await loadSpeakerSuggestions(meetingId);
       if (regenerate) {
-        addToast('Regenerating minutes with new names…', 'info');
-        await api.regenerateMeeting(meetingId);
+        // Server already scheduled the background regen — just refresh so
+        // the regen pill shows "processing" and start polling.
         await loadMeeting(meetingId);
-        addToast('Minutes updated', 'success');
+        startRegenPolling({
+          successToast: 'Minutes regenerated with new speaker names',
+          errorPrefix: 'Speaker rename regen failed',
+        });
       }
     } catch (e) {
       addToast(`Failed to update speakers: ${e.message}`, 'error');
@@ -222,32 +262,37 @@
     }, 4000);
   }
 
-  // --- Meeting-type change ------------------------------------------------
+  // --- Generic regen polling ----------------------------------------------
   //
-  // Same async-status pattern as external notes: POST returns 202, we poll
-  // /meetings/{id} every 4s watching meeting_type_status flip to "ready" or
-  // "error". Reprocess takes 15-60s of LLM time — too long to hold an HTTP
-  // request open.
+  // The server uses a single ``regen_status`` field for any in-flight async
+  // regeneration (meeting-type change, speaker rename, …). Only one regen
+  // runs at a time per meeting, so one poller is enough. Caller passes
+  // success/error toast strings so each trigger can speak its own language.
 
-  function stopMeetingTypePolling() {
-    if (meetingTypePoller) {
-      clearInterval(meetingTypePoller);
-      meetingTypePoller = null;
+  function stopRegenPolling() {
+    if (regenPoller) {
+      clearInterval(regenPoller);
+      regenPoller = null;
     }
   }
 
-  function startMeetingTypePolling() {
-    stopMeetingTypePolling();
-    meetingTypePoller = setInterval(async () => {
+  function startRegenPolling({ successToast, errorPrefix } = {}) {
+    stopRegenPolling();
+    regenPoller = setInterval(async () => {
       try {
         const raw = await api.getMeeting(meetingId);
-        if (raw.meeting_type_status !== 'processing') {
-          stopMeetingTypePolling();
+        if (raw.regen_status !== 'processing') {
+          stopRegenPolling();
           await loadMeeting(meetingId);
-          if (raw.meeting_type_status === 'ready') {
-            addToast('Minutes regenerated with new meeting type', 'success');
-          } else if (raw.meeting_type_status === 'error') {
-            addToast(`Type change failed: ${raw.meeting_type_error || 'unknown error'}`, 'error');
+          // Reload transcript too — speaker renames change segment labels.
+          await loadTranscript(meetingId);
+          if (raw.regen_status === 'ready') {
+            addToast(successToast || 'Minutes regenerated', 'success');
+          } else if (raw.regen_status === 'error') {
+            addToast(
+              `${errorPrefix || 'Regeneration failed'}: ${raw.regen_error || 'unknown error'}`,
+              'error',
+            );
           }
         }
       } catch (e) {
@@ -282,7 +327,10 @@
       pendingType = null;
       // Refresh so the status pill shows "processing", then poll until done.
       await loadMeeting(meetingId);
-      startMeetingTypePolling();
+      startRegenPolling({
+        successToast: 'Minutes regenerated with new meeting type',
+        errorPrefix: 'Type change failed',
+      });
     } catch (e) {
       addToast(`Failed to change meeting type: ${e.message}`, 'error');
     } finally {
@@ -416,8 +464,8 @@
         external_notes: raw.external_notes || '',
         external_notes_status: raw.external_notes_status || null,
         external_notes_error: raw.external_notes_error || null,
-        meeting_type_status: raw.meeting_type_status || null,
-        meeting_type_error: raw.meeting_type_error || null,
+        regen_status: raw.regen_status || null,
+        regen_error: raw.regen_error || null,
       };
       // Keep the textarea in sync with whatever the server currently has.
       // On first load this pre-fills the paste; on status-poll refreshes
@@ -430,10 +478,15 @@
       if (raw.external_notes_status === 'processing' && !externalNotesPoller) {
         startExternalNotesPolling();
       }
-      // Same logic for an in-flight meeting-type change: if the user
-      // navigated away mid-regeneration and came back, resume polling.
-      if (raw.meeting_type_status === 'processing' && !meetingTypePoller) {
-        startMeetingTypePolling();
+      // Same logic for any in-flight regeneration (type change, speaker
+      // rename, …): if the user navigated away mid-regeneration and came
+      // back, resume polling. Generic toast strings — we don't know which
+      // trigger started it.
+      if (raw.regen_status === 'processing' && !regenPoller) {
+        startRegenPolling({
+          successToast: 'Minutes regenerated',
+          errorPrefix: 'Regeneration failed',
+        });
       }
       // Reset expanded discussion topics on new meeting load
       expandedTopics = new Set();
@@ -523,7 +576,7 @@
       // before we kick off loads for the new one — loadMeeting() will
       // re-start polling if the new meeting is still processing.
       stopExternalNotesPolling();
-      stopMeetingTypePolling();
+      stopRegenPolling();
       // Reset the inline editor when switching to a different meeting.
       editingType = false;
       pendingType = null;
@@ -536,7 +589,7 @@
     // Cleanup when this component unmounts.
     return () => {
       stopExternalNotesPolling();
-      stopMeetingTypePolling();
+      stopRegenPolling();
     };
   });
 </script>
@@ -559,16 +612,17 @@
         Meeting type: editable inline. Three render states:
           - default        → badge + small "Change" button.
           - editingType    → <select> grouped by category + Cancel + Regenerate.
-          - status pill    → "Regenerating as <new type>…" while the background
-                             job runs (poll meeting_type_status).
+          - status pill    → "Regenerating…" while ANY background regen runs
+                             (type change, speaker rename, …). Polled via
+                             meeting.regen_status.
       -->
-      {#if meeting.meeting_type_status === 'processing'}
+      {#if meeting.regen_status === 'processing'}
         <span class="inline-flex items-center gap-2 px-2.5 py-1 rounded-full text-xs font-medium bg-[var(--bg-surface)] border border-[var(--border-subtle)] text-[var(--text-secondary)]">
           <svg class="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
             <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
             <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path>
           </svg>
-          Regenerating as {MEETING_TYPE_MAP[meeting.type]?.label || meeting.type}…
+          Regenerating minutes…
         </span>
       {:else if editingType}
         <div class="inline-flex items-center gap-2 flex-wrap">
@@ -614,12 +668,12 @@
           {/if}
         </div>
       {/if}
-      {#if meeting.meeting_type_status === 'error'}
+      {#if meeting.regen_status === 'error'}
         <span
           class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs bg-red-500/15 text-red-400 border border-red-500/30"
-          title={meeting.meeting_type_error || 'Type change failed'}
+          title={meeting.regen_error || 'Regeneration failed'}
         >
-          Type change failed
+          Regeneration failed
         </span>
       {/if}
       {#if meeting.duration_minutes}
@@ -1149,9 +1203,19 @@
           <!-- Speaker rename editor -->
           {#if showSpeakerEditor}
             <div class="mb-4 p-4 bg-[var(--bg-surface)] border border-[var(--accent)] rounded-lg">
+              <!--
+                Single shared <datalist> populated from /people. Each rename
+                input references it via list="known-people" — the browser
+                handles the autocomplete dropdown for free.
+              -->
+              <datalist id="known-people">
+                {#each knownPeople as p}
+                  <option value={p.name}></option>
+                {/each}
+              </datalist>
               <h4 class="text-sm font-semibold text-[var(--text-primary)] mb-1">Rename speakers</h4>
               <p class="text-xs text-[var(--text-muted)] mb-3">
-                Voice samples are learned automatically — suggested names come from previous meetings. Changes are saved to the transcript and minutes are regenerated.
+                Voice samples are learned automatically — suggested names come from previous meetings. Type a known name to link voices across meetings, or a new name to add a person on the fly. Minutes regenerate in the background.
               </p>
               <div class="space-y-2 mb-3">
                 {#each uniqueSpeakers as label}
@@ -1159,13 +1223,23 @@
                   {@const tier = sugg.suggestion_tier}
                   {@const speechSec = sugg.speech_seconds || 0}
                   {@const canCreateNew = speechSec > 30 && !tier}
+                  {@const matchedPerson = resolveTypedName(speakerEdits[label])}
                   <div class="space-y-1.5">
                     <div class="flex items-center gap-3">
                       <span class="w-2 h-2 rounded-full shrink-0" style="background-color: {colorFor(label)}"></span>
                       <span class="text-xs font-mono text-[var(--text-muted)] w-24 shrink-0">{label}</span>
                       <input
                         type="text"
+                        list="known-people"
                         bind:value={speakerEdits[label]}
+                        oninput={() => {
+                          // Keep speakerPersonIds in sync with what was typed
+                          // so person_mapping is sent for matched names. The
+                          // server resolves anyway, but this avoids an extra
+                          // round-trip for the common case.
+                          const m = resolveTypedName(speakerEdits[label]);
+                          speakerPersonIds = { ...speakerPersonIds, [label]: m ? m.person_id : '' };
+                        }}
                         placeholder="e.g. Tom"
                         class="flex-1 px-2 py-1 bg-[var(--bg-surface-hover)] border border-[var(--border-subtle)] rounded text-sm text-[var(--text-primary)]
                                focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
@@ -1186,6 +1260,22 @@
                         </span>
                       {/if}
                     </div>
+                    <!--
+                      Below-input ambient feedback. Three states:
+                        - Typed name matches a known person  → "Will link to <name>"
+                        - Typed name is new (and they typed one) → "New person — will be created"
+                        - Empty → nothing
+                    -->
+                    {#if speakerEdits[label]?.trim() && matchedPerson}
+                      <div class="ml-[9px] pl-6 text-[11px] text-[var(--text-muted)]">
+                        Will link to existing person <span class="text-[var(--text-secondary)]">{matchedPerson.name}</span>
+                        {#if matchedPerson.email}<span class="text-[var(--text-muted)]"> · {matchedPerson.email}</span>{/if}
+                      </div>
+                    {:else if speakerEdits[label]?.trim() && !speakerEdits[label].startsWith('SPEAKER_')}
+                      <div class="ml-[9px] pl-6 text-[11px] text-[var(--text-muted)]">
+                        New name — a person will be created and the voice signature stored.
+                      </div>
+                    {/if}
                     {#if canCreateNew && !newPersonForms[label]?.open}
                       <div class="ml-[9px] pl-6 text-[11px] text-[var(--text-muted)]">
                         {Math.round(speechSec)}s of speech, no match.
