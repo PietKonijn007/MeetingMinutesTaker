@@ -64,6 +64,18 @@ export const api = {
     return request(`/action-items?${qs}`);
   },
   updateActionItem: (id, data) => request(`/action-items/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  // Bulk Accept/Reject of proposed action items on one meeting. Body shape:
+  // { confirm: [id, …], reject: [id, …] }. Returns the meeting's full action
+  // list (all proposal states) so the caller can refresh in one round-trip.
+  bulkReviewActionItems: (meetingId, body) => request(`/action-items/bulk-review/${meetingId}`, {
+    method: 'POST', body: JSON.stringify(body),
+  }),
+  // One-time admin sweep — confirm every still-proposed item from meetings on
+  // or before `beforeDate` (ISO YYYY-MM-DD). Used to clear the historical
+  // review backlog the proposal-state migration produced.
+  confirmActionsBefore: (beforeDate) => request('/action-items/confirm-before', {
+    method: 'POST', body: JSON.stringify({ before_date: beforeDate }),
+  }),
 
   // Decisions
   getDecisions: (params = {}) => {

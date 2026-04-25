@@ -63,10 +63,11 @@ def get_stats(
         .count()
     )
 
-    # Open action items
+    # Open action items — confirmed-only, since proposals aren't real actions yet
     open_actions = (
         session.query(ActionItemORM)
         .filter(ActionItemORM.status != "done")
+        .filter(ActionItemORM.proposal_state == "confirmed")
         .count()
     )
 
@@ -146,6 +147,7 @@ def action_velocity(
         session.query(ActionItemORM)
         .join(MeetingORM, ActionItemORM.meeting_id == MeetingORM.meeting_id)
         .filter(MeetingORM.date >= twelve_weeks_ago)
+        .filter(ActionItemORM.proposal_state == "confirmed")
         .all()
     )
 

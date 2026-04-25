@@ -56,10 +56,14 @@ def _person_detail(session: Session, person: PersonORM) -> PersonDetailResponse:
         .count()
     )
 
-    # Count open action items (match by owner name)
+    # Count open action items (match by owner name) — confirmed-only.
     open_action_count = (
         session.query(ActionItemORM)
-        .filter(ActionItemORM.owner == person.name, ActionItemORM.status != "done")
+        .filter(
+            ActionItemORM.owner == person.name,
+            ActionItemORM.status != "done",
+            ActionItemORM.proposal_state == "confirmed",
+        )
         .count()
     )
 

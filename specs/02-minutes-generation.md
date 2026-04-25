@@ -375,11 +375,51 @@ The `MinutesJSONWriter` in `system2/output.py` populates `MinutesJSON.structured
 
 ### 4A.3.2 Prior-action carryover & auto-closure
 
-Before generation, `PipelineOrchestrator` calls `StorageEngine.get_open_action_items_for_attendees()` to fetch still-open action items from the last `generation.prior_actions_lookback_meetings` meetings that share at least one attendee with the current meeting. Each open item (id + description + owner + due date + source meeting title) is injected into the prompt via the `prior_actions` template variable, rendered by the shared `prior_actions_block` macro.
+Before generation, `PipelineOrchestrator` calls `StorageEngine.get_open_action_items_for_attendees()` to fetch still-open action items from the last `generation.prior_actions_lookback_meetings` meetings that share at least one attendee with the current meeting. Carryover is **filtered to `proposal_state == "confirmed"` items** — proposed/rejected items are by definition not yet "real" and must not influence future meetings' prompts (see § 4A.3.3). Each confirmed open item (id + description + owner + due date + source meeting title) is injected into the prompt via the `prior_actions` template variable, rendered by the shared `prior_actions_block` macro.
 
 The LLM is instructed to populate `prior_action_updates[]` only for items actually acknowledged in the current meeting — not to echo every prior item. After ingestion completes, `PipelineOrchestrator._apply_prior_action_updates()` reads the freshly written minutes JSON, and for each update calls `StorageEngine.update_action_item_status(action_item_id, new_status)` where `new_status ∈ {done, in_progress, cancelled}`. Invalid / unknown action item ids are skipped silently. The number of applied transitions is logged.
 
 This whole path is gated by `generation.close_acknowledged_actions` (default true) and is best-effort — DB hiccups never block generation.
+
+### 4A.3.3 Action-item review workflow (proposed → confirmed)
+
+LLM-extracted action items are **proposals**, not commitments. The `ActionItemORM.proposal_state` column is a three-value lifecycle independent of `status`:
+
+- `proposed` — newly extracted from the transcript. Default for every parsed item (set in `MinutesParser._extract_action_items()` and `StructuredMinutesAdapter.adapt()`).
+- `confirmed` — user accepted the proposal on the meeting's Actions tab.
+- `rejected` — user rejected the proposal. Soft-deleted; the row is kept so a re-extraction (e.g. regeneration) can surface "previously rejected" history if desired.
+
+`ActionItemORM.status` (`open` / `in_progress` / `done` / `cancelled`) remains the lifecycle of a *confirmed* action — it is meaningless for proposals. The two columns never collide.
+
+**Where the filter applies.** Only `confirmed` items reach:
+
+- The rendered `## Action Items` section in `data/minutes/{id}.md` (re-rendered via `MinutesJSONWriter._build_markdown` and `meeting_minutes.action_review.resync_action_items_artifacts`).
+- The Obsidian export (which inherits the filtered markdown body).
+- The DOCX export's Action Items table.
+- The default global `/api/action-items` listing (default filter `proposal_state=confirmed`).
+- The prior-action carryover injected into the next meeting's prompt (§ 4A.3.2).
+- The semantic embeddings used by the chat feature (`embeddings.py` skips non-confirmed items).
+- The Stats overview `open_actions` count, the per-person `open_action_count`, the daily brief, the series open-actions roll-up, and the `action_velocity` chart.
+
+**Migration semantics.** `alembic/versions/006_action_proposal_state.py` adds the column with `server_default='proposed'` and explicitly backfills every existing row to `proposed`. The intent is a clean-slate review: on first launch after upgrading, every historical action item is queued for review on its meeting's Actions tab. The global `/actions` page provides a one-time `POST /api/action-items/confirm-before` sweep so users can clear the historical backlog by date instead of walking every old meeting.
+
+**Re-render on review.** Every PATCH or bulk review call invokes `meeting_minutes.action_review.resync_action_items_artifacts(session, config, meeting_id)`, which:
+
+1. Mirrors the DB action-item rows (with `proposal_state` and the latest description/owner/due_date/status) into `data/minutes/{id}.json` (both top-level `action_items[]` and `structured_data.action_items[]`).
+2. Rewrites the `## Action Items` section in `data/minutes/{id}.md` from scratch, including only confirmed items. If no items are confirmed, the section is omitted.
+3. Updates `minutes.markdown_content` in the DB and refreshes the FTS index for the meeting.
+4. Re-exports to the Obsidian vault when `obsidian.enabled`.
+
+This keeps the curated set as the source of truth for everything downstream while leaving the original LLM extraction visible in the Actions tab until the user reviews it.
+
+**Regeneration.** `StorageEngine.upsert_meeting()` deletes and re-inserts every action item on regenerate; the parser sets `proposal_state=proposed` on each fresh row. Regenerating a meeting therefore returns its actions to the review queue — a deliberate trade-off chosen for predictability over heuristic preservation. (A future iteration can layer description-hash matching to preserve confirmation decisions across regenerates if review fatigue becomes a problem.)
+
+REST surface for review:
+
+- `PATCH /api/action-items/{id}` accepts any of `{status, proposal_state, description, owner, due_date}` (all optional). Edits flow through the resync helper above.
+- `POST /api/action-items/bulk-review/{meeting_id}` body `{confirm: [ids], reject: [ids]}` — single-transaction batch for "Accept all" / "Reject all".
+- `POST /api/action-items/confirm-before` body `{before_date: "YYYY-MM-DD"}` — the post-migration backlog clear.
+- `GET /api/action-items?proposal_state={confirmed|proposed|rejected|all}` — defaults to `confirmed`.
 
 ### 4A.3.2 Fallback rendering (text+regex path and older meetings)
 

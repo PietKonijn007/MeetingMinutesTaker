@@ -330,6 +330,7 @@ def series_aggregates(session: Session, series_id: str) -> SeriesAggregates:
         .filter(
             ActionItemORM.meeting_id.in_(member_ids),
             ActionItemORM.status != "done",
+            ActionItemORM.proposal_state == "confirmed",
         )
         .all()
     )

@@ -736,7 +736,7 @@ The system:
 Each meeting is chunked into embeddable pieces:
 - **Summary** (1 chunk)
 - **Discussion points** (1 chunk each)
-- **Action items** (1 chunk each, tagged with owner)
+- **Action items** (1 chunk each, tagged with owner — confirmed-only, so chat answers never cite unreviewed proposals as facts)
 - **Decisions** (1 chunk each, tagged with decision-maker)
 - **Risks, follow-ups** (1 chunk each)
 - **Transcript** (sliding window, ~400 tokens per chunk with overlap)
@@ -797,9 +797,17 @@ mm transcript <meeting_id>
 
 ### 6.4 Managing action items
 
+Action items are extracted as **proposals** by the LLM and only count as tracked actions after you accept them. The CLI mirrors that contract: by default `mm actions` shows confirmed items only.
+
 ```bash
-# List all open action items
+# Confirmed open action items — what shows up in the global tracker
 mm actions
+
+# Proposals waiting for your review (per-meeting Actions tab in the UI)
+mm actions --proposed
+
+# Everything: confirmed + proposed + rejected
+mm actions --all-states
 
 # Filter by owner
 mm actions --owner bob@company.com
@@ -807,9 +815,11 @@ mm actions --owner bob@company.com
 # Show overdue items
 mm actions --overdue
 
-# Mark an action item as done
+# Mark an action item as done (only confirmed items can be ticked off)
 mm actions complete <action_id>
 ```
+
+The Review column in the table shows each item's `proposal_state` so you can spot-check what's been confirmed vs. what's still queued. The full review flow (Accept / Edit / Reject, bulk operations, the historical-backlog clear) lives in the web UI — see § 7.6.
 
 ### 6.5 Starting the web UI
 
@@ -918,7 +928,7 @@ Open [http://localhost:8080](http://localhost:8080) in your browser. The API doc
 | **Onboarding** | `/onboarding` | 11 diagnostic checks with per-check retry and copy-paste fix hints. Auto-opens on first visit when the `meetings` table is empty. |
 | **Meetings** | `/` | Calendar view with day list and inline meeting detail. Filter by type, search. |
 | **Meeting Detail** | `/meeting/:id` | Full minutes, transcript with audio player, action items, decisions, tags. **Export dropdown** (Markdown / PDF / DOCX / Obsidian) next to the Regenerate button. Shows "Part of series: ... →" when the meeting belongs to a recurring series. |
-| **Action Items** | `/actions` | All action items across meetings. Filter by owner, status, overdue. Check items off. |
+| **Action Items** | `/actions` | The tracked-actions view. Confirmed / Proposed / All chip filter (defaults to Confirmed), plus owner, status, and overdue filters. Check items off, or switch to Proposed to triage extractions waiting for review. |
 | **Decisions** | `/decisions` | Chronological log of all decisions, grouped by date. |
 | **Series** | `/series` | All detected recurring meeting series. Shows title, cadence (weekly/biweekly/monthly), member count, and last meeting date. |
 | **Series Detail** | `/series/:id` | Timeline of all member meetings, cross-meeting action items, decisions, recurring topics, plus a "Export all meetings (ZIP)" bulk action. |
@@ -959,24 +969,58 @@ The richest page. Shows everything about one meeting.
 
 | Tab | Content |
 |-----|---------|
-| **Minutes** | Rendered markdown of the generated minutes. Action item checkboxes are interactive — click to mark done. |
+| **Minutes** | Rendered markdown of the generated minutes. The `## Action Items` block lists confirmed items only — see the Actions tab to review proposals. |
 | **Transcript** | Full transcript with speaker labels and timestamps. If an audio file exists, an audio player appears at the top. Click any timestamp to jump to that point in the audio. The currently playing segment highlights automatically. |
-| **Actions** | Action items from this meeting with checkboxes to toggle status. |
+| **Actions** | The review queue + the tracked list. New extractions land as **proposals** — see § 7.6 for the workflow. |
 | **Decisions** | Decisions made, with who made them. |
 
 **Actions at the bottom**:
-- **Regenerate**: Re-run LLM generation with the current transcript.
+- **Regenerate**: Re-run LLM generation with the current transcript. Heads-up: every action item flips back to `proposed` after a regenerate (the LLM extracts a fresh set), so you'll re-review.
 - **Export**: Download as Markdown or PDF.
 - **Delete**: Remove the meeting and all its data (with confirmation).
 
-### 7.6 Action items page
+### 7.6 Reviewing action items
 
-Shows all action items across all meetings. Items are grouped: open items first, completed items collapsed at the bottom.
+Action items extracted by the LLM are **proposals** until you confirm them. This keeps the global tracker honest — you never end up with a pile of half-imagined commitments the model invented mid-transcript.
 
-- Click the checkbox to mark an item done (updates instantly).
-- Overdue items are highlighted with a warning indicator.
-- Filter by owner (dropdown of all people) or status (open/done/all).
-- Each item links to the meeting it came from.
+#### On a meeting's Actions tab
+
+When a meeting has any unreviewed proposals, the tab label reads **Actions (N to review)** (or `(C · M to review)` when both confirmed and proposed items exist) and the tab opens with a banner like:
+
+> 5 proposed actions to review — Accept turns each into a tracked action. Edit before accepting if the wording is off. **[Accept all] [Reject all]**
+
+Each proposed row has three buttons:
+
+- **Accept** — marks the item `confirmed`. It joins the global tracker, gets carried forward into future meetings if it overlaps attendees, and shows up in the rendered Markdown / Obsidian / DOCX export.
+- **Edit** — opens an inline editor for description / owner / due date. Save to commit the edit (this also confirms the item in the same call). Use this when the wording or owner is close-but-not-quite-right.
+- **Reject** — marks the item `rejected` (soft delete). The row stays visible in the tab so you can spot a re-extraction of the same false positive on the next regenerate, but it's excluded from everything downstream.
+
+Per-row decisions and the bulk Accept all / Reject all buttons all hit the same backend; on every change the server re-renders `data/minutes/{id}.md` (the `## Action Items` section) and re-exports to your Obsidian vault, so the curated set is what shows up everywhere.
+
+#### On the global Action Items page (`/actions`)
+
+The top of the page has a chip group: **Confirmed | Proposed | All**, defaulting to **Confirmed**. Switch to **Proposed** to triage the entire workspace's backlog from one place — proposals render with the same Accept / Edit / Reject controls.
+
+Filters that still work in every view: owner dropdown, status (open/done), overdue. The owner dropdown is built from whatever items match the current chip filter, so it'll narrow naturally as you triage.
+
+#### Clearing a backlog after upgrading
+
+The migration that introduced this workflow flipped every existing action item to `proposed` — so the first time you load the app after upgrading, your tracker will be empty and your meetings will have a lot of "to review" badges. Two ways out:
+
+- Walk individual meetings (most thoughtful — useful when you want to re-evaluate what's still relevant).
+- Click **Confirm all proposals from before a date…** on `/actions`, pick a cutoff date, and confirm. Everything older flips to `confirmed` in one shot. The server re-renders each affected meeting's markdown + Obsidian export.
+
+#### Why proposals don't leak
+
+To be precise about what "proposed" excludes a row from until it's confirmed:
+
+- `## Action Items` section in the rendered meeting markdown
+- The Obsidian export (which inherits the markdown body)
+- The DOCX / PDF export's Action Items table
+- The default `/api/action-items` listing and `mm actions` CLI
+- The prior-action carryover injected into the next meeting's prompt
+- The chat / RAG embeddings (so chat answers don't cite unreviewed extractions as facts)
+- The Stats overview "open actions" count, the per-person open count, the daily Brief, and the recurring-series open-actions roll-up
 
 ### 7.7 Stats page
 
@@ -1811,7 +1855,9 @@ If `templates/export/docx_template.docx` exists, python-docx inherits paragraph 
 | **"OPENROUTER_API_KEY not set"** | Set the env var: `export OPENROUTER_API_KEY="sk-or-..."` (only needed if using OpenRouter as provider) |
 | **API timeout** | Increase `timeout_seconds` in the config. Long meetings may need 180-240 seconds. |
 | **Minutes look wrong for meeting type** | Override the type: `mm generate <id> --type standup`. Or edit the template in `templates/`. |
-| **Missing action items** | The LLM may miss implicit tasks. Review the transcript and add them manually, or adjust the template to emphasize action item extraction. |
+| **Missing action items** | The LLM may miss implicit tasks. Review the transcript and add them manually (the per-row Edit form on the Actions tab supports it), or adjust the template to emphasize action item extraction. |
+| **The tracker is empty after processing a meeting** | Expected — fresh extractions land as **proposals** on the meeting's Actions tab. Review them there (Accept / Edit / Reject) and they'll show up in the global tracker. See § 7.6. |
+| **Lots of "to review" badges after upgrading** | The proposal-state migration backfills every historical action item to `proposed`. Use **Confirm all proposals from before a date…** on `/actions` for a one-shot backlog clear, or walk meetings individually to re-evaluate. |
 
 ### Database issues
 

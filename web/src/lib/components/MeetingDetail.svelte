@@ -419,6 +419,64 @@
     }
   }
 
+  // Action-review state. Action items extracted from the transcript land as
+  // "proposed" — the user accepts/rejects each before it joins the tracked
+  // set. Counts drive the tab label, outcomes preview card, and review banner.
+  const proposedActions = $derived(
+    (meeting?.actions || []).filter(a => (a.proposal_state || 'confirmed') === 'proposed')
+  );
+  const confirmedActions = $derived(
+    (meeting?.actions || []).filter(a => (a.proposal_state || 'confirmed') === 'confirmed')
+  );
+  const rejectedActions = $derived(
+    (meeting?.actions || []).filter(a => (a.proposal_state || 'confirmed') === 'rejected')
+  );
+  let bulkReviewing = $state(false);
+
+  async function bulkReview({ confirm = [], reject = [] } = {}) {
+    if (!meeting?.meeting_id || (!confirm.length && !reject.length)) return;
+    bulkReviewing = true;
+    try {
+      const result = await api.bulkReviewActionItems(meeting.meeting_id, { confirm, reject });
+      meeting.actions = result.items || [];
+      addToast({
+        type: 'success',
+        message: confirm.length && reject.length
+          ? `Accepted ${confirm.length}, rejected ${reject.length}`
+          : confirm.length ? `Accepted ${confirm.length} action${confirm.length === 1 ? '' : 's'}`
+          : `Rejected ${reject.length} action${reject.length === 1 ? '' : 's'}`,
+      });
+    } catch (e) {
+      addToast({ type: 'error', message: `Review failed: ${e.message}` });
+    } finally {
+      bulkReviewing = false;
+    }
+  }
+
+  function acceptAllProposed() {
+    bulkReview({ confirm: proposedActions.map(a => a.action_item_id || a.id) });
+  }
+
+  function rejectAllProposed() {
+    bulkReview({ reject: proposedActions.map(a => a.action_item_id || a.id) });
+  }
+
+  // After a single-row update from ActionItemRow, refetch the meeting so
+  // counts/outcomes/tab labels stay in sync. The row already mutated `item`
+  // in place, but we also want to recompute derived counts and re-pull the
+  // server-rendered markdown (since proposal_state changes re-render the
+  // ## Action Items section server-side).
+  async function onActionRowUpdate() {
+    if (!meeting?.meeting_id) return;
+    try {
+      const raw = await api.getMeeting(meeting.meeting_id);
+      meeting.actions = raw.action_items || [];
+      meeting.minutes_markdown = raw.minutes?.markdown_content || meeting.minutes_markdown;
+    } catch {
+      // best-effort — the row already reflects the change locally
+    }
+  }
+
   const tabs = $derived([
     { key: 'minutes', label: 'Minutes' },
     // Post-hoc paste box for notes exported from a meeting app — sits
@@ -426,10 +484,19 @@
     // the generated summary.
     { key: 'external', label: 'External notes' },
     { key: 'transcript', label: 'Transcript' },
-    { key: 'actions', label: `Actions${meeting?.actions?.length ? ` (${meeting.actions.length})` : ''}` },
+    { key: 'actions', label: actionsTabLabel(meeting) },
     { key: 'decisions', label: `Decisions${meeting?.decisions?.length ? ` (${meeting.decisions.length})` : ''}` },
     { key: 'analytics', label: 'Analytics' }
   ]);
+
+  function actionsTabLabel(m) {
+    if (!m?.actions?.length) return 'Actions';
+    const proposed = m.actions.filter(a => (a.proposal_state || 'confirmed') === 'proposed').length;
+    const confirmed = m.actions.filter(a => (a.proposal_state || 'confirmed') === 'confirmed').length;
+    if (proposed > 0 && confirmed > 0) return `Actions (${confirmed} · ${proposed} to review)`;
+    if (proposed > 0) return `Actions (${proposed} to review)`;
+    return `Actions (${confirmed})`;
+  }
 
   function formatDate(dateStr) {
     if (!dateStr) return '';
@@ -1108,21 +1175,27 @@
                     <div class="bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg p-5">
                       <div class="flex items-center justify-between mb-3">
                         <h3 class="text-xs font-semibold uppercase tracking-wider text-[var(--text-muted)]">
-                          Action items ({meeting.actions.length})
+                          Action items
+                          <span class="ml-1 normal-case font-normal text-[var(--text-muted)]">
+                            {confirmedActions.length} confirmed{#if proposedActions.length} · <span class="text-[var(--accent)] font-medium">{proposedActions.length} to review</span>{/if}
+                          </span>
                         </h3>
                         <button
                           onclick={() => activeTab = 'actions'}
                           class="text-[11px] text-[var(--accent)] hover:underline"
                         >
-                          View all →
+                          {proposedActions.length ? 'Review →' : 'View all →'}
                         </button>
                       </div>
                       <ul class="space-y-2">
                         {#each meeting.actions.slice(0, 3) as a}
+                          {@const ps = a.proposal_state || 'confirmed'}
                           <li class="flex gap-2 text-sm">
-                            <span class="text-[var(--text-muted)] mt-0.5">○</span>
+                            <span class="mt-0.5 {ps === 'proposed' ? 'text-[var(--accent)]' : 'text-[var(--text-muted)]'}">
+                              {ps === 'proposed' ? '?' : '○'}
+                            </span>
                             <div class="flex-1 min-w-0">
-                              <span class="text-[var(--text-primary)]">{a.description}</span>
+                              <span class="text-[var(--text-primary)] {ps === 'rejected' ? 'line-through opacity-60' : ''}">{a.description}</span>
                               {#if a.owner}
                                 <span class="text-xs text-[var(--text-muted)] ml-1">— {a.owner}</span>
                               {/if}
@@ -1517,9 +1590,40 @@
 
       {:else if activeTab === 'actions'}
         {#if meeting.actions?.length}
+          {#if proposedActions.length}
+            <!-- Review banner: extracted action items haven't been blessed yet.
+                 They stay out of the global tracker, exports, and prior-action
+                 carryover until the user accepts (or rejects) them here. -->
+            <div class="mb-4 p-4 rounded-lg border border-[var(--accent)]/40 bg-[var(--accent)]/5 flex items-center gap-3 flex-wrap">
+              <div class="flex-1 min-w-[200px]">
+                <p class="text-sm font-medium text-[var(--text-primary)]">
+                  {proposedActions.length} proposed action{proposedActions.length === 1 ? '' : 's'} to review
+                </p>
+                <p class="text-xs text-[var(--text-muted)] mt-0.5">
+                  Accept turns each into a tracked action. Edit before accepting if the wording is off.
+                </p>
+              </div>
+              <div class="flex items-center gap-2">
+                <button
+                  onclick={acceptAllProposed}
+                  disabled={bulkReviewing}
+                  class="text-xs px-3 py-1.5 rounded bg-[var(--accent)] text-white hover:opacity-90 disabled:opacity-40"
+                >
+                  Accept all
+                </button>
+                <button
+                  onclick={rejectAllProposed}
+                  disabled={bulkReviewing}
+                  class="text-xs px-3 py-1.5 rounded border border-[var(--border-subtle)] hover:bg-[var(--bg-surface-hover)] disabled:opacity-40"
+                >
+                  Reject all
+                </button>
+              </div>
+            </div>
+          {/if}
           <div class="space-y-1">
-            {#each meeting.actions as item}
-              <ActionItemRow {item} showMeeting={false} />
+            {#each meeting.actions as item (item.action_item_id || item.id)}
+              <ActionItemRow {item} showMeeting={false} onUpdate={onActionRowUpdate} />
             {/each}
           </div>
         {:else}

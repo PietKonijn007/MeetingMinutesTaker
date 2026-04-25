@@ -190,7 +190,13 @@ def render_docx(meeting: MeetingORM, *, with_transcript: bool = False) -> bytes:
 
     # Replace whatever free-form "Action Items" markdown had with a proper table.
     if meeting.action_items:
-        _add_action_items_table(doc, list(meeting.action_items))
+        _add_action_items_table(
+            doc,
+            [
+                ai for ai in meeting.action_items
+                if (ai.proposal_state or "proposed") == "confirmed"
+            ],
+        )
 
     if with_transcript and meeting.transcript is not None and meeting.transcript.full_text:
         doc.add_page_break()

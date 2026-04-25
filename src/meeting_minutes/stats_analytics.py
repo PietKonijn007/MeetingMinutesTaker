@@ -128,6 +128,7 @@ def commitments_per_person(
     action_rows = (
         session.query(ActionItemORM)
         .filter(ActionItemORM.meeting_id.in_(meeting_ids))
+        .filter(ActionItemORM.proposal_state == "confirmed")
         .all()
     )
 

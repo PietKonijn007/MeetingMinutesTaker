@@ -94,6 +94,11 @@ class ActionItemORM(Base):
     status = Column(String, default="open")
     mentioned_at_seconds = Column(Float, nullable=True)
     priority = Column(String, nullable=True)
+    # Review lifecycle state — independent of `status`. New extractions land as
+    # "proposed" and stay out of the global tracker / carryover / Obsidian until
+    # the user confirms (or rejects) them on the meeting's Actions tab.
+    # Values: "proposed" | "confirmed" | "rejected".
+    proposal_state = Column(String, nullable=False, default="proposed", server_default="proposed")
 
     meeting = relationship("MeetingORM", back_populates="action_items")
 
