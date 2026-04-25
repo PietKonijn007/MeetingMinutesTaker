@@ -5,6 +5,7 @@
   import { api } from '$lib/api.js';
   import Skeleton from '$lib/components/Skeleton.svelte';
   import { addToast } from '$lib/stores/toasts.js';
+  import { MEETING_TYPE_GROUPS } from '$lib/meetingTypes.js';
 
   let brief = $state(null);
   let loading = $state(true);
@@ -17,18 +18,6 @@
   let attendeesText = $state('');
   let carryNote = $state('');
   let starting = $state(false);
-
-  const MEETING_TYPES = [
-    { value: 'one_on_one', label: '1:1' },
-    { value: 'standup', label: 'Standup' },
-    { value: 'team_meeting', label: 'Team meeting' },
-    { value: 'customer_meeting', label: 'Customer meeting' },
-    { value: 'decision_meeting', label: 'Decision meeting' },
-    { value: 'brainstorm', label: 'Brainstorm' },
-    { value: 'retrospective', label: 'Retrospective' },
-    { value: 'planning', label: 'Planning' },
-    { value: 'other', label: 'Other' }
-  ];
 
   async function load() {
     const sp = $page.url.searchParams;
@@ -310,8 +299,12 @@
             bind:value={selectedType}
             class="px-3 py-1.5 text-sm rounded border border-[var(--border-subtle)] bg-[var(--bg-primary)] text-[var(--text-primary)]"
           >
-            {#each MEETING_TYPES as t}
-              <option value={t.value}>{t.label}</option>
+            {#each MEETING_TYPE_GROUPS as group}
+              <optgroup label={group.group}>
+                {#each group.items as t}
+                  <option value={t.value}>{t.label}</option>
+                {/each}
+              </optgroup>
             {/each}
           </select>
         </div>
