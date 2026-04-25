@@ -45,6 +45,12 @@ export const api = {
   submitExternalNotes: (id, text) => request(`/meetings/${id}/external-notes`, {
     method: 'POST', body: JSON.stringify({ text }),
   }),
+  // Switch a meeting's type and rebuild the summary against the new template.
+  // Returns 202 — server kicks off a background reprocess. Poll getMeeting(id)
+  // and watch meeting_type_status for "ready" (or "error").
+  changeMeetingType: (id, meetingType) => request(`/meetings/${id}/meeting-type`, {
+    method: 'POST', body: JSON.stringify({ meeting_type: meetingType }),
+  }),
 
   // Search
   search: (params) => {

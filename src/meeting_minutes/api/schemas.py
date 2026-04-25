@@ -123,6 +123,11 @@ class MeetingDetail(BaseModel):
     # keep polling.
     external_notes_status: str | None = None
     external_notes_error: str | None = None
+    # Status of the post-hoc meeting-type-change job (see
+    # ``POST /meetings/{id}/meeting-type``). Same lifecycle as
+    # ``external_notes_status``: "processing" → "ready" | "error" | null.
+    meeting_type_status: str | None = None
+    meeting_type_error: str | None = None
 
 
 class MeetingUpdate(BaseModel):
@@ -142,6 +147,15 @@ class ExternalNotesRequest(BaseModel):
     identification + summary generation. Freeform text — no parsing.
     """
     text: str
+
+
+class MeetingTypeChangeRequest(BaseModel):
+    """Request body for ``POST /meetings/{id}/meeting-type``.
+
+    Triggers a full reprocess of the meeting against the new type's template.
+    Validation of the value happens server-side against ``MeetingType``.
+    """
+    meeting_type: str
 
 
 # ---------------------------------------------------------------------------
