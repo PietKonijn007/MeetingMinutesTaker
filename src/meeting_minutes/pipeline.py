@@ -581,6 +581,7 @@ class PipelineOrchestrator:
         user_speakers = []
         user_instructions = ""
         user_meeting_type: str | None = None
+        external_notes = ""
         notes_file = self._data_dir / "notes" / f"{meeting_id}.json"
         if notes_file.exists():
             try:
@@ -590,8 +591,14 @@ class PipelineOrchestrator:
                 user_instructions = notes_data.get("instructions", "")
                 raw_type = (notes_data.get("meeting_type") or "").strip()
                 user_meeting_type = raw_type or None
+                # Post-hoc external notes pasted from a meeting app. Folded
+                # into user_notes below so the existing "Organizer's Meeting
+                # Notes" injection rail carries them to the LLM.
+                external_notes = notes_data.get("external_notes", "") or ""
                 if user_notes:
                     _console(f"  User notes: {len(user_notes)} chars")
+                if external_notes:
+                    _console(f"  External app notes: {len(external_notes)} chars")
                 if user_speakers:
                     _console(f"  Speaker names provided: {', '.join(user_speakers)}")
                 if user_instructions:
@@ -600,6 +607,23 @@ class PipelineOrchestrator:
                     _console(f"  User-picked meeting type: {user_meeting_type}", "cyan")
             except Exception:
                 pass
+
+        # Merge external notes into user_notes with a clear header so the
+        # LLM can distinguish them from the organizer's own notes. They ride
+        # the same prompt-injection path (see "Organizer's Meeting Notes"
+        # section below) but are labelled separately in the prompt body.
+        if external_notes:
+            if user_notes:
+                user_notes = (
+                    f"{user_notes}\n\n"
+                    f"--- Notes exported from the meeting app ---\n"
+                    f"{external_notes}"
+                )
+            else:
+                user_notes = (
+                    f"--- Notes exported from the meeting app ---\n"
+                    f"{external_notes}"
+                )
 
         # Route to template
         gen_config = self._config.generation

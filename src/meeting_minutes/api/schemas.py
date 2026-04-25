@@ -115,6 +115,14 @@ class MeetingDetail(BaseModel):
     audio_file_path: str | None = None
     participant_sentiments: dict[str, str] = {}  # name -> sentiment
     effectiveness_score: int = 0  # 0-5, 0 = unknown
+    # Post-hoc external notes (pasted from Teams / Zoom / Meet / Otter / etc).
+    # Round-tripped so the "External notes" tab can preload the last paste.
+    external_notes: str | None = None
+    # One of: "processing" | "ready" | "error" | null. When "processing" the
+    # background rename + reprocess job is still running and the UI should
+    # keep polling.
+    external_notes_status: str | None = None
+    external_notes_error: str | None = None
 
 
 class MeetingUpdate(BaseModel):
@@ -124,6 +132,16 @@ class MeetingUpdate(BaseModel):
 
 class ExportRequest(BaseModel):
     format: str  # "pdf" | "md"
+
+
+class ExternalNotesRequest(BaseModel):
+    """Request body for ``POST /meetings/{id}/external-notes``.
+
+    The pasted notes are stored verbatim in the meeting's markdown under a
+    ``## External notes`` section, and also used to re-run speaker
+    identification + summary generation. Freeform text — no parsing.
+    """
+    text: str
 
 
 # ---------------------------------------------------------------------------

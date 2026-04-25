@@ -38,6 +38,13 @@ export const api = {
     method: 'PATCH', body: JSON.stringify(body),
   }),
   getSpeakerSuggestions: (id) => request(`/meetings/${id}/speaker-suggestions`),
+  // Post-hoc notes pasted from a meeting app (Teams/Zoom/Meet/Otter/…). Returns
+  // 202 — the server kicks off a background job that renames speakers and
+  // re-runs minutes generation. Poll getMeeting(id) and watch
+  // external_notes_status for "ready" (or "error").
+  submitExternalNotes: (id, text) => request(`/meetings/${id}/external-notes`, {
+    method: 'POST', body: JSON.stringify({ text }),
+  }),
 
   // Search
   search: (params) => {

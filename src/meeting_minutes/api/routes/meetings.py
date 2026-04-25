@@ -18,6 +18,7 @@ from meeting_minutes.api.schemas import (
     DecisionResponse,
     ErrorResponse,
     ExportRequest,
+    ExternalNotesRequest,
     MeetingDetail,
     MeetingListItem,
     MeetingUpdate,
@@ -235,6 +236,25 @@ def _meeting_to_detail(m: MeetingORM) -> MeetingDetail:
         except Exception:
             pass
 
+    # Round-trip the post-hoc external notes (if any) so the "External
+    # notes" tab can preload the last paste and surface the background
+    # job's state. All three fields are best-effort — if the sidecar is
+    # missing or malformed we simply return null.
+    external_notes_text: str | None = None
+    external_notes_status: str | None = None
+    external_notes_error: str | None = None
+    try:
+        from meeting_minutes import external_notes as _ext
+        from meeting_minutes.config import ConfigLoader as _ConfigLoader
+        _cfg = _ConfigLoader.load_default()
+        _data_dir = Path(_cfg.data_dir).expanduser()
+        _sidecar = _ext.load_notes_sidecar(_data_dir, m.meeting_id)
+        external_notes_text = _sidecar.get("external_notes") or None
+        external_notes_status = _sidecar.get("external_notes_status") or None
+        external_notes_error = _sidecar.get("external_notes_error") or None
+    except Exception:
+        pass
+
     return MeetingDetail(
         meeting_id=m.meeting_id,
         title=m.title,
@@ -251,6 +271,9 @@ def _meeting_to_detail(m: MeetingORM) -> MeetingDetail:
         audio_file_path=audio_file_path,
         participant_sentiments=participant_sentiments,
         effectiveness_score=effectiveness_score,
+        external_notes=external_notes_text,
+        external_notes_status=external_notes_status,
+        external_notes_error=external_notes_error,
     )
 
 
@@ -466,6 +489,82 @@ def get_speaker_suggestions(
     return {"meeting_id": meeting_id, "suggestions": suggestions}
 
 
+def apply_speaker_mapping(
+    data_dir: Path,
+    meeting_id: str,
+    mapping: dict[str, str],
+) -> tuple[int, list[str]]:
+    """Rewrite segment speaker labels + the top-level ``speakers`` array.
+
+    Shared by ``PATCH /transcript/speakers`` (user-driven rename) and the
+    external-notes background job (LLM-driven rename). Idempotent: labels not
+    present in ``mapping`` are left alone; labels already renamed to a human
+    name are untouched when the caller filters the mapping down to
+    ``SPEAKER_\\d+`` keys.
+
+    Also updates ``data/notes/{meeting_id}.json`` so subsequent regenerations
+    pick up the new names (the pipeline pulls ``user_speakers`` from there).
+
+    Returns ``(segments_updated, final_label_order)``.
+    """
+    import json as _json
+
+    transcript_path = data_dir / "transcripts" / f"{meeting_id}.json"
+    if not transcript_path.exists():
+        raise FileNotFoundError(
+            f"No transcript JSON on disk for meeting {meeting_id}: {transcript_path}"
+        )
+
+    data = _json.loads(transcript_path.read_text())
+    segments = data.get("transcript", {}).get("segments", []) or []
+
+    if not mapping:
+        # Still recompute the speakers array from current segments — cheap
+        # and keeps the return shape consistent.
+        seen: list[str] = []
+        for seg in segments:
+            spk = seg.get("speaker")
+            if spk and spk not in seen:
+                seen.append(spk)
+        return 0, seen
+
+    # Rewrite segment speakers.
+    updated = 0
+    for seg in segments:
+        if seg.get("speaker") in mapping:
+            seg["speaker"] = mapping[seg["speaker"]]
+            updated += 1
+
+    # Rebuild speakers array preserving first-appearance order from segments.
+    seen_labels: list[str] = []
+    for seg in segments:
+        spk = seg.get("speaker")
+        if spk and spk not in seen_labels:
+            seen_labels.append(spk)
+    data["speakers"] = [
+        {"label": l, "name": None, "email": None, "confidence": 0.0}
+        for l in seen_labels
+    ]
+    data["transcript"]["segments"] = segments
+
+    transcript_path.write_text(_json.dumps(data, indent=2, default=str))
+
+    # Update the notes file so reprocess/regenerate use these names.
+    notes_dir = data_dir / "notes"
+    notes_dir.mkdir(parents=True, exist_ok=True)
+    notes_file = notes_dir / f"{meeting_id}.json"
+    notes_data: dict = {}
+    if notes_file.exists():
+        try:
+            notes_data = _json.loads(notes_file.read_text())
+        except Exception:
+            notes_data = {}
+    notes_data["speakers"] = seen_labels
+    notes_file.write_text(_json.dumps(notes_data, indent=2))
+
+    return updated, seen_labels
+
+
 @router.patch("/{meeting_id}/transcript/speakers")
 def update_transcript_speakers(
     meeting_id: str,
@@ -501,10 +600,9 @@ def update_transcript_speakers(
     if not transcript_path.exists():
         raise HTTPException(status_code=404, detail="No transcript JSON on disk")
 
-    data = _json.loads(transcript_path.read_text())
-    segments = data.get("transcript", {}).get("segments", []) or []
-
-    # Build mapping from request body
+    # Build mapping from request body. Only the mapping construction lives
+    # here; the rewrite itself is delegated to ``apply_speaker_mapping`` so
+    # the background external-notes job can share the same code path.
     mapping: dict[str, str] = {}
     if body.get("mapping"):
         mapping = {k: v.strip() for k, v in body["mapping"].items() if v and v.strip()}
@@ -512,7 +610,11 @@ def update_transcript_speakers(
         ordered = body["ordered_names"]
         if isinstance(ordered, str):
             ordered = [n.strip() for n in ordered.split(",") if n.strip()]
-        # First-appearance order from segments
+        # First-appearance order from segments — need to peek at the current
+        # transcript here (pre-rewrite) to pair ordered names with the
+        # correct cluster ids.
+        data = _json.loads(transcript_path.read_text())
+        segments = data.get("transcript", {}).get("segments", []) or []
         seen: list[str] = []
         for seg in sorted(segments, key=lambda s: s.get("start") or 0):
             spk = seg.get("speaker")
@@ -527,36 +629,7 @@ def update_transcript_speakers(
     if not mapping:
         return {"updated": 0, "mapping": {}}
 
-    # Rewrite segment speakers
-    updated = 0
-    for seg in segments:
-        if seg.get("speaker") in mapping:
-            seg["speaker"] = mapping[seg["speaker"]]
-            updated += 1
-
-    # Rebuild speakers array preserving order from segments
-    seen_labels: list[str] = []
-    for seg in segments:
-        spk = seg.get("speaker")
-        if spk and spk not in seen_labels:
-            seen_labels.append(spk)
-    data["speakers"] = [{"label": l, "name": None, "email": None, "confidence": 0.0} for l in seen_labels]
-    data["transcript"]["segments"] = segments
-
-    transcript_path.write_text(_json.dumps(data, indent=2, default=str))
-
-    # Update the notes file so reprocess/regenerate use these names
-    notes_dir = data_dir / "notes"
-    notes_dir.mkdir(parents=True, exist_ok=True)
-    notes_file = notes_dir / f"{meeting_id}.json"
-    notes_data = {}
-    if notes_file.exists():
-        try:
-            notes_data = _json.loads(notes_file.read_text())
-        except Exception:
-            notes_data = {}
-    notes_data["speakers"] = seen_labels
-    notes_file.write_text(_json.dumps(notes_data, indent=2))
+    updated, seen_labels = apply_speaker_mapping(data_dir, meeting_id, mapping)
 
     # SPK-1: when the caller supplies person_mapping, confirm or invalidate
     # the voice samples for each relabelled cluster.
@@ -782,6 +855,78 @@ async def regenerate_meeting(
         raise HTTPException(status_code=500, detail=f"Regeneration failed: {exc}")
 
     return {"status": "regenerated", "meeting_id": meeting_id}
+
+
+@router.post(
+    "/{meeting_id}/external-notes",
+    dependencies=[Depends(check_llm_limit)],
+    status_code=202,
+)
+async def submit_external_notes(
+    meeting_id: str,
+    body: ExternalNotesRequest,
+    storage: Annotated[StorageEngine, Depends(get_storage)],
+    config: Annotated[AppConfig, Depends(get_config)],
+):
+    """Accept pasted notes from an external meeting app and trigger post-hoc updates.
+
+    Freeform text in; archived + fed back into minutes generation. The
+    endpoint returns immediately (202 Accepted) — the speaker rename and
+    minutes regeneration run as a background task because they involve LLM
+    calls that can take 10–60s. Progress is surfaced via
+    ``external_notes_status`` on ``GET /meetings/{id}`` — callers should
+    poll until it flips from ``processing`` to ``ready`` (or ``error``).
+
+    Happens synchronously before returning:
+      1. Validates the meeting and its transcript exist.
+      2. Writes the raw paste to ``data/external_notes/{id}.md`` (overwrites
+         any prior paste — single-user MVP).
+      3. Merges the text into ``data/notes/{id}.json`` under ``external_notes``
+         and flips ``external_notes_status`` to ``processing``.
+
+    Happens in the background (fire-and-forget asyncio task):
+      4. LLM-infers ``SPEAKER_xx → Name`` mappings from the notes.
+      5. Applies the mappings to the transcript JSON.
+      6. Runs ``PipelineOrchestrator.reprocess`` (regenerates summary,
+         re-ingests DB, re-exports Obsidian).
+      7. Appends the verbatim paste as a ``## External notes`` section to
+         the rendered markdown (local ``.md``, minutes JSON, DB column,
+         Obsidian) so it survives future regenerations.
+    """
+    from meeting_minutes import external_notes as ext
+
+    m = storage.get_meeting(meeting_id)
+    if m is None:
+        raise HTTPException(status_code=404, detail=f"No meeting with ID {meeting_id}")
+
+    text = (body.text or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="External notes text is empty")
+
+    data_dir = Path(config.data_dir).expanduser()
+    transcript_path = data_dir / "transcripts" / f"{meeting_id}.json"
+    if not transcript_path.exists():
+        raise HTTPException(
+            status_code=400,
+            detail="Meeting has no transcript — external notes can only be added post-hoc",
+        )
+
+    # --- Sync portion: archive + sidecar + status flip -----------------
+    ext.write_archive(data_dir, meeting_id, text)
+    sidecar = ext.load_notes_sidecar(data_dir, meeting_id)
+    sidecar["external_notes"] = text
+    sidecar["external_notes_status"] = ext.STATUS_PROCESSING
+    sidecar.pop("external_notes_error", None)
+    ext.write_notes_sidecar(data_dir, meeting_id, sidecar)
+
+    # --- Async portion: rename speakers + reprocess + re-append --------
+    ext.schedule_background_update(config, meeting_id, text)
+
+    return {
+        "status": "accepted",
+        "meeting_id": meeting_id,
+        "external_notes_status": ext.STATUS_PROCESSING,
+    }
 
 
 def _export_meeting_to_response(
