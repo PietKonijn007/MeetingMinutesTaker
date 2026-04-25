@@ -943,7 +943,6 @@ def init_cmd():
 def serve_cmd(
     host: str = typer.Option("127.0.0.1", "--host", help="Bind address"),
     port: int = typer.Option(8080, "--port", "-p", help="Port number"),
-    auto_port: bool = typer.Option(True, "--auto-port/--no-auto-port", help="Auto-find a free port if the requested one is busy"),
 ):
     """Start the API server."""
     import signal
@@ -973,28 +972,34 @@ def serve_cmd(
     pid = _port_in_use(host, port)
 
     if pid is not None:
-        # Detect TTY — launchd/systemd/docker have no terminal, so prompts hang
+        # Detect TTY — launchd/systemd/docker have no terminal, so prompts hang.
+        # Non-interactive callers (like the launchd-managed service) refuse to
+        # drift to a different port: silent drift to 8081 is exactly the bug we
+        # were chasing in upgrades. launchd's KeepAlive will respawn us once
+        # the port is actually free.
         is_interactive = sys.stdin.isatty() and sys.stdout.isatty()
 
         if not is_interactive:
-            console.print(f"[yellow]Port {port} is already in use (non-interactive — auto-resolving).[/yellow]")
-            if not auto_port:
-                err_console.print(f"[red]Port {port} in use and --no-auto-port is set.[/red]")
-                raise typer.Exit(code=1)
-            choice = "next"
-        elif pid > 0:
+            err_console.print(
+                f"[red]Port {port} is already in use; refusing to start on a different port.[/red]"
+            )
+            if pid > 0:
+                err_console.print(f"[dim]Held by PID {pid}.[/dim]")
+            raise typer.Exit(code=1)
+
+        if pid > 0:
             console.print(f"[yellow]Port {port} is already in use by PID {pid}.[/yellow]")
             choice = typer.prompt(
-                "Kill the process and use this port, or find the next free port?",
-                type=typer.Choice(["kill", "next", "abort"], case_sensitive=False),
-                default="next",
+                "Kill the process, specify a different port, or abort?",
+                type=typer.Choice(["kill", "port", "abort"], case_sensitive=False),
+                default="abort",
             )
         else:
             console.print(f"[yellow]Port {port} is already in use.[/yellow]")
             choice = typer.prompt(
-                "Find the next free port, or abort?",
-                type=typer.Choice(["next", "abort"], case_sensitive=False),
-                default="next",
+                "Specify a different port, or abort?",
+                type=typer.Choice(["port", "abort"], case_sensitive=False),
+                default="abort",
             )
 
         if choice == "kill" and pid > 0:
@@ -1009,19 +1014,16 @@ def serve_cmd(
             except PermissionError:
                 err_console.print(f"[red]Permission denied killing PID {pid}. Try: sudo kill {pid}[/red]")
                 raise typer.Exit(code=1)
-        elif choice == "next":
-            if not auto_port:
-                err_console.print(f"[red]Port {port} in use and --no-auto-port is set.[/red]")
+        elif choice == "port":
+            new_port = typer.prompt("Enter a port number", type=int)
+            if not (1 <= new_port <= 65535):
+                err_console.print(f"[red]Port {new_port} is out of range.[/red]")
                 raise typer.Exit(code=1)
-            original = port
-            for candidate in range(port + 1, port + 20):
-                if _port_in_use(host, candidate) is None:
-                    port = candidate
-                    break
-            else:
-                err_console.print(f"[red]No free port found in range {original+1}–{original+19}[/red]")
+            if _port_in_use(host, new_port) is not None:
+                err_console.print(f"[red]Port {new_port} is also in use.[/red]")
                 raise typer.Exit(code=1)
-            console.print(f"  [green]Using port {port} instead[/green]")
+            port = new_port
+            console.print(f"  [green]Using port {port}[/green]")
         else:
             raise typer.Exit(code=0)
 
@@ -1327,6 +1329,87 @@ def _get_mm_binary() -> str:
         return str(venv_mm)
     # Fallback to whatever mm is in PATH
     return str(sys.executable).replace("python", "mm")
+
+
+def _read_plist_port(plist_path: Path) -> int | None:
+    """Extract the --port argument from an installed launchd plist.
+
+    Returns the configured port, or None if the plist can't be parsed or no
+    --port argument is present.
+    """
+    import plistlib
+
+    try:
+        with open(plist_path, "rb") as f:
+            data = plistlib.load(f)
+    except Exception:
+        return None
+    args = data.get("ProgramArguments") or []
+    for i, arg in enumerate(args):
+        if arg in ("--port", "-p") and i + 1 < len(args):
+            try:
+                return int(args[i + 1])
+            except (TypeError, ValueError):
+                return None
+    return None
+
+
+def _wait_for_port_release(port: int, timeout: float, escalate_after: float) -> bool:
+    """Poll until the TCP port has no listener, escalating SIGTERM → SIGKILL.
+
+    `launchctl unload` returns as soon as SIGTERM is delivered, but the old
+    process keeps the listening socket bound until it actually exits. Without
+    waiting, a follow-up `launchctl load` will spawn a new server that races
+    the dying one for the port — which is how upgrades end up on 8081.
+
+    After `escalate_after` seconds the original PID gets SIGKILL'd. Returns
+    True when the port is free, False if the timeout expired.
+    """
+    import os
+    import signal as _signal
+    import socket
+    import subprocess
+    import time
+
+    def _holder_pid() -> int | None:
+        try:
+            r = subprocess.run(
+                ["lsof", "-ti", f"tcp:{port}"],
+                capture_output=True, text=True, timeout=2,
+            )
+            if r.returncode == 0 and r.stdout.strip():
+                return int(r.stdout.strip().split("\n")[0])
+        except Exception:
+            pass
+        # Fallback: lsof not available — try binding.
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.bind(("127.0.0.1", port))
+            return None
+        except OSError:
+            return -1
+
+    deadline = time.monotonic() + timeout
+    escalate_at = time.monotonic() + escalate_after
+    escalated = False
+    initial_pid = _holder_pid()
+    if initial_pid is None:
+        return True
+
+    while time.monotonic() < deadline:
+        if _holder_pid() is None:
+            return True
+        if not escalated and time.monotonic() >= escalate_at and initial_pid and initial_pid > 0:
+            try:
+                os.kill(initial_pid, _signal.SIGKILL)
+                console.print(f"  [dim]Port {port} still held by PID {initial_pid} — sent SIGKILL[/dim]")
+            except ProcessLookupError:
+                pass
+            except PermissionError:
+                err_console.print(f"  [yellow]Cannot SIGKILL PID {initial_pid} (permission denied)[/yellow]")
+            escalated = True
+        time.sleep(0.2)
+    return _holder_pid() is None
 
 
 def _generate_plist(project_root: Path, mm_binary: str, port: int = 8080) -> str:
@@ -1825,7 +1908,18 @@ def upgrade_cmd(
     # 5. Restart service if running
     console.print("[bold][5/5] Restarting service...[/bold]")
     if restart and PLIST_PATH.exists():
+        plist_port = _read_plist_port(PLIST_PATH)
         subprocess.run(["launchctl", "unload", str(PLIST_PATH)], capture_output=True)
+        # Wait for the old process to release the port before reloading. Without
+        # this, launchctl load races the dying uvicorn and the new server picks
+        # a different port (or fails to bind).
+        if plist_port is not None:
+            freed = _wait_for_port_release(plist_port, timeout=15.0, escalate_after=5.0)
+            if not freed:
+                err_console.print(
+                    f"  [yellow]Port {plist_port} still held after 15s — loading anyway; "
+                    "service may fail to start.[/yellow]"
+                )
         result = subprocess.run(["launchctl", "load", str(PLIST_PATH)], capture_output=True, text=True)
         if result.returncode == 0 or "already" in result.stderr.lower():
             console.print("  [green]✓[/green] Service restarted")

@@ -1871,8 +1871,8 @@ If `templates/export/docx_template.docx` exists, python-docx inherits paragraph 
 
 | Problem | Solution |
 |---------|----------|
-| **`mm serve` fails to start** | Make sure FastAPI and uvicorn are installed: `pip install -e ".[dev]"`. Check that port 8080 isn't already in use (`mm serve` will now prompt you to kill the holding process or pick the next free port). For launchd service conflicts, run `mm service stop` before `mm serve`. |
-| **`mm serve` says port in use** | `mm serve` auto-detects busy ports and offers options: `kill` (terminates the process holding it), `next` (scans ports +1 to +19 for a free one), or `abort`. In non-interactive contexts (launchd/systemd), it auto-picks the next free port. Use `--no-auto-port` to disable auto-finding. |
+| **`mm serve` fails to start** | Make sure FastAPI and uvicorn are installed: `pip install -e ".[dev]"`. Check that port 8080 isn't already in use (`mm serve` will prompt you to kill the holding process or specify a different port). For launchd service conflicts, run `mm service stop` before `mm serve`. |
+| **`mm serve` says port in use** | Interactively, `mm serve` offers `kill` (terminate the holder), `port` (specify a different port number), or `abort`. In non-interactive contexts (launchd/systemd) it refuses to start on a different port and exits — letting the service manager respawn once the port is actually free, rather than silently drifting to 8081. |
 | **Blank page at localhost:8080** | The Svelte frontend needs to be built first: `cd web && npm install && npm run build`. In development, use `npm run dev` on port 3000 instead. |
 | **API returns 404 for everything** | The database may not be initialized. Run `alembic upgrade head` to create tables. |
 | **"CORS error" in browser console** | This only happens if you access the Svelte dev server directly without the proxy. Make sure `vite.config.js` proxies `/api` to `:8080`, or access the API server directly at `:8080`. |

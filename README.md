@@ -223,7 +223,7 @@ mm actions complete <action_id>                   # Mark done
 | `mm delete <id>` | Delete meeting and all associated data |
 | `mm cleanup` | Run retention policy cleanup (delete expired data) |
 | `mm generate-key` | Generate a new encryption key for at-rest encryption |
-| `mm serve` | Start the web UI + API server (supports `--host`, `--port`, `--auto-port/--no-auto-port`) |
+| `mm serve` | Start the web UI + API server (supports `--host`, `--port`; refuses to drift if the port is busy) |
 | `mm upgrade` | Pull latest code from main and rebuild (supports `--branch` override) |
 | `mm service install` | Install macOS Launch Agent for auto-start on login |
 | `mm service uninstall` | Remove the macOS Launch Agent |
