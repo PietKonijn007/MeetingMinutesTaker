@@ -103,9 +103,8 @@ class DiarizationEngine:
             hint = ""
             if "AudioDecoder" in err_str or "torchcodec" in err_str.lower():
                 hint = (
-                    " — FIX: pyannote.audio 3.3+ requires torchcodec + ffmpeg. "
-                    "Run: brew install ffmpeg && pip install torchcodec  "
-                    "(or pin: pip install 'pyannote.audio<3.3')"
+                    " — FIX: pyannote.audio 4.x requires torchcodec + ffmpeg. "
+                    "Run: brew install ffmpeg && pip install torchcodec"
                 )
             elif "401" in err_str or "403" in err_str or "gated" in err_str.lower() or "access" in err_str.lower():
                 hint = (
