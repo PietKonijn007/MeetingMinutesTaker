@@ -71,8 +71,21 @@ class DiarizationEngine:
             ) from exc
         return self._pipeline
 
-    def diarize(self, audio_path: Path) -> DiarizationResult:
+    def diarize(
+        self,
+        audio_path: Path,
+        *,
+        num_speakers: int | None = None,
+        min_speakers: int | None = None,
+        max_speakers: int | None = None,
+    ) -> DiarizationResult:
         """Identify speakers. Returns speaker segments with labels.
+
+        Optional speaker-count hints are forwarded to the underlying pyannote
+        pipeline. Use ``num_speakers`` when the count is known exactly (the
+        single biggest precision win), or ``min_speakers``/``max_speakers``
+        for bounds when only one side is known. All three are no-ops when
+        unset, preserving the prior auto-detect behavior.
 
         Side effect: if the underlying pipeline emits per-cluster speaker
         embeddings (pyannote >= 4 on DiarizeOutput.speaker_embeddings), they
@@ -94,7 +107,19 @@ class DiarizationEngine:
 
         try:
             pipeline = self._load_pipeline()
-            diarization = pipeline(str(audio_path))
+            # Build pyannote kwargs from the optional hint args. Only pass
+            # the ones that are actually set so we don't surprise pyannote
+            # with ``min/max=None`` overrides.
+            pyannote_kwargs: dict = {}
+            if num_speakers is not None and num_speakers > 0:
+                pyannote_kwargs["num_speakers"] = int(num_speakers)
+            if min_speakers is not None and min_speakers > 0:
+                pyannote_kwargs["min_speakers"] = int(min_speakers)
+            if max_speakers is not None and max_speakers > 0:
+                pyannote_kwargs["max_speakers"] = int(max_speakers)
+            if pyannote_kwargs:
+                logger.info("Diarization called with hints: %s", pyannote_kwargs)
+            diarization = pipeline(str(audio_path), **pyannote_kwargs)
         except Exception as exc:
             # Graceful failure — return empty result with actionable diagnostics
             import warnings

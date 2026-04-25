@@ -462,10 +462,44 @@ class PipelineOrchestrator:
             if not os.environ.get("HF_TOKEN"):
                 self._logger.warning("HF_TOKEN environment variable not set — diarization will likely fail. Get a token at huggingface.co/settings/tokens and accept the license at huggingface.co/pyannote/speaker-diarization-3.1")
             diarize_engine = DiarizationEngine(self._config.diarization)
+            # Read the speaker-count hint from the notes sidecar, if any.
+            # ``speakers`` is a list of names typed at recording time;
+            # ``speakers_complete`` says whether that list is exhaustive.
+            #   complete  → num_speakers=N (exact)
+            #   not       → min_speakers=N (lower bound, pyannote infers ceiling)
+            # Either way we anchor pyannote to a realistic count, which is
+            # the single biggest precision lever for transcripts where
+            # speakers are similar-voiced or short-talking.
+            diarize_kwargs: dict = {}
+            try:
+                import json as _json
+                _notes_file = self._data_dir / "notes" / f"{meeting_id}.json"
+                if _notes_file.exists():
+                    _notes = _json.loads(_notes_file.read_text())
+                    _names = _notes.get("speakers") or []
+                    if isinstance(_names, str):
+                        _names = [n.strip() for n in _names.split(",") if n.strip()]
+                    _count = len([n for n in _names if n])
+                    if _count > 0:
+                        if _notes.get("speakers_complete", True):
+                            diarize_kwargs["num_speakers"] = _count
+                            _console(f"  Speaker hint: exactly {_count} speaker(s) (from sidecar)", "cyan")
+                        else:
+                            diarize_kwargs["min_speakers"] = _count
+                            _console(f"  Speaker hint: at least {_count} speaker(s) (from sidecar)", "cyan")
+            except Exception as exc:
+                self._logger.warning("Could not read speaker-count hint: %s", exc)
+
             try:
                 t0 = time.time()
+                # ``run_in_executor`` doesn't accept kwargs directly — bind
+                # them with ``functools.partial`` so they reach diarize().
+                import functools as _functools
+                _diarize_call = _functools.partial(
+                    diarize_engine.diarize, audio_path, **diarize_kwargs,
+                )
                 diarization_result = await asyncio.get_event_loop().run_in_executor(
-                    None, diarize_engine.diarize, audio_path
+                    None, _diarize_call,
                 )
                 diarization_result.meeting_id = meeting_id
                 t_diarize = time.time() - t0
@@ -1087,13 +1121,41 @@ class PipelineOrchestrator:
             _console("  [yellow]HF_TOKEN not set — diarization will fail.[/yellow]")
             return
 
-        # Run diarization
+        # Run diarization. Read the same speaker-count hint from the notes
+        # sidecar that the recording pipeline uses — by the time the user
+        # triggers a rediarize they've usually seen the transcript and have
+        # an even better idea of the real count than they did at recording.
         _console(f"  Audio: {audio_path.name} ({audio_path.stat().st_size / (1024*1024):.1f} MB)")
         _console(f"  Running speaker diarization (this can take 30s-3min)...")
         diarize_engine = DiarizationEngine(self._config.diarization)
+
+        diarize_kwargs: dict = {}
+        try:
+            import json as _json
+            _notes_file = self._data_dir / "notes" / f"{meeting_id}.json"
+            if _notes_file.exists():
+                _notes = _json.loads(_notes_file.read_text())
+                _names = _notes.get("speakers") or []
+                if isinstance(_names, str):
+                    _names = [n.strip() for n in _names.split(",") if n.strip()]
+                _count = len([n for n in _names if n])
+                if _count > 0:
+                    if _notes.get("speakers_complete", True):
+                        diarize_kwargs["num_speakers"] = _count
+                        _console(f"  Speaker hint: exactly {_count} speaker(s) (from sidecar)")
+                    else:
+                        diarize_kwargs["min_speakers"] = _count
+                        _console(f"  Speaker hint: at least {_count} speaker(s) (from sidecar)")
+        except Exception as exc:
+            self._logger.warning("Could not read speaker-count hint for rediarize: %s", exc)
+
+        import functools as _functools
+        _diarize_call = _functools.partial(
+            diarize_engine.diarize, audio_path, **diarize_kwargs,
+        )
         t0 = time.time()
         diarization_result = await asyncio.get_event_loop().run_in_executor(
-            None, diarize_engine.diarize, audio_path
+            None, _diarize_call,
         )
         diarization_result.meeting_id = meeting_id
         t_diarize = time.time() - t0

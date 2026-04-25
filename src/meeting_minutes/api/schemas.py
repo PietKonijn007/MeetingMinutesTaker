@@ -278,6 +278,11 @@ class RecordingStartRequest(BaseModel):
 class RecordingStopRequest(BaseModel):
     notes: str | None = None          # User's meeting notes (markdown)
     speakers: str | None = None       # Comma-separated speaker names
+    # Diarization speaker-count hint. When True, pyannote is told the exact
+    # speaker count (``num_speakers=len(speakers)``); when False, only a
+    # lower bound (``min_speakers=len(speakers)``). Only meaningful when
+    # ``speakers`` is non-empty.
+    speakers_complete: bool | None = None
     instructions: str | None = None   # Custom instructions for the LLM
     # User-picked template type. When set (non-empty), the pipeline uses this
     # as `PromptRouter.select_template(user_override=...)` and skips the LLM
