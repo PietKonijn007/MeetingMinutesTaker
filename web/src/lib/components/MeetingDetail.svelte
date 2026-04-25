@@ -93,11 +93,28 @@
     }
   }
 
+  // Synthetic cluster id used in the editor for transcript segments that
+  // diarization didn't assign to any real cluster (speaker is null or empty
+  // in the transcript JSON). On submit it's translated back to ``""`` for
+  // the server, which apply_speaker_mapping recognizes as "rewrite all
+  // segments with no speaker label."
+  const UNKNOWN_CLUSTER = '__unknown__';
+
   async function openSpeakerEditor() {
-    const uniques = [...new Set((transcript?.segments || []).map(s => s.speaker).filter(Boolean))];
+    const segments = transcript?.segments || [];
+    const realLabels = [...new Set(segments.map(s => s.speaker).filter(Boolean))];
+    const hasUnassigned = segments.some(s => !s.speaker);
+    // Append the synthetic Unknown row at the end so the user can see it
+    // separately from real clusters. Only include it if there's actually
+    // something to rename.
+    const uniques = hasUnassigned ? [...realLabels, UNKNOWN_CLUSTER] : realLabels;
     const edits = {};
     const personIds = {};
     for (const label of uniques) {
+      if (label === UNKNOWN_CLUSTER) {
+        edits[label] = '';
+        continue;
+      }
       const sugg = speakerSuggestions[label] || {};
       // Prefill high/medium suggestions; leave unknown ones blank for the
       // user. If the label is already a human name (not SPEAKER_XX), keep it.
@@ -179,13 +196,18 @@
       const mapping = {};
       const personMapping = {};
       for (const [label, name] of Object.entries(speakerEdits)) {
-        if (name && name.trim()) mapping[label] = name.trim();
+        if (!name || !name.trim()) continue;
+        // Translate the synthetic Unknown placeholder back to "" — the
+        // backend treats it as "all null/empty-speaker segments".
+        const submitLabel = label === UNKNOWN_CLUSTER ? '' : label;
+        mapping[submitLabel] = name.trim();
       }
       // Best-effort prefill of person_mapping from local state. The server
       // resolves any clusters we miss by case-insensitive name match (or
       // creates a new Person on the fly), so this is a UX hint only.
       for (const [label, pid] of Object.entries(speakerPersonIds)) {
-        if (pid && mapping[label]) personMapping[label] = pid;
+        const submitLabel = label === UNKNOWN_CLUSTER ? '' : label;
+        if (pid && mapping[submitLabel]) personMapping[submitLabel] = pid;
       }
       if (Object.keys(mapping).length === 0) {
         addToast('No speaker names entered', 'warning');
@@ -1299,6 +1321,14 @@
 
           <!-- Speaker rename editor -->
           {#if showSpeakerEditor}
+            <!--
+              ``editorSpeakers`` extends the legend's ``uniqueSpeakers`` with
+              a synthetic Unknown row when any segment has a null/empty
+              speaker (e.g. diarization gaps). The Unknown row isn't shown
+              in the legend above, but it must be renameable.
+            -->
+            {@const hasUnassigned = transcript.segments.some(s => !s.speaker)}
+            {@const editorSpeakers = hasUnassigned ? [...uniqueSpeakers, UNKNOWN_CLUSTER] : uniqueSpeakers}
             <div class="mb-4 p-4 bg-[var(--bg-surface)] border border-[var(--accent)] rounded-lg">
               <!--
                 Single shared <datalist> populated from /people. Each rename
@@ -1315,16 +1345,19 @@
                 Voice samples are learned automatically — suggested names come from previous meetings. Type a known name to link voices across meetings, or a new name to add a person on the fly. Minutes regenerate in the background.
               </p>
               <div class="space-y-2 mb-3">
-                {#each uniqueSpeakers as label}
-                  {@const sugg = speakerSuggestions[label] || {}}
+                {#each editorSpeakers as label}
+                  {@const isUnknown = label === UNKNOWN_CLUSTER}
+                  {@const sugg = isUnknown ? {} : (speakerSuggestions[label] || {})}
                   {@const tier = sugg.suggestion_tier}
                   {@const speechSec = sugg.speech_seconds || 0}
-                  {@const canCreateNew = speechSec > 30 && !tier}
+                  {@const canCreateNew = !isUnknown && speechSec > 30 && !tier}
                   {@const matchedPerson = resolveTypedName(speakerEdits[label])}
+                  {@const displayLabel = isUnknown ? 'Unknown' : label}
+                  {@const swatchColor = isUnknown ? '#6B7280' : colorFor(label)}
                   <div class="space-y-1.5">
                     <div class="flex items-center gap-3">
-                      <span class="w-2 h-2 rounded-full shrink-0" style="background-color: {colorFor(label)}"></span>
-                      <span class="text-xs font-mono text-[var(--text-muted)] w-24 shrink-0">{label}</span>
+                      <span class="w-2 h-2 rounded-full shrink-0" style="background-color: {swatchColor}"></span>
+                      <span class="text-xs font-mono text-[var(--text-muted)] w-24 shrink-0">{displayLabel}</span>
                       <input
                         type="text"
                         list="known-people"

@@ -509,6 +509,11 @@ def apply_speaker_mapping(
     name are untouched when the caller filters the mapping down to
     ``SPEAKER_\\d+`` keys.
 
+    Special key ``""`` (empty string) in ``mapping`` matches any segment with
+    a null/missing/empty ``speaker`` field. This is the "Unknown" bucket the
+    UI exposes for transcripts where diarization failed or left gaps — the
+    user can rename them all to one person at once.
+
     Also updates ``data/notes/{meeting_id}.json`` so subsequent regenerations
     pick up the new names (the pipeline pulls ``user_speakers`` from there).
 
@@ -535,11 +540,14 @@ def apply_speaker_mapping(
                 seen.append(spk)
         return 0, seen
 
-    # Rewrite segment speakers.
+    # Rewrite segment speakers. We coerce missing/None/empty to ``""`` so a
+    # mapping entry under ``""`` (the "Unknown" bucket from the UI) catches
+    # all segments that diarization didn't assign to a cluster.
     updated = 0
     for seg in segments:
-        if seg.get("speaker") in mapping:
-            seg["speaker"] = mapping[seg["speaker"]]
+        current = seg.get("speaker") or ""
+        if current in mapping:
+            seg["speaker"] = mapping[current]
             updated += 1
 
     # Rebuild speakers array preserving first-appearance order from segments.
@@ -677,7 +685,7 @@ async def update_transcript_speakers(
     resolved_person_mapping: dict[str, str] = {}
 
     for cluster_id, name in mapping.items():
-        if not cluster_id or not name:
+        if not name:
             continue
         person_id = explicit_person_mapping.get(cluster_id) or ""
         if not person_id:
@@ -705,6 +713,13 @@ async def update_transcript_speakers(
                     {"person_id": person_id, "name": name}
                 )
         resolved_person_mapping[cluster_id] = person_id
+
+        # Voice-sample binding only makes sense when there's a real cluster
+        # (i.e. diarization produced an embedding for it). The synthetic
+        # "Unknown" bucket — cluster_id == "" — covers segments diarization
+        # never assigned, so there's nothing to invalidate or confirm.
+        if not cluster_id:
+            continue
 
         # Demote any sample previously written for this cluster under a
         # different person, then confirm the new pair.
