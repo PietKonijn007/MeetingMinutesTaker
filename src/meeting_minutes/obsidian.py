@@ -42,7 +42,11 @@ def export_to_obsidian(
     year_month = date_obj.strftime("%Y-%m")
     date_str = date_obj.strftime("%Y-%m-%d")
 
-    folder = vault_path / year / year_month
+    # Folder layout: {vault}/Meeting Minutes/{year}/{year-month}/
+    # The "Meeting Minutes" prefix is the canonical location — see the delete
+    # handler in api/routes/meetings.py which uses the same path. Keeping them
+    # aligned so regeneration + deletion both target the same file.
+    folder = vault_path / "Meeting Minutes" / year / year_month
     folder.mkdir(parents=True, exist_ok=True)
 
     # Clean title for filename

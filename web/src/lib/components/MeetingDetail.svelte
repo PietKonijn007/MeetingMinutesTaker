@@ -39,6 +39,14 @@
   // REC-1: series this meeting belongs to, if any.
   let meetingSeries = $state(null);
 
+  // External-notes tab state. The textarea is seeded from the server (so
+  // the user sees their prior paste on reload) and we poll `/meetings/{id}`
+  // while the background job is running so the status can flip to "ready"
+  // or "error" without a manual refresh.
+  let externalNotesDraft = $state('');
+  let submittingExternalNotes = $state(false);
+  let externalNotesPoller = null;
+
   async function loadMeetingSeries(id) {
     try {
       const payload = await api.getMeetingSeries(id);
@@ -164,6 +172,67 @@
     }
   }
 
+  // --- External notes -----------------------------------------------------
+  //
+  // The user pastes notes from Teams / Zoom / Meet / Otter etc. We ship the
+  // raw text to the server; it archives the paste, kicks off a background
+  // job (speaker rename + full regeneration), and returns 202 immediately.
+  // We then poll the meeting every few seconds so the status pill updates
+  // without the user having to refresh.
+
+  function stopExternalNotesPolling() {
+    if (externalNotesPoller) {
+      clearInterval(externalNotesPoller);
+      externalNotesPoller = null;
+    }
+  }
+
+  function startExternalNotesPolling() {
+    stopExternalNotesPolling();
+    // 4s feels responsive without hammering the API; reprocess typically
+    // takes 15-60s depending on transcript length + model.
+    externalNotesPoller = setInterval(async () => {
+      try {
+        const raw = await api.getMeeting(meetingId);
+        if (raw.external_notes_status !== 'processing') {
+          stopExternalNotesPolling();
+          // Full reload so the regenerated Minutes tab picks up new content.
+          await loadMeeting(meetingId);
+          await loadTranscript(meetingId);
+          if (raw.external_notes_status === 'ready') {
+            addToast('Minutes updated with external notes', 'success');
+          } else if (raw.external_notes_status === 'error') {
+            addToast(`External-notes update failed: ${raw.external_notes_error || 'unknown error'}`, 'error');
+          }
+        }
+      } catch (e) {
+        // Transient errors are fine — keep polling. A hard failure will
+        // surface on the next full loadMeeting anyway.
+      }
+    }, 4000);
+  }
+
+  async function submitExternalNotes() {
+    const text = externalNotesDraft.trim();
+    if (!text) {
+      addToast('Paste some notes first', 'warning');
+      return;
+    }
+    submittingExternalNotes = true;
+    try {
+      await api.submitExternalNotes(meetingId, text);
+      addToast('External notes saved — regenerating minutes in the background', 'info');
+      // Refresh the meeting so the status pill shows "processing", then
+      // poll until it flips.
+      await loadMeeting(meetingId);
+      startExternalNotesPolling();
+    } catch (e) {
+      addToast(`Failed to save external notes: ${e.message}`, 'error');
+    } finally {
+      submittingExternalNotes = false;
+    }
+  }
+
   function toggleTopic(idx) {
     const next = new Set(expandedTopics);
     if (next.has(idx)) next.delete(idx);
@@ -198,6 +267,10 @@
 
   const tabs = $derived([
     { key: 'minutes', label: 'Minutes' },
+    // Post-hoc paste box for notes exported from a meeting app — sits
+    // between Minutes and Transcript so it's easy to land on after reading
+    // the generated summary.
+    { key: 'external', label: 'External notes' },
     { key: 'transcript', label: 'Transcript' },
     { key: 'actions', label: `Actions${meeting?.actions?.length ? ` (${meeting.actions.length})` : ''}` },
     { key: 'decisions', label: `Decisions${meeting?.decisions?.length ? ` (${meeting.decisions.length})` : ''}` },
@@ -262,7 +335,21 @@
         key_topics: raw.minutes?.key_topics || [],
         sections: raw.minutes?.sections || [],
         sentiment: raw.minutes?.sentiment || null,
+        external_notes: raw.external_notes || '',
+        external_notes_status: raw.external_notes_status || null,
+        external_notes_error: raw.external_notes_error || null,
       };
+      // Keep the textarea in sync with whatever the server currently has.
+      // On first load this pre-fills the paste; on status-poll refreshes
+      // we'd otherwise clobber an in-progress edit, but that's OK — the
+      // textarea is disabled while submittingExternalNotes is true.
+      externalNotesDraft = raw.external_notes || '';
+      // If we landed on a meeting that's already mid-processing (e.g. the
+      // user navigated away and came back), resume polling so the pill
+      // updates without requiring a new submit.
+      if (raw.external_notes_status === 'processing' && !externalNotesPoller) {
+        startExternalNotesPolling();
+      }
       // Reset expanded discussion topics on new meeting load
       expandedTopics = new Set();
     } catch (e) {
@@ -347,12 +434,18 @@
   $effect(() => {
     const id = meetingId;
     if (id) {
+      // Stop any in-flight external-notes poller from the previous meeting
+      // before we kick off loads for the new one — loadMeeting() will
+      // re-start polling if the new meeting is still processing.
+      stopExternalNotesPolling();
       loadMeeting(id);
       loadTranscript(id);
       loadAnalytics(id);
       loadSpeakerSuggestions(id);
       loadMeetingSeries(id);
     }
+    // Cleanup when this component unmounts.
+    return () => stopExternalNotesPolling();
   });
 </script>
 
@@ -788,6 +881,73 @@
         {:else}
           <p class="text-sm text-[var(--text-muted)] italic">No minutes generated yet.</p>
         {/if}
+
+      {:else if activeTab === 'external'}
+        <!--
+          External notes tab. Post-hoc only: the user pastes notes from a
+          meeting app (Teams/Zoom/Meet/Gemini/Otter/…) and on submit the
+          server:
+            1. archives the paste at data/external_notes/{id}.md,
+            2. kicks off a background job that re-runs speaker naming and
+               minutes generation using the paste as extra context,
+            3. appends a verbatim "## External notes" section to the
+               meeting's markdown (and the Obsidian file).
+          We poll /meetings/{id} until the status flips from "processing"
+          to "ready" (or "error").
+        -->
+        <div class="space-y-4 max-w-3xl">
+          <div>
+            <h3 class="text-sm font-semibold text-[var(--text-primary)] mb-1">
+              External notes
+            </h3>
+            <p class="text-xs text-[var(--text-muted)] leading-relaxed">
+              Paste notes from Teams, Zoom, Google Meet / Gemini, Otter, etc.
+              The raw paste is saved under a <code class="text-[11px] bg-[var(--bg-surface)] px-1 rounded">## External notes</code>
+              section in your meeting's markdown (and Obsidian), and we use
+              the content to re-run speaker naming and re-generate the
+              summary in the background.
+            </p>
+          </div>
+
+          {#if meeting.external_notes_status === 'processing'}
+            <div class="flex items-center gap-2 px-3 py-2 rounded-md bg-blue-500/10 border border-blue-500/30 text-xs text-blue-300">
+              <svg class="w-4 h-4 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+              </svg>
+              Regenerating minutes in the background — this usually takes 15–60 seconds.
+            </div>
+          {:else if meeting.external_notes_status === 'error'}
+            <div class="px-3 py-2 rounded-md bg-red-500/10 border border-red-500/30 text-xs text-red-300">
+              <div class="font-medium">Last update failed</div>
+              <div class="mt-0.5 text-[var(--text-muted)]">{meeting.external_notes_error || 'Unknown error'}</div>
+            </div>
+          {:else if meeting.external_notes_status === 'ready' && meeting.external_notes}
+            <div class="px-3 py-2 rounded-md bg-green-500/10 border border-green-500/30 text-xs text-green-300">
+              Minutes were updated using these notes. Edit and re-submit to run again.
+            </div>
+          {/if}
+
+          <textarea
+            bind:value={externalNotesDraft}
+            rows="16"
+            placeholder="Paste the meeting-app notes here..."
+            disabled={submittingExternalNotes || meeting.external_notes_status === 'processing'}
+            class="w-full px-3 py-2 bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-md text-sm text-[var(--text-primary)] font-mono leading-relaxed focus:outline-none focus:border-[var(--accent)] disabled:opacity-60"
+          ></textarea>
+
+          <div class="flex items-center justify-between gap-3">
+            <div class="text-xs text-[var(--text-muted)]">
+              {externalNotesDraft.length.toLocaleString()} characters
+            </div>
+            <button
+              onclick={submitExternalNotes}
+              disabled={submittingExternalNotes || meeting.external_notes_status === 'processing' || !externalNotesDraft.trim()}
+              class="px-4 py-2 text-sm font-medium rounded-md bg-[var(--accent)] text-white hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {submittingExternalNotes ? 'Saving…' : 'Save & update minutes'}
+            </button>
+          </div>
+        </div>
 
       {:else if activeTab === 'transcript'}
         {#if meeting.audio_path}
