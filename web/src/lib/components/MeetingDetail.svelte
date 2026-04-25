@@ -681,13 +681,13 @@
         </button>
       </div>
     {:else}
-      <div class="flex items-center gap-2 mb-3 group">
+      <div class="flex items-center gap-2 mb-3">
         <h1 class="text-2xl font-bold text-[var(--text-primary)]">
           {meeting.title || 'Untitled Meeting'}
         </h1>
         <button
           onclick={openTitleEditor}
-          class="text-xs text-[var(--text-muted)] hover:text-[var(--accent)] underline-offset-2 hover:underline opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity"
+          class="text-xs text-[var(--text-muted)] hover:text-[var(--accent)] underline-offset-2 hover:underline"
           title="Rename this meeting"
         >
           Edit
