@@ -1400,37 +1400,3 @@ class PipelineOrchestrator:
         except Exception as e:
             _console(f"  \u26a0 Obsidian export failed: {e}", "yellow")
 
-    def start_watcher(self) -> None:
-        """Start filesystem watcher for automatic mode (watchdog)."""
-        if self._config.pipeline.mode != "automatic":
-            return
-
-        try:
-            from watchdog.observers import Observer
-            from watchdog.events import FileSystemEventHandler, FileCreatedEvent
-
-            transcripts_dir = self._transcripts_dir
-            transcripts_dir.mkdir(parents=True, exist_ok=True)
-
-            class TranscriptHandler(FileSystemEventHandler):
-                def __init__(self, orchestrator):
-                    self._orchestrator = orchestrator
-
-                def on_created(self, event):
-                    if not event.is_directory and event.src_path.endswith(".json"):
-                        path = Path(event.src_path)
-                        meeting_id = path.stem
-                        asyncio.create_task(
-                            self._orchestrator.run_generation(meeting_id)
-                        )
-
-            observer = Observer()
-            observer.schedule(
-                TranscriptHandler(self),
-                str(transcripts_dir),
-                recursive=False,
-            )
-            observer.start()
-            self._logger.info(f"Watching {transcripts_dir} for new transcripts")
-        except ImportError:
-            self._logger.warning("watchdog not installed, automatic mode unavailable")

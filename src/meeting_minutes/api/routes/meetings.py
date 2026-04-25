@@ -7,7 +7,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse, Response
 from sqlalchemy.orm import Session
 
@@ -573,10 +573,9 @@ def apply_speaker_mapping(
 
 
 @router.patch("/{meeting_id}/transcript/speakers")
-def update_transcript_speakers(
+async def update_transcript_speakers(
     meeting_id: str,
     body: dict,
-    background_tasks: BackgroundTasks,
     config: Annotated[AppConfig, Depends(get_config)],
     storage: Annotated[StorageEngine, Depends(get_storage)],
     session: Annotated[Session, Depends(get_db_session)],
@@ -742,14 +741,12 @@ def update_transcript_speakers(
             sidecar["regen_status"] = regen_mod.STATUS_PROCESSING
             sidecar.pop("regen_error", None)
             ext_mod.write_notes_sidecar(data_dir, meeting_id, sidecar)
-            # ``BackgroundTasks`` (not ``asyncio.create_task``) — this
-            # endpoint is a sync ``def`` and runs in FastAPI's threadpool,
-            # so there's no running event loop here. ``add_task`` defers to
-            # the main loop after the response is sent and accepts a
-            # coroutine function, scheduling it correctly.
-            background_tasks.add_task(
-                regen_mod.run_background_regen, config, meeting_id,
-            )
+            # The endpoint is ``async def``, so we're already on the event
+            # loop — same path as ``change_meeting_type`` /
+            # ``submit_external_notes``. The session.query / add / commit
+            # calls above run synchronously on the loop; for SQLite + single
+            # user that's microseconds, not a real concern.
+            regen_mod.schedule_background_regen(config, meeting_id)
             regen_status = regen_mod.STATUS_PROCESSING
 
     return {
