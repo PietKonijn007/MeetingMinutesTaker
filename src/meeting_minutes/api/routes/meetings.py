@@ -1116,28 +1116,67 @@ def delete_meeting(
     return {"status": "deleted", "meeting_id": meeting_id, "files_deleted": len(deleted_files)}
 
 
-@router.post("/{meeting_id}/regenerate", dependencies=[Depends(check_llm_limit)])
+@router.post(
+    "/{meeting_id}/regenerate",
+    dependencies=[Depends(check_llm_limit)],
+    status_code=202,
+)
 async def regenerate_meeting(
     meeting_id: str,
     storage: Annotated[StorageEngine, Depends(get_storage)],
     config: Annotated[AppConfig, Depends(get_config)],
 ):
-    """Re-run minutes generation for a meeting."""
+    """Re-run minutes generation for a meeting (async).
+
+    Same async-status pattern as ``change_meeting_type`` and the speaker
+    rename PATCH: synchronously flips ``regen_status`` to ``processing`` on
+    the notes sidecar, then schedules ``run_background_regen`` as a
+    fire-and-forget task. Returns 202 immediately. Caller polls
+    ``GET /meetings/{id}`` for ``regen_status`` to flip to ``ready``
+    (or ``error``).
+
+    This endpoint used to await ``reprocess`` synchronously and could hold
+    the request open for 30-120s of LLM time. The "footer Regenerate"
+    button in the UI now polls like the other regen flows, so the browser
+    doesn't hang.
+    """
+    from meeting_minutes import external_notes as ext
+    from meeting_minutes import regen as regen_mod
+
     m = storage.get_meeting(meeting_id)
     if m is None:
         raise HTTPException(status_code=404, detail=f"No meeting with ID {meeting_id}")
 
-    from meeting_minutes.pipeline import PipelineOrchestrator
+    data_dir = Path(config.data_dir).expanduser()
+    transcript_path = data_dir / "transcripts" / f"{meeting_id}.json"
+    if not transcript_path.exists():
+        raise HTTPException(
+            status_code=400,
+            detail="Meeting has no transcript — nothing to regenerate from",
+        )
 
-    orchestrator = PipelineOrchestrator(config)
-    try:
-        await orchestrator.reprocess(meeting_id)
-    except FileNotFoundError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Regeneration failed: {exc}")
+    # Don't double-fire: only one regen at a time per meeting.
+    sidecar = ext.load_notes_sidecar(data_dir, meeting_id)
+    if sidecar.get("regen_status") == regen_mod.STATUS_PROCESSING:
+        # Idempotent: tell the caller a regen is already running. They
+        # should poll regen_status, not retry.
+        return {
+            "status": "already_processing",
+            "meeting_id": meeting_id,
+            "regen_status": regen_mod.STATUS_PROCESSING,
+        }
 
-    return {"status": "regenerated", "meeting_id": meeting_id}
+    sidecar["regen_status"] = regen_mod.STATUS_PROCESSING
+    sidecar.pop("regen_error", None)
+    ext.write_notes_sidecar(data_dir, meeting_id, sidecar)
+
+    regen_mod.schedule_background_regen(config, meeting_id)
+
+    return {
+        "status": "accepted",
+        "meeting_id": meeting_id,
+        "regen_status": regen_mod.STATUS_PROCESSING,
+    }
 
 
 @router.post(

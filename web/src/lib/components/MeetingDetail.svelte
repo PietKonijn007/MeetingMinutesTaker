@@ -523,13 +523,21 @@
   }
 
   async function handleRegenerate() {
+    // /regenerate is async — server returns 202 with regen_status=processing
+    // and the background task flips it to ready/error. Same pattern as the
+    // type-change and rename flows.
     regenerating = true;
     try {
       await api.regenerateMeeting(meetingId);
-      addToast('Minutes regenerated successfully', 'success');
+      addToast('Regenerating minutes…', 'info');
+      // Refresh so the regen pill shows "processing", then poll until done.
       await loadMeeting(meetingId);
+      startRegenPolling({
+        successToast: 'Minutes regenerated',
+        errorPrefix: 'Regeneration failed',
+      });
     } catch (e) {
-      addToast('Failed to regenerate minutes', 'error');
+      addToast(`Failed to regenerate minutes: ${e.message}`, 'error');
     } finally {
       regenerating = false;
     }
