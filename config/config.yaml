@@ -21,8 +21,8 @@ generation:
     model: claude-opus-4-7
     fallback_provider: null
     fallback_model: null
-    temperature: 0.2
-    max_output_tokens: 4096
+    temperature: 0.1
+    max_output_tokens: 8192
     retry_attempts: 3
     timeout_seconds: 120
     ollama:
@@ -32,8 +32,8 @@ generation:
   vendors:
   - AWS
   - NetApp
-  length_mode: concise
-  generate_email_draft: true
+  length_mode: verbose
+  generate_email_draft: false
   confidentiality_default: auto
   close_acknowledged_actions: true
   prior_actions_lookback_meetings: 5
@@ -52,7 +52,7 @@ obsidian:
   enabled: true
   vault_path: /Users/jurgenhofkens/Documents/NetApp
 notifications:
-  enabled: null
+  enabled: true
   sound: true
   click_url_base: http://localhost:8080/meeting
 api:

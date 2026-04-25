@@ -239,15 +239,46 @@ Download from [rogueamoeba.com/loopback](https://rogueamoeba.com/loopback/) and 
 
 #### 3.9.2 Create a virtual device
 
-1. In the Loopback app, click **New Virtual Device** (bottom-left)
-2. Name it **Meeting Capture** — this is what lets the app auto-detect it
-3. In the **Sources** column, click **+** and add:
-   - Your **microphone** (e.g. MacBook Pro Microphone)
-   - **Pass-Thru** and/or the meeting apps you record (Zoom, Teams, Slack, Chrome, etc.) — this is the system-audio side that would otherwise need BlackHole
-4. In the **Output Channels** section, leave the default stereo mapping
-5. In the **Monitors** column (right side), click **+** → add your **headphones/speakers** so you still hear the meeting
+The typical workflow is: **AirPods (or any headset) for both your voice and the meeting audio you hear, laptop untouched.** This works in Loopback, but there's one critical setting without which it will feed back catastrophically. Follow the steps *in order*.
 
-That's it. No Multi-Output Device, no Aggregate Device.
+1. In the Loopback app, click **New Virtual Device** (bottom-left).
+2. Name it **Meeting Capture** — this is what lets the Meeting Minutes app auto-detect it.
+3. In the **Sources** column, click **+** and add exactly two sources:
+   - **Jurgen's AirPods** (or your wired/Bluetooth headset mic)
+   - **Pass-Thru** — the system-audio side that would otherwise need BlackHole
+4. In the **Output Channels** section, leave the default 2-channel mapping.
+5. In the **Monitors** column (right side), click **+** and add **Jurgen's AirPods** (the same AirPods you added as a Source). This is what plays the meeting audio into your ears.
+6. **🚨 Critical anti-feedback step — do not skip this.** In the **Sources** column, expand **Options** on the **Jurgen's AirPods** source box and toggle **"Mute in Monitors"** on.
+   - Alternative: in the routing grid, click the dot on the line running from the AirPods *Source* row to the AirPods *Monitor* row to sever it.
+   - Verify: the teal line from the AirPods Source should go **left to Output Channels** (recorded) but should **not** reach the AirPods Monitor box on the right.
+
+**Why step 6 matters.** Without it, AirPods speaker plays the meeting → AirPods mic picks up its own speaker output → Loopback re-sends that back to the AirPods speaker → runaway feedback loop. Muting the mic source in the monitor breaks the loop while still letting the mic reach the recording.
+
+##### Two honest tradeoffs of this setup
+
+- **Small amount of meeting audio bleeds into your voice track.** Your AirPods mic physically picks up a little of what plays in the AirPods speaker (acoustic leakage through your ear canal). Loopback has no acoustic echo cancellation. The transcript handles this fine; it's just audible on raw playback.
+- **Bluetooth drops to the low-quality handset codec.** The moment macOS activates the AirPods mic, Bluetooth switches from A2DP (44 kHz stereo, hi-fi) to HFP (8 kHz mono, phone-call quality). This affects both what you hear *and* what gets recorded, and it's a hard Bluetooth-protocol limit — not a Loopback issue. Wired earbuds or headsets have no codec degradation.
+
+If audio quality matters more than using AirPods end-to-end, see the **alternative setup** below.
+
+##### Global rules that always apply
+
+> 🚨 Three rules that prevent audio feedback — follow all three no matter which setup you pick:
+>
+> 1. **If the same device is both a Source and a Monitor, you must enable "Mute in Monitors" on its Source.** AirPods / wired headsets / any combo mic+speaker device. This is the #1 feedback cause.
+> 2. **Never add built-in Speakers as a Monitor while any mic is a Source.** The built-in mic will acoustically hear the speakers across the desk → feedback. Headphones / AirPods are sealed; speakers are not.
+> 3. **Remove any "⚠ Device Missing" entries from Sources and Monitors.** Disconnected Bluetooth devices stay listed, trigger "Missing Monitor Device" warnings, and can shadow real routing.
+
+##### Alternative: built-in mic + AirPods monitor (best audio quality)
+
+If you prefer maximum audio fidelity — broadcast-grade voice, hi-fi stereo in your ears — swap the Source:
+
+- **Sources:** MacBook Air Microphone + Pass-Thru
+- **Monitors:** Jurgen's AirPods (no "Mute in Monitors" needed, different device)
+
+Because the AirPods mic is never activated, macOS keeps them in A2DP (hi-fi stereo) mode. The MacBook Air 3-mic array is genuinely broadcast-quality for a seated laptop. Downside: if you walk around, you walk away from your mic.
+
+For either setup you still want **no Multi-Output Device and no Aggregate Device** — that's the whole point of using Loopback.
 
 #### 3.9.3 Tell the app to use it
 
@@ -260,25 +291,29 @@ recording:
 
 You can also leave it as `"auto"` — the app's auto-detect prefers devices named "Meeting Capture" or containing "Loopback" in their name.
 
-#### 3.9.4 Audio signal flow with Loopback
+#### 3.9.4 Audio signal flow with Loopback (AirPods both ends)
 
 ```
-Remote participants (Zoom/Teams/etc.)
-        │
-        ▼
-  Meeting app (Zoom/Teams/Slack/Chrome)
-        │
-        ▼
-  🎙 Meeting Capture (Loopback virtual device)
-        ├──► Source: Built-in Microphone (your voice)
-        ├──► Source: App audio (Zoom/Teams/Slack) — captured, not routed through BlackHole
-        └──► Monitor: Built-in Output (you hear the meeting)
-        │
-        ▼
-  Meeting Minutes Taker (captures the combined stream)
+You speak
+    │
+    ▼
+  🎧 AirPods Mic ────────────────┐
+                                  │ (Mute in Monitors: ON — no loopback)
+  Remote participants             │
+        │ (Zoom/Teams)            │
+        ▼                         ▼
+  macOS System Output ──► Pass-Thru ──► Output Channels
+  (set to Meeting Capture)                     │
+                                               ├──► Meeting Minutes Taker (recording)
+                                               │
+                                               └──► Monitor ──► 🎧 AirPods Speaker
+                                                                 (you hear the meeting)
 ```
 
-Compare this to §3.6: no Multi-Output Device in the chain, and system audio capture is per-app rather than global.
+Key points:
+- Your voice enters via the AirPods mic Source → Output Channels → recording. It does **not** loop back to the AirPods speaker (that's what "Mute in Monitors" prevents).
+- Meeting audio enters via Pass-Thru (because macOS system output is set to Meeting Capture) → Output Channels → both the recording and the AirPods speaker.
+- Compare to §3.6: no Multi-Output Device in the chain, and system-audio capture is per-app rather than global.
 
 #### 3.9.5 Verifying detection
 
