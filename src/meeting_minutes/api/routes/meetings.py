@@ -21,6 +21,7 @@ from meeting_minutes.api.schemas import (
     ExternalNotesRequest,
     MeetingDetail,
     MeetingListItem,
+    MeetingTypeChangeRequest,
     MeetingUpdate,
     MinutesResponse,
     PaginatedResponse,
@@ -243,6 +244,8 @@ def _meeting_to_detail(m: MeetingORM) -> MeetingDetail:
     external_notes_text: str | None = None
     external_notes_status: str | None = None
     external_notes_error: str | None = None
+    meeting_type_status: str | None = None
+    meeting_type_error: str | None = None
     try:
         from meeting_minutes import external_notes as _ext
         from meeting_minutes.config import ConfigLoader as _ConfigLoader
@@ -252,6 +255,8 @@ def _meeting_to_detail(m: MeetingORM) -> MeetingDetail:
         external_notes_text = _sidecar.get("external_notes") or None
         external_notes_status = _sidecar.get("external_notes_status") or None
         external_notes_error = _sidecar.get("external_notes_error") or None
+        meeting_type_status = _sidecar.get("meeting_type_status") or None
+        meeting_type_error = _sidecar.get("meeting_type_error") or None
     except Exception:
         pass
 
@@ -274,6 +279,8 @@ def _meeting_to_detail(m: MeetingORM) -> MeetingDetail:
         external_notes=external_notes_text,
         external_notes_status=external_notes_status,
         external_notes_error=external_notes_error,
+        meeting_type_status=meeting_type_status,
+        meeting_type_error=meeting_type_error,
     )
 
 
@@ -926,6 +933,108 @@ async def submit_external_notes(
         "status": "accepted",
         "meeting_id": meeting_id,
         "external_notes_status": ext.STATUS_PROCESSING,
+    }
+
+
+@router.post(
+    "/{meeting_id}/meeting-type",
+    dependencies=[Depends(check_llm_limit)],
+    status_code=202,
+)
+async def change_meeting_type(
+    meeting_id: str,
+    body: MeetingTypeChangeRequest,
+    storage: Annotated[StorageEngine, Depends(get_storage)],
+    config: Annotated[AppConfig, Depends(get_config)],
+):
+    """Switch a meeting's type and rebuild its summary against the new template.
+
+    Returns 202 immediately — reprocess takes 15-60s of LLM time so it runs
+    as a fire-and-forget asyncio task. Progress is surfaced via
+    ``meeting_type_status`` on ``GET /meetings/{id}`` — callers should poll
+    until it flips from ``processing`` to ``ready`` (or ``error``).
+
+    Synchronous validation:
+      1. Meeting exists.
+      2. Requested type parses cleanly into ``MeetingType``.
+      3. Transcript file exists (can't regenerate without one).
+      4. Requested type differs from the current type (``/regenerate`` is the
+         right tool for re-running with the same type).
+      5. No retype already in flight.
+
+    Synchronous side effects before returning 202:
+      - Update ``data/notes/{id}.json``: set ``meeting_type`` to the new
+        value and ``meeting_type_status`` to ``processing``. The pipeline
+        reads ``meeting_type`` from the sidecar at the start of the next
+        ``run_generation``, so the new value is automatically picked up by
+        the background task.
+
+    Async (fire-and-forget):
+      - ``PipelineOrchestrator.reprocess`` rebuilds minutes against the new
+        template, re-ingests the DB, re-exports Obsidian.
+      - If external notes were previously pasted, replays the
+        ``## External notes`` post-append so the verbatim paste survives.
+    """
+    from meeting_minutes import external_notes as ext
+    from meeting_minutes import meeting_type_change as retype
+    from meeting_minutes.models import MeetingType
+
+    m = storage.get_meeting(meeting_id)
+    if m is None:
+        raise HTTPException(status_code=404, detail=f"No meeting with ID {meeting_id}")
+
+    # Validate the requested type against the enum.
+    raw = (body.meeting_type or "").strip()
+    try:
+        new_type = MeetingType(raw).value
+    except ValueError:
+        valid = ", ".join(t.value for t in MeetingType)
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid meeting_type '{raw}'. Valid values: {valid}",
+        )
+
+    data_dir = Path(config.data_dir).expanduser()
+    transcript_path = data_dir / "transcripts" / f"{meeting_id}.json"
+    if not transcript_path.exists():
+        raise HTTPException(
+            status_code=400,
+            detail="Meeting has no transcript — type can only be changed post-hoc",
+        )
+
+    # No-op if the type isn't actually changing — point the user at /regenerate.
+    current_type = (m.meeting_type or "").strip()
+    if current_type == new_type:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Meeting is already type '{new_type}'. "
+                "Use POST /meetings/{id}/regenerate to rerun without changing the type."
+            ),
+        )
+
+    # Don't double-fire: if a previous retype is still in flight, refuse.
+    sidecar = ext.load_notes_sidecar(data_dir, meeting_id)
+    if sidecar.get("meeting_type_status") == retype.STATUS_PROCESSING:
+        raise HTTPException(
+            status_code=409,
+            detail="A meeting-type change is already in progress for this meeting",
+        )
+
+    # --- Sync portion: write sidecar + flip status ---------------------
+    sidecar["meeting_type"] = new_type
+    sidecar["meeting_type_status"] = retype.STATUS_PROCESSING
+    sidecar.pop("meeting_type_error", None)
+    ext.write_notes_sidecar(data_dir, meeting_id, sidecar)
+
+    # --- Async portion: reprocess + replay external notes --------------
+    retype.schedule_background_retype(config, meeting_id)
+
+    return {
+        "status": "accepted",
+        "meeting_id": meeting_id,
+        "meeting_type": new_type,
+        "meeting_type_status": retype.STATUS_PROCESSING,
     }
 
 

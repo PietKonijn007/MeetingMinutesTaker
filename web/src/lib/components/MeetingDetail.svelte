@@ -2,6 +2,7 @@
   import { goto } from '$app/navigation';
   import { api } from '$lib/api.js';
   import MeetingTypeBadge from './MeetingTypeBadge.svelte';
+  import { MEETING_TYPE_GROUPS, MEETING_TYPE_MAP } from '../meetingTypes.js';
   import MarkdownRenderer from './MarkdownRenderer.svelte';
   import AudioPlayer from './AudioPlayer.svelte';
   import ActionItemRow from './ActionItemRow.svelte';
@@ -46,6 +47,15 @@
   let externalNotesDraft = $state('');
   let submittingExternalNotes = $state(false);
   let externalNotesPoller = null;
+
+  // Meeting-type-change state. The dropdown sits beside the type badge in the
+  // Minutes tab; on change we POST to the server (202) and start polling
+  // /meetings/{id} so meeting_type_status flips from "processing" to "ready".
+  let editingType = $state(false);
+  let pendingType = $state(null);            // value selected in the dropdown
+  let submittingTypeChange = $state(false);
+  let showTypeChangeModal = $state(false);
+  let meetingTypePoller = null;
 
   async function loadMeetingSeries(id) {
     try {
@@ -212,6 +222,74 @@
     }, 4000);
   }
 
+  // --- Meeting-type change ------------------------------------------------
+  //
+  // Same async-status pattern as external notes: POST returns 202, we poll
+  // /meetings/{id} every 4s watching meeting_type_status flip to "ready" or
+  // "error". Reprocess takes 15-60s of LLM time — too long to hold an HTTP
+  // request open.
+
+  function stopMeetingTypePolling() {
+    if (meetingTypePoller) {
+      clearInterval(meetingTypePoller);
+      meetingTypePoller = null;
+    }
+  }
+
+  function startMeetingTypePolling() {
+    stopMeetingTypePolling();
+    meetingTypePoller = setInterval(async () => {
+      try {
+        const raw = await api.getMeeting(meetingId);
+        if (raw.meeting_type_status !== 'processing') {
+          stopMeetingTypePolling();
+          await loadMeeting(meetingId);
+          if (raw.meeting_type_status === 'ready') {
+            addToast('Minutes regenerated with new meeting type', 'success');
+          } else if (raw.meeting_type_status === 'error') {
+            addToast(`Type change failed: ${raw.meeting_type_error || 'unknown error'}`, 'error');
+          }
+        }
+      } catch (e) {
+        // Transient errors are fine — keep polling.
+      }
+    }, 4000);
+  }
+
+  function openTypeEditor() {
+    pendingType = meeting?.type || null;
+    editingType = true;
+  }
+
+  function cancelTypeEdit() {
+    editingType = false;
+    pendingType = null;
+  }
+
+  function requestTypeChange() {
+    if (!pendingType || pendingType === meeting?.type) return;
+    showTypeChangeModal = true;
+  }
+
+  async function confirmTypeChange() {
+    showTypeChangeModal = false;
+    if (!pendingType || pendingType === meeting?.type) return;
+    submittingTypeChange = true;
+    try {
+      await api.changeMeetingType(meetingId, pendingType);
+      addToast('Regenerating minutes with new meeting type…', 'info');
+      editingType = false;
+      pendingType = null;
+      // Refresh so the status pill shows "processing", then poll until done.
+      await loadMeeting(meetingId);
+      startMeetingTypePolling();
+    } catch (e) {
+      addToast(`Failed to change meeting type: ${e.message}`, 'error');
+    } finally {
+      submittingTypeChange = false;
+    }
+  }
+
   async function submitExternalNotes() {
     const text = externalNotesDraft.trim();
     if (!text) {
@@ -338,6 +416,8 @@
         external_notes: raw.external_notes || '',
         external_notes_status: raw.external_notes_status || null,
         external_notes_error: raw.external_notes_error || null,
+        meeting_type_status: raw.meeting_type_status || null,
+        meeting_type_error: raw.meeting_type_error || null,
       };
       // Keep the textarea in sync with whatever the server currently has.
       // On first load this pre-fills the paste; on status-poll refreshes
@@ -349,6 +429,11 @@
       // updates without requiring a new submit.
       if (raw.external_notes_status === 'processing' && !externalNotesPoller) {
         startExternalNotesPolling();
+      }
+      // Same logic for an in-flight meeting-type change: if the user
+      // navigated away mid-regeneration and came back, resume polling.
+      if (raw.meeting_type_status === 'processing' && !meetingTypePoller) {
+        startMeetingTypePolling();
       }
       // Reset expanded discussion topics on new meeting load
       expandedTopics = new Set();
@@ -438,6 +523,10 @@
       // before we kick off loads for the new one — loadMeeting() will
       // re-start polling if the new meeting is still processing.
       stopExternalNotesPolling();
+      stopMeetingTypePolling();
+      // Reset the inline editor when switching to a different meeting.
+      editingType = false;
+      pendingType = null;
       loadMeeting(id);
       loadTranscript(id);
       loadAnalytics(id);
@@ -445,7 +534,10 @@
       loadMeetingSeries(id);
     }
     // Cleanup when this component unmounts.
-    return () => stopExternalNotesPolling();
+    return () => {
+      stopExternalNotesPolling();
+      stopMeetingTypePolling();
+    };
   });
 </script>
 
@@ -463,7 +555,73 @@
 
     <!-- Metadata pills -->
     <div class="flex items-center gap-3 mb-4 flex-wrap">
-      <MeetingTypeBadge type={meeting.type} />
+      <!--
+        Meeting type: editable inline. Three render states:
+          - default        → badge + small "Change" button.
+          - editingType    → <select> grouped by category + Cancel + Regenerate.
+          - status pill    → "Regenerating as <new type>…" while the background
+                             job runs (poll meeting_type_status).
+      -->
+      {#if meeting.meeting_type_status === 'processing'}
+        <span class="inline-flex items-center gap-2 px-2.5 py-1 rounded-full text-xs font-medium bg-[var(--bg-surface)] border border-[var(--border-subtle)] text-[var(--text-secondary)]">
+          <svg class="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path>
+          </svg>
+          Regenerating as {MEETING_TYPE_MAP[meeting.type]?.label || meeting.type}…
+        </span>
+      {:else if editingType}
+        <div class="inline-flex items-center gap-2 flex-wrap">
+          <select
+            bind:value={pendingType}
+            disabled={submittingTypeChange}
+            class="px-2.5 py-1 bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-full text-xs text-[var(--text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
+          >
+            {#each MEETING_TYPE_GROUPS as g}
+              <optgroup label={g.group}>
+                {#each g.items as t}
+                  <option value={t.value}>{t.label}</option>
+                {/each}
+              </optgroup>
+            {/each}
+          </select>
+          <button
+            onclick={requestTypeChange}
+            disabled={submittingTypeChange || !pendingType || pendingType === meeting.type}
+            class="px-2.5 py-1 bg-[var(--accent)] text-white rounded-full text-xs font-medium hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            Regenerate
+          </button>
+          <button
+            onclick={cancelTypeEdit}
+            disabled={submittingTypeChange}
+            class="px-2.5 py-1 bg-[var(--bg-surface)] border border-[var(--border-subtle)] text-[var(--text-secondary)] rounded-full text-xs hover:text-[var(--text-primary)]"
+          >
+            Cancel
+          </button>
+        </div>
+      {:else}
+        <div class="inline-flex items-center gap-1.5">
+          <MeetingTypeBadge type={meeting.type} />
+          {#if meeting.transcript_text || meeting.minutes_markdown}
+            <button
+              onclick={openTypeEditor}
+              class="text-xs text-[var(--text-muted)] hover:text-[var(--accent)] underline-offset-2 hover:underline"
+              title="Change meeting type and regenerate the summary"
+            >
+              Change
+            </button>
+          {/if}
+        </div>
+      {/if}
+      {#if meeting.meeting_type_status === 'error'}
+        <span
+          class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs bg-red-500/15 text-red-400 border border-red-500/30"
+          title={meeting.meeting_type_error || 'Type change failed'}
+        >
+          Type change failed
+        </span>
+      {/if}
       {#if meeting.duration_minutes}
         <span class="inline-flex items-center gap-1 px-2.5 py-1 bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-full text-xs text-[var(--text-secondary)]">
           <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
@@ -1307,4 +1465,15 @@
   confirmLabel="Delete"
   danger={true}
   onConfirm={handleDelete}
+/>
+
+<ConfirmModal
+  bind:open={showTypeChangeModal}
+  title="Regenerate as {pendingType ? (MEETING_TYPE_MAP[pendingType]?.label || pendingType) : ''}?"
+  message={
+    'This will discard the current minutes and rebuild them against the new template. The transcript, audio, and any pasted external notes are preserved. The new summary will be ready in 15-60 seconds.'
+  }
+  confirmLabel="Regenerate"
+  onConfirm={confirmTypeChange}
+  onCancel={() => { showTypeChangeModal = false; }}
 />
