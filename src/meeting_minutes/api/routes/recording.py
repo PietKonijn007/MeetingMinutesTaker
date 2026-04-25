@@ -177,6 +177,11 @@ async def stop_recording(
             notes_data["notes"] = body.notes
         if body.speakers:
             notes_data["speakers"] = [s.strip() for s in body.speakers.split(",") if s.strip()]
+            # Diarization speaker-count hint (see DiarizationConfig.kwargs_from_sidecar).
+            # Only persisted when actual names were typed — otherwise there's
+            # nothing to anchor the count to.
+            if body.speakers_complete is not None:
+                notes_data["speakers_complete"] = bool(body.speakers_complete)
         if body.instructions:
             notes_data["instructions"] = body.instructions
         if user_meeting_type:

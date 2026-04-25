@@ -21,6 +21,12 @@
   // Live note-taking during recording
   let meetingTitle = $state('');
   let speakerNames = $state('');
+  // Tells diarization whether the names listed above cover *every* speaker
+  // in the meeting. When true → pyannote gets num_speakers=len(names) (exact);
+  // when false → pyannote gets min_speakers=len(names) (lower bound, infers
+  // ceiling). Defaults checked for small meetings, unchecked for ≥6 named
+  // speakers (where you usually can't enumerate everyone).
+  let speakersComplete = $state(true);
   let meetingNotes = $state('');
   let customInstructions = $state('');
   // User-picked meeting type override. Empty string = auto-classify.
@@ -246,7 +252,12 @@
       const body = {};
       if (meetingTitle.trim()) body.title = meetingTitle.trim();
       if (meetingNotes.trim()) body.notes = meetingNotes.trim();
-      if (speakerNames.trim()) body.speakers = speakerNames.trim();
+      if (speakerNames.trim()) {
+        body.speakers = speakerNames.trim();
+        // Only meaningful when the user actually typed names — without
+        // names there's no count to anchor pyannote to.
+        body.speakers_complete = speakersComplete;
+      }
       if (customInstructions.trim()) body.instructions = customInstructions.trim();
       if (selectedMeetingType) body.meeting_type = selectedMeetingType;
       await api.stopRecording(body);
@@ -259,6 +270,7 @@
       meetingTitle = '';
       meetingNotes = '';
       speakerNames = '';
+      speakersComplete = true;
       customInstructions = '';
       selectedMeetingType = '';
       addToast('Recording stopped. Processing in background...', 'info');
@@ -621,6 +633,14 @@
           <input
             id="speaker-names"
             bind:value={speakerNames}
+            oninput={() => {
+              // Default-uncheck for large meetings: when you've typed 6+
+              // names you usually can't be sure you've got everyone (someone
+              // joins late, an exec hops in for 5 minutes, etc.). Toggle
+              // back on if the user explicitly re-checks.
+              const count = speakerNames.split(',').filter(s => s.trim()).length;
+              speakersComplete = count > 0 && count <= 5;
+            }}
             placeholder="Alice, Bob, Carol"
             class="w-full px-3 py-2 bg-[var(--bg-primary)] border border-[var(--border-subtle)] rounded-lg
                    text-[var(--text-primary)] text-sm focus:outline-none focus:ring-2 focus:ring-[var(--accent)]
@@ -629,6 +649,31 @@
           <p class="text-xs text-[var(--text-muted)] mt-1">
             Names separated by commas — helps us label who said what.
           </p>
+          <!--
+            Speaker-count hint for diarization. When checked: pass
+            num_speakers=N to pyannote (exact match). Unchecked: pass
+            min_speakers=N (lower bound; pyannote infers the ceiling).
+            Disabled when no names are typed — there's nothing to anchor.
+          -->
+          {#if speakerNames.trim()}
+            <label class="flex items-start gap-2 mt-2 cursor-pointer">
+              <input
+                type="checkbox"
+                bind:checked={speakersComplete}
+                class="mt-0.5 accent-[var(--accent)]"
+              />
+              <span class="text-xs text-[var(--text-secondary)]">
+                I've named everyone who'll speak
+                <span class="block text-[var(--text-muted)] mt-0.5">
+                  {#if speakersComplete}
+                    Diarization will look for exactly {speakerNames.split(',').filter(s => s.trim()).length} speaker(s).
+                  {:else}
+                    Diarization will look for at least {speakerNames.split(',').filter(s => s.trim()).length} and detect more if needed — pick this when extra people might join unannounced.
+                  {/if}
+                </span>
+              </span>
+            </label>
+          {/if}
         </div>
 
         <!-- Meeting notes -->
