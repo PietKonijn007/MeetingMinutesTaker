@@ -218,6 +218,87 @@ async def stop_recording(
     }
 
 
+@router.post("/api/recording/cancel")
+async def cancel_recording(
+    config: Annotated[AppConfig, Depends(get_config)],
+):
+    """Cancel an in-flight recording: discard the audio, skip the pipeline.
+
+    Unlike /stop this does NOT trigger transcription/generation/indexing and
+    leaves no meeting record behind. The FLAC the engine writes on stop is
+    deleted, along with any autosave file and any user-notes sidecar that
+    might already have been written.
+    """
+    if _current_recording["state"] != "recording":
+        raise HTTPException(status_code=409, detail="Not currently recording")
+
+    engine = _current_recording["engine"]
+    if engine is None:
+        raise HTTPException(status_code=500, detail="Recording engine not available")
+
+    meeting_id = _current_recording["meeting_id"]
+
+    # Stop the engine to release the PortAudio stream. engine.stop() writes a
+    # FLAC as a side-effect; we delete it immediately below. We still call
+    # stop() (rather than fishing out an internal abort path) because it
+    # cleanly tears down the stream + autosave timer + watchdog thread.
+    audio_file_path: str | None = None
+    try:
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(None, engine.stop)
+        audio_file_path = result.audio_file
+    except Exception as exc:
+        logger.warning("engine.stop() failed during cancel for %s: %s", meeting_id, exc)
+    finally:
+        _current_recording["state"] = "idle"
+        _current_recording["meeting_id"] = None
+        _current_recording["start_time"] = None
+        _current_recording["engine"] = None
+        _current_recording["language"] = None
+
+    # Clean up the watchdog state file (mirrors stop_recording).
+    state_file = Path("/tmp/mm_recording_state.json")
+    state_file.unlink(missing_ok=True)
+
+    # Delete the FLAC the engine just wrote, the autosave file, and any
+    # notes sidecar. missing_ok=True makes this safe if any are absent.
+    deleted: list[str] = []
+    if audio_file_path:
+        try:
+            p = Path(audio_file_path)
+            if p.exists():
+                p.unlink()
+                deleted.append(p.name)
+        except Exception as exc:
+            logger.warning("Failed to delete cancelled audio %s: %s", audio_file_path, exc)
+
+    data_dir = Path(config.data_dir).expanduser()
+    audio_dir = data_dir / "audio"
+    autosave_file = audio_dir / f"{meeting_id}_autosave.flac"
+    try:
+        if autosave_file.exists():
+            autosave_file.unlink()
+            deleted.append(autosave_file.name)
+    except Exception as exc:
+        logger.warning("Failed to delete autosave %s: %s", autosave_file, exc)
+
+    notes_file = data_dir / "notes" / f"{meeting_id}.json"
+    try:
+        if notes_file.exists():
+            notes_file.unlink()
+            deleted.append(notes_file.name)
+    except Exception as exc:
+        logger.warning("Failed to delete notes sidecar %s: %s", notes_file, exc)
+
+    logger.info("Cancelled recording %s (deleted: %s)", meeting_id, ", ".join(deleted) or "nothing")
+
+    return {
+        "status": "cancelled",
+        "meeting_id": meeting_id,
+        "deleted": deleted,
+    }
+
+
 def _ensure_pipeline_worker():
     """Start the pipeline worker if not already running."""
     global _pipeline_worker_started

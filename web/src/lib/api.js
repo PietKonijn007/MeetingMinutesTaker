@@ -160,6 +160,8 @@ export const api = {
   autoDetectDevice: () => request('/auto-detect-device'),
   startRecording: (data = {}) => request('/recording/start', { method: 'POST', body: JSON.stringify(data) }),
   stopRecording: (data = {}) => request('/recording/stop', { method: 'POST', body: JSON.stringify(data) }),
+  // Discard the in-flight recording (deletes audio + notes, skips pipeline).
+  cancelRecording: () => request('/recording/cancel', { method: 'POST' }),
   getRecordingStatus: () => request('/recording/status'),
   // Pass { refresh: true } for the Refresh button (forces PortAudio re-scan to
   // pick up newly-plugged Bluetooth/USB devices). The default path avoids the
