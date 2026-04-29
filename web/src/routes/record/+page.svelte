@@ -541,7 +541,12 @@
   }
 </script>
 
-<div class="{recState === 'recording' ? 'max-w-6xl' : 'max-w-xl'} mx-auto transition-[max-width] duration-200">
+<!--
+  Idle view stays narrow (the record button + device picker look silly stretched);
+  recording view drops the max-width so the notes area expands with the browser
+  window. Parent <main> already supplies 24px of breathing room on each side.
+-->
+<div class="{recState === 'recording' ? 'w-full' : 'max-w-xl mx-auto'}">
   <h1 class="text-2xl font-bold text-[var(--text-primary)] mb-8 text-center">Record</h1>
 
   {#if preflightModal}
