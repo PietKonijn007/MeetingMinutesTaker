@@ -1,8 +1,19 @@
 <script>
-  import { onMount, onDestroy } from 'svelte';
+  import { onMount, onDestroy, tick } from 'svelte';
+  import { browser } from '$app/environment';
+  import { marked } from 'marked';
+  import DOMPurify from 'dompurify';
   import { api } from '$lib/api.js';
   import { addToast } from '$lib/stores/toasts.js';
   import { MEETING_TYPE_GROUPS } from '$lib/meetingTypes.js';
+  import ConfirmModal from '$lib/components/ConfirmModal.svelte';
+
+  // sessionStorage keys — survive tab navigation while the recording is in
+  // flight, cleared once the user pushes Stop. Scoped to a single browser
+  // session so they never leak across days.
+  const FORM_KEY = 'record-form-v1';
+  const VIEW_KEY = 'record-notes-view-v1';   // 'normal' | 'markdown'
+  const SIZE_KEY = 'record-notes-size-v1';   // { width, height } in px
 
   let audioDevices = $state([]);
   let languages = $state([]);
@@ -10,6 +21,9 @@
   let selectedLanguage = $state('auto');
   let startingRecording = $state(false);
   let stoppingRecording = $state(false);
+  let cancellingRecording = $state(false);
+  // Confirm step before discarding the recording — destructive, no undo.
+  let cancelConfirmOpen = $state(false);
 
   // DSK-1 preflight modal state
   let preflightModal = $state(null); // null | { tier, free_bytes, estimated_bytes, message, oldest: [] }
@@ -44,9 +58,112 @@
   // Active pipeline jobs — pushed via WebSocket
   let activePipelines = $state([]);
 
+  // Notes editor view — 'normal' shows a live rendered markdown preview, 'markdown' shows just the raw textarea.
+  let notesView = $state('normal');
+
+  // Don't write to (session|local)Storage until after onMount has had a chance
+  // to restore from it. Without this gate the first $effect run — which
+  // happens with empty initial $state values — would overwrite a real
+  // saved form with an empty one.
+  let hydrated = $state(false);
+
+  // User-resizable textarea: persist the box dimensions across navigation.
+  // Only updated on pointerup after a drag changes size — avoids capturing
+  // the pre-layout intrinsic width of a `cols=20` textarea on first paint.
+  let notesSize = $state({ width: null, height: null });
+  let notesEditorEl = $state(null);
+  let notesPointerDownSize = null;
+
   // WebSocket connection for real-time push updates
   let ws = null;
   let wsReconnectTimer = null;
+
+  // ───────────────────────── persistence helpers ─────────────────────────
+  // We intentionally use sessionStorage (not localStorage) for the form
+  // fields so they vanish when the browser session ends — they are tied to
+  // an in-flight recording, not the user account. notesView and notesSize
+  // are user preferences, so those go in localStorage.
+
+  function saveForm() {
+    if (!browser) return;
+    try {
+      sessionStorage.setItem(FORM_KEY, JSON.stringify({
+        meetingTitle,
+        speakerNames,
+        speakersComplete,
+        meetingNotes,
+        customInstructions,
+        selectedMeetingType,
+      }));
+    } catch {}
+  }
+
+  function clearForm() {
+    if (!browser) return;
+    try { sessionStorage.removeItem(FORM_KEY); } catch {}
+  }
+
+  function restoreForm() {
+    if (!browser) return;
+    try {
+      const raw = sessionStorage.getItem(FORM_KEY);
+      if (!raw) return;
+      const data = JSON.parse(raw);
+      if (typeof data.meetingTitle === 'string') meetingTitle = data.meetingTitle;
+      if (typeof data.speakerNames === 'string') speakerNames = data.speakerNames;
+      if (typeof data.speakersComplete === 'boolean') speakersComplete = data.speakersComplete;
+      if (typeof data.meetingNotes === 'string') meetingNotes = data.meetingNotes;
+      if (typeof data.customInstructions === 'string') customInstructions = data.customInstructions;
+      if (typeof data.selectedMeetingType === 'string') selectedMeetingType = data.selectedMeetingType;
+    } catch {}
+  }
+
+  function restorePrefs() {
+    if (!browser) return;
+    try {
+      const v = localStorage.getItem(VIEW_KEY);
+      if (v === 'normal' || v === 'markdown') notesView = v;
+    } catch {}
+    try {
+      const s = localStorage.getItem(SIZE_KEY);
+      if (s) {
+        const obj = JSON.parse(s);
+        if (obj && typeof obj === 'object') {
+          notesSize = {
+            width: typeof obj.width === 'number' ? obj.width : null,
+            height: typeof obj.height === 'number' ? obj.height : null,
+          };
+        }
+      }
+    } catch {}
+  }
+
+  function savePrefs() {
+    if (!browser) return;
+    try { localStorage.setItem(VIEW_KEY, notesView); } catch {}
+    try { localStorage.setItem(SIZE_KEY, JSON.stringify(notesSize)); } catch {}
+  }
+
+  // Sanitised, rendered HTML for the live preview. Re-derives every time
+  // meetingNotes changes — cheap because marked is fast on small inputs.
+  let notesRenderedHtml = $derived.by(() => {
+    if (!meetingNotes) return '';
+    const raw = marked.parse(meetingNotes, { breaks: true, gfm: true });
+    return browser ? DOMPurify.sanitize(raw) : raw;
+  });
+
+  // Sync form changes → sessionStorage. Gated on `hydrated` so the first
+  // $effect run (with empty $state values) doesn't clobber a saved form.
+  $effect(() => {
+    void meetingTitle; void speakerNames; void speakersComplete;
+    void meetingNotes; void customInstructions; void selectedMeetingType;
+    if (hydrated) saveForm();
+  });
+
+  $effect(() => {
+    void notesView; void notesSize;
+    if (hydrated) savePrefs();
+  });
 
   async function connectWebSocket() {
     if (typeof window === 'undefined') return;
@@ -78,7 +195,7 @@
         const data = JSON.parse(event.data);
 
         // Update recording state (don't override during transitions)
-        if (data.recording && !startingRecording && !stoppingRecording) {
+        if (data.recording && !startingRecording && !stoppingRecording && !cancellingRecording) {
           recState = data.recording.state || 'idle';
           recElapsed = data.recording.elapsed_seconds || 0;
           recLevel = data.recording.audio_level || 0;
@@ -273,11 +390,37 @@
       speakersComplete = true;
       customInstructions = '';
       selectedMeetingType = '';
+      clearForm();
       addToast('Recording stopped. Processing in background...', 'info');
     } catch (e) {
       addToast(`Failed to stop recording: ${e.message}`, 'error');
     } finally {
       stoppingRecording = false;
+    }
+  }
+
+  async function cancelRecording() {
+    cancellingRecording = true;
+    try {
+      await api.cancelRecording();
+      // Same local cleanup as stop — but no pipeline job, no meeting record.
+      recState = 'idle';
+      recMeetingId = null;
+      recElapsed = 0;
+      levelHistory = new Array(24).fill(0);
+      meetingTitle = '';
+      meetingNotes = '';
+      speakerNames = '';
+      speakersComplete = true;
+      customInstructions = '';
+      selectedMeetingType = '';
+      clearForm();
+      addToast('Recording cancelled. Audio discarded.', 'info');
+    } catch (e) {
+      addToast(`Failed to cancel recording: ${e.message}`, 'error');
+    } finally {
+      cancellingRecording = false;
+      cancelConfirmOpen = false;
     }
   }
 
@@ -337,6 +480,13 @@
   }
 
   onMount(() => {
+    // Restore in-flight form fields (sessionStorage) and stable preferences
+    // (localStorage) before anything else binds to them. Flip `hydrated`
+    // last so the persistence $effects only run for *real* user changes.
+    restoreForm();
+    restorePrefs();
+    hydrated = true;
+
     loadDevices();
     loadLanguages();
 
@@ -353,6 +503,25 @@
       disconnectWebSocket();
     };
   });
+
+  // Capture the textarea's box on pointerdown; persist on pointerup only if
+  // the box actually changed (i.e. the user dragged the resize corner). A
+  // plain click for typing leaves dimensions unchanged → nothing saved.
+  function notesEditorPointerDown(e) {
+    if (!e.currentTarget) return;
+    const r = e.currentTarget.getBoundingClientRect();
+    notesPointerDownSize = { width: Math.round(r.width), height: Math.round(r.height) };
+  }
+  function notesEditorPointerUp(e) {
+    if (!notesPointerDownSize || !e.currentTarget) return;
+    const r = e.currentTarget.getBoundingClientRect();
+    const w = Math.round(r.width);
+    const h = Math.round(r.height);
+    if (w !== notesPointerDownSize.width || h !== notesPointerDownSize.height) {
+      notesSize = { width: w, height: h };
+    }
+    notesPointerDownSize = null;
+  }
 
   /**
    * Determine step completion status for a pipeline job.
@@ -372,7 +541,7 @@
   }
 </script>
 
-<div class="max-w-xl mx-auto">
+<div class="{recState === 'recording' ? 'max-w-6xl' : 'max-w-xl'} mx-auto transition-[max-width] duration-200">
   <h1 class="text-2xl font-bold text-[var(--text-primary)] mb-8 text-center">Record</h1>
 
   {#if preflightModal}
@@ -580,7 +749,7 @@
       </div>
 
       <!-- Live note-taking area -->
-      <div class="w-full max-w-2xl bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-xl p-4 mb-6">
+      <div class="w-full bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-xl p-4 mb-6">
         <!-- Meeting title -->
         <div class="mb-3">
           <label for="meeting-title" class="block text-xs font-medium text-[var(--text-secondary)] mb-1">
@@ -678,21 +847,91 @@
 
         <!-- Meeting notes -->
         <div>
-          <label for="meeting-notes" class="block text-xs font-medium text-[var(--text-secondary)] mb-1">
-            Your notes
-          </label>
-          <textarea
-            id="meeting-notes"
-            bind:value={meetingNotes}
-            placeholder="Jot things down as the meeting happens...&#10;&#10;- Key point discussed&#10;- Action for Bob&#10;- Decision: go with option A"
-            rows="8"
-            class="w-full px-3 py-2 bg-[var(--bg-primary)] border border-[var(--border-subtle)] rounded-lg
-                   text-[var(--text-primary)] text-sm font-mono leading-relaxed
-                   focus:outline-none focus:ring-2 focus:ring-[var(--accent)]
-                   focus:border-transparent placeholder-[var(--text-muted)] resize-y"
-          ></textarea>
+          <div class="flex items-center justify-between mb-1 gap-3">
+            <label for="meeting-notes" class="text-xs font-medium text-[var(--text-secondary)]">
+              Your notes
+            </label>
+            <!--
+              View toggle. NORMAL pairs the editor with a live rendered preview
+              so the user can see the markdown layout as they type. MARKDOWN
+              hides the preview and gives the textarea the full row.
+            -->
+            <div role="tablist" class="inline-flex rounded-md border border-[var(--border-subtle)] bg-[var(--bg-primary)] p-0.5 text-xs">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={notesView === 'normal'}
+                onclick={() => notesView = 'normal'}
+                class="px-2 py-1 rounded {notesView === 'normal' ? 'bg-[var(--accent)] text-white' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'}"
+              >NORMAL</button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={notesView === 'markdown'}
+                onclick={() => notesView = 'markdown'}
+                class="px-2 py-1 rounded {notesView === 'markdown' ? 'bg-[var(--accent)] text-white' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'}"
+              >MARKDOWN</button>
+            </div>
+          </div>
+
+          <div class="grid {notesView === 'normal' ? 'grid-cols-1 md:grid-cols-2' : 'grid-cols-1'} gap-3">
+            <!--
+              Editor textarea. resize: both lets the user drag the corner to
+              change both width and height; the ResizeObserver writes the
+              new size to localStorage so it sticks.
+            -->
+            <textarea
+              id="meeting-notes"
+              bind:value={meetingNotes}
+              bind:this={notesEditorEl}
+              onpointerdown={notesEditorPointerDown}
+              onpointerup={notesEditorPointerUp}
+              placeholder="Jot things down as the meeting happens...&#10;&#10;# Heading&#10;- Key point discussed&#10;- Action for **Bob**&#10;- Decision: go with option A"
+              rows="16"
+              cols="40"
+              style:width={notesSize.width ? `${notesSize.width}px` : null}
+              style:height={notesSize.height ? `${notesSize.height}px` : null}
+              style:max-width="100%"
+              style:resize="both"
+              class="w-full min-h-[16rem] px-3 py-2 bg-[var(--bg-primary)] border border-[var(--border-subtle)] rounded-lg
+                     text-[var(--text-primary)] text-sm font-mono leading-relaxed
+                     focus:outline-none focus:ring-2 focus:ring-[var(--accent)]
+                     focus:border-transparent placeholder-[var(--text-muted)]"
+            ></textarea>
+
+            {#if notesView === 'normal'}
+              <!--
+                Live rendered preview. Mirrors the editor height (min-h matches)
+                so the two panes feel paired. We render via marked + DOMPurify
+                inline rather than reaching for MarkdownRenderer because we
+                need this derived value to stay reactive to meetingNotes.
+              -->
+              <div
+                aria-label="Rendered preview"
+                class="notes-preview w-full min-h-[16rem] px-4 py-3 bg-[var(--bg-primary)] border border-[var(--border-subtle)] rounded-lg
+                       text-[var(--text-primary)] text-sm leading-relaxed overflow-auto
+                       prose prose-sm max-w-none
+                       prose-headings:text-[var(--text-primary)] prose-headings:font-semibold
+                       prose-p:text-[var(--text-primary)]
+                       prose-strong:text-[var(--text-primary)]
+                       prose-a:text-[var(--accent)]
+                       prose-code:text-[var(--accent)] prose-code:bg-[var(--bg-surface-hover)] prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-code:text-xs
+                       prose-li:text-[var(--text-primary)]
+                       prose-ul:text-[var(--text-primary)]
+                       prose-ol:text-[var(--text-primary)]
+                       prose-blockquote:border-[var(--accent)] prose-blockquote:text-[var(--text-secondary)]"
+              >
+                {#if meetingNotes.trim()}
+                  {@html notesRenderedHtml}
+                {:else}
+                  <p class="text-[var(--text-muted)] italic">Rendered preview appears here as you type…</p>
+                {/if}
+              </div>
+            {/if}
+          </div>
+
           <p class="text-xs text-[var(--text-muted)] mt-1">
-            We'll blend your notes into the final minutes so nothing important gets missed.
+            We'll blend your notes into the final minutes. Markdown supported — drag the textarea corner to resize.
           </p>
         </div>
 
@@ -717,11 +956,25 @@
         </div>
       </div>
 
-      <!-- Stop button -->
+      <!-- Stop / Cancel buttons -->
       <div class="flex items-center gap-4">
         <button
+          onclick={() => (cancelConfirmOpen = true)}
+          disabled={stoppingRecording || cancellingRecording}
+          class="px-5 py-3 bg-transparent text-[var(--text-secondary)] hover:text-[var(--text-primary)]
+                 border border-[var(--border-subtle)] hover:border-[var(--text-secondary)] rounded-full
+                 text-sm font-medium transition-colors duration-150 disabled:opacity-50
+                 flex items-center gap-2"
+          title="Discard the recording without processing"
+        >
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+          </svg>
+          {cancellingRecording ? 'Cancelling…' : 'Cancel Recording'}
+        </button>
+        <button
           onclick={stopRecording}
-          disabled={stoppingRecording}
+          disabled={stoppingRecording || cancellingRecording}
           class="px-8 py-3 bg-red-500 hover:bg-red-600 text-white rounded-full
                  text-sm font-medium shadow-lg transition-all duration-150 disabled:opacity-50
                  flex items-center gap-2"
@@ -734,6 +987,16 @@
       </div>
     </div>
   {/if}
+
+  <ConfirmModal
+    bind:open={cancelConfirmOpen}
+    title="Discard this recording?"
+    message="The audio captured so far will be deleted and no minutes will be generated. This can't be undone."
+    confirmLabel={cancellingRecording ? 'Cancelling…' : 'Yes, discard'}
+    cancelLabel="Keep recording"
+    danger={true}
+    onConfirm={cancelRecording}
+  />
 
   <!-- Active Pipelines — always shown below recording controls -->
   {#if activePipelines.length > 0}
@@ -795,3 +1058,88 @@
     </div>
   {/if}
 </div>
+
+<style>
+  /*
+   * Scoped markdown styles for the live notes preview. Tailwind Preflight
+   * resets headings/lists; the project doesn't ship @tailwindcss/typography,
+   * so the `prose` classes attached to the preview pane are no-ops. We
+   * restore just enough to make headings, bullets, code, and emphasis
+   * visible — nothing fancy.
+   */
+  .notes-preview :global(h1),
+  .notes-preview :global(h2),
+  .notes-preview :global(h3),
+  .notes-preview :global(h4) {
+    font-weight: 600;
+    color: var(--text-primary);
+    line-height: 1.25;
+    margin: 0.6em 0 0.3em;
+  }
+  .notes-preview :global(h1) { font-size: 1.4rem; }
+  .notes-preview :global(h2) { font-size: 1.2rem; }
+  .notes-preview :global(h3) { font-size: 1.05rem; }
+  .notes-preview :global(h4) { font-size: 0.95rem; }
+  .notes-preview :global(p) { margin: 0.4em 0; }
+  .notes-preview :global(ul) {
+    list-style: disc outside;
+    padding-left: 1.4em;
+    margin: 0.4em 0;
+  }
+  .notes-preview :global(ol) {
+    list-style: decimal outside;
+    padding-left: 1.4em;
+    margin: 0.4em 0;
+  }
+  .notes-preview :global(li) { margin: 0.15em 0; }
+  .notes-preview :global(li > ul),
+  .notes-preview :global(li > ol) { margin: 0.15em 0; }
+  .notes-preview :global(strong) { font-weight: 700; color: var(--text-primary); }
+  .notes-preview :global(em) { font-style: italic; }
+  .notes-preview :global(a) { color: var(--accent); text-decoration: underline; }
+  .notes-preview :global(code) {
+    background: var(--bg-surface-hover);
+    color: var(--accent);
+    padding: 0.1em 0.35em;
+    border-radius: 0.25rem;
+    font-size: 0.85em;
+  }
+  .notes-preview :global(pre) {
+    background: var(--bg-surface-hover);
+    border: 1px solid var(--border-subtle);
+    border-radius: 0.5rem;
+    padding: 0.6em 0.8em;
+    margin: 0.5em 0;
+    overflow-x: auto;
+  }
+  .notes-preview :global(pre code) {
+    background: transparent;
+    color: inherit;
+    padding: 0;
+    border-radius: 0;
+    font-size: 0.85em;
+  }
+  .notes-preview :global(blockquote) {
+    border-left: 3px solid var(--accent);
+    color: var(--text-secondary);
+    padding-left: 0.8em;
+    margin: 0.5em 0;
+  }
+  .notes-preview :global(hr) {
+    border: 0;
+    border-top: 1px solid var(--border-subtle);
+    margin: 0.8em 0;
+  }
+  .notes-preview :global(table) {
+    border-collapse: collapse;
+    margin: 0.5em 0;
+  }
+  .notes-preview :global(th),
+  .notes-preview :global(td) {
+    border: 1px solid var(--border-subtle);
+    padding: 0.3em 0.6em;
+  }
+  .notes-preview :global(input[type="checkbox"]) {
+    margin-right: 0.4em;
+  }
+</style>
