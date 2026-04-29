@@ -12,7 +12,7 @@
   // flight, cleared once the user pushes Stop. Scoped to a single browser
   // session so they never leak across days.
   const FORM_KEY = 'record-form-v1';
-  const VIEW_KEY = 'record-notes-view-v1';   // 'normal' | 'markdown'
+  const VIEW_KEY = 'record-notes-preview-v1';  // boolean — show rendered preview pane
   const SIZE_KEY = 'record-notes-size-v1';   // { width, height } in px
 
   let audioDevices = $state([]);
@@ -58,8 +58,9 @@
   // Active pipeline jobs — pushed via WebSocket
   let activePipelines = $state([]);
 
-  // Notes editor view — 'normal' shows a live rendered markdown preview, 'markdown' shows just the raw textarea.
-  let notesView = $state('normal');
+  // When true, the editor sits side-by-side with a live rendered markdown
+  // preview. When false, the textarea takes the full row (raw markdown only).
+  let notesPreview = $state(true);
 
   // Don't write to (session|local)Storage until after onMount has had a chance
   // to restore from it. Without this gate the first $effect run — which
@@ -81,7 +82,7 @@
   // ───────────────────────── persistence helpers ─────────────────────────
   // We intentionally use sessionStorage (not localStorage) for the form
   // fields so they vanish when the browser session ends — they are tied to
-  // an in-flight recording, not the user account. notesView and notesSize
+  // an in-flight recording, not the user account. notesPreview and notesSize
   // are user preferences, so those go in localStorage.
 
   function saveForm() {
@@ -122,7 +123,12 @@
     if (!browser) return;
     try {
       const v = localStorage.getItem(VIEW_KEY);
-      if (v === 'normal' || v === 'markdown') notesView = v;
+      // Stored as JSON for forward-compat. Anything that parses cleanly to
+      // boolean wins; legacy 'normal'/'markdown' strings still map sensibly.
+      if (v != null) {
+        if (v === 'true' || v === 'normal') notesPreview = true;
+        else if (v === 'false' || v === 'markdown') notesPreview = false;
+      }
     } catch {}
     try {
       const s = localStorage.getItem(SIZE_KEY);
@@ -140,7 +146,7 @@
 
   function savePrefs() {
     if (!browser) return;
-    try { localStorage.setItem(VIEW_KEY, notesView); } catch {}
+    try { localStorage.setItem(VIEW_KEY, String(notesPreview)); } catch {}
     try { localStorage.setItem(SIZE_KEY, JSON.stringify(notesSize)); } catch {}
   }
 
@@ -161,7 +167,7 @@
   });
 
   $effect(() => {
-    void notesView; void notesSize;
+    void notesPreview; void notesSize;
     if (hydrated) savePrefs();
   });
 
@@ -857,29 +863,29 @@
               Your notes
             </label>
             <!--
-              View toggle. NORMAL pairs the editor with a live rendered preview
-              so the user can see the markdown layout as they type. MARKDOWN
-              hides the preview and gives the textarea the full row.
+              Single PREVIEW toggle. On → side-by-side editor + live rendered
+              markdown preview. Off → textarea takes the full row.
             -->
-            <div role="tablist" class="inline-flex rounded-md border border-[var(--border-subtle)] bg-[var(--bg-primary)] p-0.5 text-xs">
-              <button
-                type="button"
-                role="tab"
-                aria-selected={notesView === 'normal'}
-                onclick={() => notesView = 'normal'}
-                class="px-2 py-1 rounded {notesView === 'normal' ? 'bg-[var(--accent)] text-white' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'}"
-              >NORMAL</button>
-              <button
-                type="button"
-                role="tab"
-                aria-selected={notesView === 'markdown'}
-                onclick={() => notesView = 'markdown'}
-                class="px-2 py-1 rounded {notesView === 'markdown' ? 'bg-[var(--accent)] text-white' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'}"
-              >MARKDOWN</button>
-            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={notesPreview}
+              onclick={() => notesPreview = !notesPreview}
+              title={notesPreview ? 'Hide rendered preview' : 'Show rendered preview'}
+              class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border text-xs font-medium transition-colors
+                     {notesPreview
+                       ? 'bg-[var(--accent)] border-[var(--accent)] text-white'
+                       : 'bg-[var(--bg-primary)] border-[var(--border-subtle)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]'}"
+            >
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/>
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+              </svg>
+              PREVIEW
+            </button>
           </div>
 
-          <div class="grid {notesView === 'normal' ? 'grid-cols-1 md:grid-cols-2' : 'grid-cols-1'} gap-3">
+          <div class="grid {notesPreview ? 'grid-cols-1 md:grid-cols-2' : 'grid-cols-1'} gap-3">
             <!--
               Editor textarea. resize: both lets the user drag the corner to
               change both width and height; the ResizeObserver writes the
@@ -904,7 +910,7 @@
                      focus:border-transparent placeholder-[var(--text-muted)]"
             ></textarea>
 
-            {#if notesView === 'normal'}
+            {#if notesPreview}
               <!--
                 Live rendered preview. Mirrors the editor height (min-h matches)
                 so the two panes feel paired. We render via marked + DOMPurify
