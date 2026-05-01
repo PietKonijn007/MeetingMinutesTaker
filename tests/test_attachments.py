@@ -1,16 +1,18 @@
-"""Tests for the attachments foundation (spec/09-attachments.md).
+"""Tests for the attachments feature (spec/09-attachments.md).
 
 Covers: storage CRUD, sidecar markdown round-trip, PDF text-layer
-extraction, async worker, and the API surface (upload/list/get/raw/delete).
+extraction, async worker (extract + summarize), summarizer tier picking
+and prompt structure, the post-append `## Attachments` helper, and the
+API surface (upload/list/get/raw/delete).
 
-The summarizer + pipeline injection batches ship later; these tests stay
-narrow on the foundation.
+The Svelte UI lands in a later batch; tests stop at the API.
 """
 
 from __future__ import annotations
 
 import asyncio
 import io
+import json
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -24,8 +26,12 @@ from sqlalchemy.pool import StaticPool
 
 from meeting_minutes.api.deps import get_config, get_db_session
 from meeting_minutes.api.routes.attachments import router
+from meeting_minutes.attachments import (
+    pipeline_integration as pi_mod,
+)
 from meeting_minutes.attachments import sidecar as sidecar_mod
 from meeting_minutes.attachments import storage as storage_mod
+from meeting_minutes.attachments import summarizer as summarizer_mod
 from meeting_minutes.attachments import worker as worker_mod
 from meeting_minutes.attachments.extractors import (
     ExtractionError,
@@ -33,7 +39,15 @@ from meeting_minutes.attachments.extractors import (
     extract_pdf,
 )
 from meeting_minutes.attachments.storage import DuplicateAttachment
+from meeting_minutes.attachments.summarizer import (
+    SummaryRequest,
+    SummaryTier,
+    build_summary_prompt,
+    pick_tier,
+    summarize_attachment,
+)
 from meeting_minutes.config import AppConfig
+from meeting_minutes.models import LLMResponse
 from meeting_minutes.system3.db import (
     AttachmentORM,
     MeetingORM,
@@ -363,7 +377,13 @@ def test_delete_unknown_returns_false(session, data_dir):
 def test_worker_extracts_pdf_and_writes_sidecar(
     session_factory, data_dir, meeting_id
 ):
-    """End-to-end: row + file on disk → worker → sidecar populated, status=ready."""
+    """End-to-end: row + file on disk → worker → sidecar populated, status=ready.
+
+    Uses a fake LLM so the worker's summary phase doesn't try to call out
+    to a real provider. The full extract+summarize round-trip is exercised
+    in :func:`test_worker_runs_extraction_and_summary`; this test focuses
+    on the extraction half producing a well-formed sidecar.
+    """
     session = session_factory()
     try:
         row = storage_mod.add_file(
@@ -383,7 +403,9 @@ def test_worker_extracts_pdf_and_writes_sidecar(
 
     asyncio.run(
         worker_mod.process_attachment(
-            cfg, attachment_id, session_factory=session_factory
+            cfg, attachment_id,
+            session_factory=session_factory,
+            llm_client=_FakeLLM(response_text="placeholder summary"),
         )
     )
 
@@ -398,7 +420,6 @@ def test_worker_extracts_pdf_and_writes_sidecar(
             storage_mod.sidecar_path(data_dir, meeting_id, attachment_id)
         )
         assert sidecar.frontmatter["extraction_method"] == "pdf-text-layer"
-        assert sidecar.frontmatter["summary_status"] == "pending"
         assert "Pipeline-test text" in sidecar.extracted
     finally:
         session.close()
@@ -610,3 +631,469 @@ def test_api_delete_removes_row(client, session_factory, data_dir, meeting_id):
     # Subsequent GET 404s.
     follow = client.get(f"/api/attachments/{aid}")
     assert follow.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Summarizer (tier picking + prompt structure)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "size, expected",
+    [
+        (0, SummaryTier.SHORT),
+        (200, SummaryTier.SHORT),
+        (499, SummaryTier.SHORT),
+        (500, SummaryTier.MEDIUM),
+        (4_999, SummaryTier.MEDIUM),
+        (5_000, SummaryTier.LONG),
+        (29_999, SummaryTier.LONG),
+        (30_000, SummaryTier.XLONG),
+        (200_000, SummaryTier.XLONG),
+    ],
+)
+def test_summary_tier_thresholds(size, expected):
+    text = "x" * size
+    assert pick_tier(text) == expected
+
+
+def test_build_summary_prompt_short_includes_caption_and_tier_instruction():
+    req = SummaryRequest(
+        title="One slide",
+        caption="Q3 ARR slide we discussed at minute 12",
+        source="q3.pdf",
+        extraction_method="pdf-text-layer",
+        extracted_text="ARR: $12.7M",
+    )
+    system, user, tier, truncated = build_summary_prompt(req)
+    assert tier == SummaryTier.SHORT
+    assert truncated is False
+    assert "CRITICAL RULES" in system
+    assert "Q3 ARR slide" in user  # caption surfaces
+    assert "CONCISE" in user  # short-tier instruction
+    assert "$12.7M" in user
+    # Source + title rendered explicitly so the LLM sees the framing.
+    assert "Source: q3.pdf" in user
+    assert "Title: One slide" in user
+
+
+def test_build_summary_prompt_long_uses_subheaders_instruction():
+    req = SummaryRequest(
+        title="Big PDF",
+        caption=None,
+        source="big.pdf",
+        extraction_method="pdf-text-layer",
+        extracted_text="x" * 6_000,
+    )
+    _, user, tier, _ = build_summary_prompt(req)
+    assert tier == SummaryTier.LONG
+    assert "DETAILED" in user
+    assert "###" in user  # subheader guidance
+
+
+def test_build_summary_prompt_truncates_oversized_input():
+    big = "x" * 200_000
+    req = SummaryRequest(
+        title="Huge", caption=None, source="huge.pdf",
+        extraction_method="pdf-text-layer", extracted_text=big,
+    )
+    _, user, tier, truncated = build_summary_prompt(req)
+    assert tier == SummaryTier.XLONG
+    assert truncated is True
+    assert "[... document truncated ...]" in user
+    # We don't blow the prompt up to 200k chars — the tail is replaced.
+    assert "[... document truncated ...]" in user
+    assert user.count("x") < 110_000
+
+
+def test_build_summary_prompt_ocr_marks_skepticism():
+    req = SummaryRequest(
+        title="Whiteboard photo", caption=None, source="board.png",
+        extraction_method="ocr", extracted_text="meeting agenda",
+    )
+    _, user, _, _ = build_summary_prompt(req)
+    assert "OCR output more skeptically" in user
+
+
+class _FakeLLM:
+    """Minimal LLMClient stand-in for summarizer tests.
+
+    Records the calls it received so tests can assert on the prompts the
+    summarizer constructed without standing up a real LLM.
+    """
+
+    def __init__(self, response_text: str = "Summary body."):
+        self.response_text = response_text
+        self.calls: list[tuple[str, str]] = []  # (system_prompt, prompt)
+
+    async def generate(self, prompt: str, system_prompt: str = "") -> LLMResponse:
+        self.calls.append((system_prompt, prompt))
+        return LLMResponse(
+            text=self.response_text,
+            provider="fake",
+            model="fake",
+            input_tokens=100,
+            output_tokens=50,
+            cost_usd=0.0,
+            processing_time_seconds=0.01,
+        )
+
+
+def test_summarize_attachment_calls_llm_and_returns_markdown():
+    fake = _FakeLLM(response_text="### Bullet\n- one\n- two\n")
+    req = SummaryRequest(
+        title="t", caption="c", source="s", extraction_method="pdf-text-layer",
+        extracted_text="some content here",
+    )
+    result = asyncio.run(summarize_attachment(fake, req))
+    assert result.summary_markdown.startswith("### Bullet")
+    assert result.tier == SummaryTier.SHORT
+    assert result.truncated is False
+    assert len(fake.calls) == 1
+
+
+def test_summarize_attachment_skips_llm_for_empty_extraction():
+    """Calling the LLM with no content wastes tokens; short-circuit instead."""
+    fake = _FakeLLM()
+    req = SummaryRequest(
+        title="empty", caption=None, source="x", extraction_method="ocr",
+        extracted_text="",
+    )
+    result = asyncio.run(summarize_attachment(fake, req))
+    assert "Could not extract text" in result.summary_markdown
+    assert fake.calls == []
+
+
+# ---------------------------------------------------------------------------
+# Worker — full extract + summarize round trip
+# ---------------------------------------------------------------------------
+
+
+def test_worker_runs_extraction_and_summary(
+    session_factory, data_dir, meeting_id
+):
+    """Full worker path: extract → summarize → sidecar populated, status=ready."""
+    session = session_factory()
+    try:
+        row = storage_mod.add_file(
+            session=session,
+            data_dir=data_dir,
+            meeting_id=meeting_id,
+            fileobj=io.BytesIO(_minimal_pdf_bytes("Pipeline integration body")),
+            original_filename="doc.pdf",
+            mime_type="application/pdf",
+            title="Integration doc",
+            caption="why this matters",
+        )
+        session.commit()
+        attachment_id = row.attachment_id
+    finally:
+        session.close()
+
+    fake_llm = _FakeLLM(response_text="A grounded summary mentioning $12.7M.")
+    cfg = AppConfig(data_dir=str(data_dir))
+    asyncio.run(
+        worker_mod.process_attachment(
+            cfg, attachment_id,
+            session_factory=session_factory,
+            llm_client=fake_llm,
+        )
+    )
+
+    session = session_factory()
+    try:
+        refreshed = session.get(AttachmentORM, attachment_id)
+        assert refreshed.status == "ready"
+
+        sidecar = sidecar_mod.parse_attachment_sidecar(
+            storage_mod.sidecar_path(data_dir, meeting_id, attachment_id)
+        )
+        assert sidecar.frontmatter["summary_status"] == "ready"
+        assert sidecar.frontmatter["summary_target"] == SummaryTier.SHORT.value
+        assert "$12.7M" in sidecar.summary
+        assert "Pipeline integration body" in sidecar.extracted
+    finally:
+        session.close()
+    # The summarizer was actually called once; the prompt carried
+    # the title and caption from the row.
+    assert len(fake_llm.calls) == 1
+    _, user_prompt = fake_llm.calls[0]
+    assert "Integration doc" in user_prompt
+    assert "why this matters" in user_prompt
+
+
+def test_worker_records_summary_error_but_keeps_row_ready(
+    session_factory, data_dir, meeting_id
+):
+    """Extraction succeeded, summary failed: row is ready, sidecar marks error."""
+
+    class _BoomLLM(_FakeLLM):
+        async def generate(self, prompt: str, system_prompt: str = "") -> LLMResponse:  # type: ignore[override]
+            raise RuntimeError("LLM provider unreachable")
+
+    session = session_factory()
+    try:
+        row = storage_mod.add_file(
+            session=session,
+            data_dir=data_dir,
+            meeting_id=meeting_id,
+            fileobj=io.BytesIO(_minimal_pdf_bytes("body")),
+            original_filename="doc.pdf",
+            mime_type="application/pdf",
+        )
+        session.commit()
+        attachment_id = row.attachment_id
+    finally:
+        session.close()
+
+    cfg = AppConfig(data_dir=str(data_dir))
+    asyncio.run(
+        worker_mod.process_attachment(
+            cfg, attachment_id,
+            session_factory=session_factory,
+            llm_client=_BoomLLM(),
+        )
+    )
+
+    session = session_factory()
+    try:
+        refreshed = session.get(AttachmentORM, attachment_id)
+        # Extraction succeeded → row stays ready (no point re-extracting
+        # to retry the summary). The summary error is on the sidecar
+        # where the UI picks it up.
+        assert refreshed.status == "ready"
+    finally:
+        session.close()
+
+    sidecar = sidecar_mod.parse_attachment_sidecar(
+        storage_mod.sidecar_path(data_dir, meeting_id, attachment_id)
+    )
+    assert sidecar.frontmatter["summary_status"] == "error"
+    assert "LLM provider unreachable" in sidecar.frontmatter.get("summary_error", "")
+
+
+# ---------------------------------------------------------------------------
+# Pipeline integration — gather, wait, render, post-append
+# ---------------------------------------------------------------------------
+
+
+def _seed_sidecar(
+    data_dir: Path,
+    meeting_id: str,
+    *,
+    attachment_id: str,
+    title: str,
+    summary_status: str = "ready",
+    summary: str = "Some summary.",
+    extracted: str = "Some extracted text.",
+    source: str = "doc.pdf",
+):
+    """Helper: write a sidecar file in the meeting's attachments folder."""
+    path = storage_mod.sidecar_path(data_dir, meeting_id, attachment_id)
+    sidecar_mod.write_attachment_sidecar(
+        path,
+        frontmatter={
+            "attachment_id": attachment_id,
+            "meeting_id": meeting_id,
+            "kind": "file",
+            "title": title,
+            "source": source,
+            "extraction_method": "pdf-text-layer",
+            "summary_status": summary_status,
+        },
+        extracted=extracted,
+        summary=summary,
+    )
+    return path
+
+
+def test_gather_entries_returns_empty_when_no_folder(data_dir):
+    assert pi_mod.gather_entries(data_dir, "no-such-meeting") == []
+
+
+def test_gather_entries_reads_sidecars_in_filename_order(data_dir):
+    mid = "m-1"
+    _seed_sidecar(data_dir, mid, attachment_id="a-aaa", title="First")
+    _seed_sidecar(data_dir, mid, attachment_id="a-zzz", title="Last")
+    entries = pi_mod.gather_entries(data_dir, mid)
+    assert [e.attachment_id for e in entries] == ["a-aaa", "a-zzz"]
+    assert entries[0].title == "First"
+
+
+def test_render_llm_context_block_skips_pending_and_errored(data_dir):
+    entries = [
+        pi_mod.AttachmentEntry(
+            attachment_id="a1", title="Ready", source="r.pdf",
+            summary="Body content.", summary_status="ready",
+            extraction_method="pdf-text-layer", kind="file",
+        ),
+        pi_mod.AttachmentEntry(
+            attachment_id="a2", title="Pending", source="p.pdf",
+            summary="", summary_status="pending",
+            extraction_method="pdf-text-layer", kind="file",
+        ),
+        pi_mod.AttachmentEntry(
+            attachment_id="a3", title="Errored", source="e.pdf",
+            summary="", summary_status="error",
+            extraction_method="pdf-text-layer", kind="file",
+        ),
+    ]
+    block = pi_mod.render_llm_context_block(entries)
+    assert "ATTACHED MATERIAL: Ready" in block
+    assert "Body content." in block
+    assert "Pending" not in block
+    assert "Errored" not in block
+    # Preamble explains the contract to the LLM.
+    assert "ground-truth context" in block
+
+
+def test_render_llm_context_block_empty_when_nothing_ready():
+    assert pi_mod.render_llm_context_block([]) == ""
+
+
+def test_wait_for_pending_returns_when_none_pending(data_dir):
+    mid = "m-1"
+    _seed_sidecar(data_dir, mid, attachment_id="a1", title="One",
+                  summary_status="ready")
+    entries = asyncio.run(
+        pi_mod.wait_for_pending(data_dir, mid, timeout_s=2.0)
+    )
+    assert len(entries) == 1
+
+
+def test_wait_for_pending_times_out(data_dir):
+    """A persistently-pending sidecar means the pipeline can't wait forever."""
+    mid = "m-1"
+    _seed_sidecar(data_dir, mid, attachment_id="a1", title="Stuck",
+                  summary_status="pending")
+    entries = asyncio.run(
+        pi_mod.wait_for_pending(data_dir, mid, timeout_s=0.2,
+                                poll_interval_s=0.05)
+    )
+    # Returns whatever was on disk at the deadline; doesn't raise.
+    assert len(entries) == 1
+    assert entries[0].summary_status == "pending"
+
+
+def test_append_attachments_section_writes_md_and_json(tmp_path):
+    """Updates both .md and .json so DB ingestion picks up the appended block."""
+    minutes_dir = tmp_path / "data" / "minutes"
+    minutes_dir.mkdir(parents=True)
+    md_path = minutes_dir / "m-1.md"
+    json_path = minutes_dir / "m-1.json"
+    md_path.write_text("# Title\n\n## Summary\nbody\n", encoding="utf-8")
+    json_path.write_text(
+        '{"meeting_id": "m-1", "minutes_markdown": "# Title\\n\\n## Summary\\nbody\\n"}',
+        encoding="utf-8",
+    )
+
+    entries = [
+        pi_mod.AttachmentEntry(
+            attachment_id="a1", title="Slide deck", source="deck.pdf",
+            summary="Key takeaways: $12.7M ARR.", summary_status="ready",
+            extraction_method="pdf-text-layer", kind="file",
+        ),
+    ]
+    final = pi_mod.append_attachments_section_to_files(
+        tmp_path / "data", "m-1", entries,
+    )
+    assert final is not None
+    assert "## Attachments" in final
+    assert "Slide deck" in final
+    assert "$12.7M ARR" in final
+    assert "[View source](/api/attachments/a1/raw)" in final
+
+    # Both files reflect the change.
+    assert "## Attachments" in md_path.read_text(encoding="utf-8")
+    json_data = json.loads(json_path.read_text(encoding="utf-8"))
+    assert "## Attachments" in json_data["minutes_markdown"]
+
+
+def test_append_attachments_section_idempotent(tmp_path):
+    """Two consecutive calls converge — no duplicated section."""
+    minutes_dir = tmp_path / "data" / "minutes"
+    minutes_dir.mkdir(parents=True)
+    md_path = minutes_dir / "m-1.md"
+    md_path.write_text("# Title\n\nbody\n", encoding="utf-8")
+    entries = [
+        pi_mod.AttachmentEntry(
+            attachment_id="a1", title="Doc", source="d.pdf",
+            summary="Body 1.", summary_status="ready",
+            extraction_method="pdf-text-layer", kind="file",
+        ),
+    ]
+    pi_mod.append_attachments_section_to_files(tmp_path / "data", "m-1", entries)
+    pi_mod.append_attachments_section_to_files(tmp_path / "data", "m-1", entries)
+
+    md = md_path.read_text(encoding="utf-8")
+    assert md.count("## Attachments") == 1
+    assert md.count("Body 1.") == 1
+
+
+def test_append_attachments_section_replaces_stale_block_after_change(tmp_path):
+    """When the attachments list changes, the rendered section reflects only the new state."""
+    minutes_dir = tmp_path / "data" / "minutes"
+    minutes_dir.mkdir(parents=True)
+    md_path = minutes_dir / "m-1.md"
+    md_path.write_text("# Title\n\nbody\n", encoding="utf-8")
+
+    initial = [
+        pi_mod.AttachmentEntry(
+            attachment_id="a1", title="Old", source="o.pdf",
+            summary="Old summary.", summary_status="ready",
+            extraction_method="pdf-text-layer", kind="file",
+        ),
+    ]
+    pi_mod.append_attachments_section_to_files(tmp_path / "data", "m-1", initial)
+    assert "Old summary." in md_path.read_text(encoding="utf-8")
+
+    updated = [
+        pi_mod.AttachmentEntry(
+            attachment_id="a2", title="New", source="n.pdf",
+            summary="New summary.", summary_status="ready",
+            extraction_method="pdf-text-layer", kind="file",
+        ),
+    ]
+    pi_mod.append_attachments_section_to_files(tmp_path / "data", "m-1", updated)
+    md = md_path.read_text(encoding="utf-8")
+    assert "Old summary." not in md
+    assert "New summary." in md
+
+
+def test_append_attachments_section_handles_errored_summary(tmp_path):
+    """Errored summary still gets a row in the rendered section, with a clear note."""
+    minutes_dir = tmp_path / "data" / "minutes"
+    minutes_dir.mkdir(parents=True)
+    md_path = minutes_dir / "m-1.md"
+    md_path.write_text("# Title\n\nbody\n", encoding="utf-8")
+
+    entries = [
+        pi_mod.AttachmentEntry(
+            attachment_id="a1", title="Failed", source="f.pdf",
+            summary="", summary_status="error",
+            extraction_method="ocr", kind="image",
+        ),
+    ]
+    pi_mod.append_attachments_section_to_files(tmp_path / "data", "m-1", entries)
+    md = md_path.read_text(encoding="utf-8")
+    assert "Failed" in md
+    assert "Summary failed" in md
+
+
+def test_append_attachments_section_empty_strips_stale_block(tmp_path):
+    """Calling with no entries removes any prior section but doesn't add a new one."""
+    minutes_dir = tmp_path / "data" / "minutes"
+    minutes_dir.mkdir(parents=True)
+    md_path = minutes_dir / "m-1.md"
+    md_path.write_text(
+        "# Title\n\nbody\n\n## Attachments\n\n### Stale\nOld.\n",
+        encoding="utf-8",
+    )
+    final = pi_mod.append_attachments_section_to_files(
+        tmp_path / "data", "m-1", []
+    )
+    assert final is None
+    md = md_path.read_text(encoding="utf-8")
+    assert "## Attachments" not in md
+    assert "Stale" not in md
+    assert "body" in md  # rest of the file untouched
