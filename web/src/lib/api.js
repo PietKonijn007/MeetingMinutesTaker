@@ -84,7 +84,7 @@ export const api = {
   },
 
   // People
-  getPeople: () => request('/people'),
+  getPeople: (limit = 200) => request(`/people?limit=${limit}`),
   getPerson: (id) => request(`/people/${id}`),
   getPersonMeetings: (id) => request(`/people/${id}/meetings`),
   createPerson: (data) => request('/people', {

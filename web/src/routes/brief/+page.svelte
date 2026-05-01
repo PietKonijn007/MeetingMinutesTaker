@@ -95,8 +95,10 @@
 
     // Load the directory in parallel — needed both for the picker and to
     // resolve URL-supplied person ids into full attendee cards.
+    // /api/people returns a PaginatedResponse {items, total, ...} — pull items.
     try {
-      allPeople = await api.getPeople();
+      const resp = await api.getPeople(200);
+      allPeople = Array.isArray(resp) ? resp : (resp?.items || []);
     } catch (e) {
       addToast(`Could not load people directory: ${e.message}`, 'error');
       allPeople = [];
