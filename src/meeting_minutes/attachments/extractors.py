@@ -26,10 +26,16 @@ _PDF_MIME = "application/pdf"
 _DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 _PPTX_MIME = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
 
-# Image extensions we OCR. HEIC requires pillow-heif and ships in a
-# follow-up batch; for now an HEIC upload will reach the dispatcher and
-# raise a clear ExtractionError.
-_IMAGE_EXTS = {".png", ".jpg", ".jpeg"}
+# Image extensions we OCR. ``.heic`` is supported via the ``pillow-heif``
+# Pillow plugin which we register lazily inside :func:`extract_image`.
+_IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".heic"}
+
+# When the PDF text layer returns fewer than this many characters per
+# page on average, we treat the document as scanned and fall back to
+# rendering+OCR. The threshold is empirical: blank-template PDFs from
+# Word produce ~30 chars of footer per page; real text pages produce
+# hundreds.
+_SCANNED_PDF_THRESHOLD_CHARS_PER_PAGE = 50
 
 
 class ExtractionError(RuntimeError):
@@ -124,12 +130,73 @@ def extract_pdf(path: Path) -> tuple[str, str]:
             pages.append(f"--- Page {idx} ---\n{page_text.strip()}")
 
     body = "\n\n".join(pages)
-    if not body.strip():
+    page_count = max(1, len(reader.pages))
+    avg_per_page = len(body) // page_count
+
+    # Scanned-PDF fallback: thin/empty text layer triggers a render+OCR
+    # pass. We only do this when pdf2image and pytesseract are both
+    # available; otherwise we surface what we have (possibly empty)
+    # rather than crash.
+    if avg_per_page < _SCANNED_PDF_THRESHOLD_CHARS_PER_PAGE:
         _LOG.info(
-            "PDF %s: text layer is empty — likely scanned, awaiting OCR fallback.",
+            "PDF %s: thin text layer (%d chars/page) — trying OCR fallback",
+            path.name,
+            avg_per_page,
+        )
+        ocr_body = _try_pdf_ocr_fallback(path)
+        if ocr_body is not None:
+            return ocr_body, "pdf-ocr"
+        _LOG.info(
+            "PDF %s: OCR fallback unavailable; returning text-layer output as-is",
             path.name,
         )
+
     return body, "pdf-text-layer"
+
+
+def _try_pdf_ocr_fallback(path: Path) -> str | None:
+    """Render each page to a PIL image and OCR it.
+
+    Returns ``None`` when the toolchain isn't available (poppler binary
+    or pytesseract Python package missing) — caller falls back to the
+    text-layer result. Returns the joined OCR text otherwise (possibly
+    empty if the pages truly contain no text).
+
+    Failures during a single page are logged and skipped; we'd rather
+    return a partial result than crash on a malformed page.
+    """
+    try:
+        from pdf2image import convert_from_path  # type: ignore
+        from pdf2image.exceptions import PDFInfoNotInstalledError  # type: ignore
+        import pytesseract  # type: ignore
+    except ImportError as exc:
+        _LOG.info("PDF OCR fallback skipped — missing dep: %s", exc)
+        return None
+
+    if not _tesseract_binary_available(pytesseract):
+        _LOG.info("PDF OCR fallback skipped — tesseract binary missing")
+        return None
+
+    try:
+        images = convert_from_path(str(path), dpi=200)
+    except PDFInfoNotInstalledError:
+        _LOG.info("PDF OCR fallback skipped — poppler binary not installed")
+        return None
+    except Exception as exc:  # noqa: BLE001
+        _LOG.warning("pdf2image render failed for %s: %s", path.name, exc)
+        return None
+
+    pages: list[str] = []
+    for idx, img in enumerate(images, start=1):
+        try:
+            text = (pytesseract.image_to_string(img) or "").strip()
+        except Exception as exc:  # noqa: BLE001
+            _LOG.warning("OCR of page %d failed for %s: %s", idx, path.name, exc)
+            continue
+        if text:
+            pages.append(f"--- Page {idx} ---\n{text}")
+
+    return "\n\n".join(pages)
 
 
 # ---------------------------------------------------------------------------
@@ -305,6 +372,21 @@ def extract_image(path: Path) -> tuple[str, str]:
             "to pick up the new dependencies."
         ) from exc
 
+    # HEIC support is opt-in: pillow-heif registers itself as a Pillow
+    # plugin when imported. We import lazily so a missing pillow-heif
+    # only matters for HEIC inputs (which is the common case for iPhone
+    # screenshots).
+    if path.suffix.lower() == ".heic":
+        try:
+            import pillow_heif  # type: ignore
+
+            pillow_heif.register_heif_opener()
+        except ImportError as exc:
+            raise ExtractionError(
+                "HEIC support requires pillow-heif. Reinstall the project "
+                "to pick up the new dependency."
+            ) from exc
+
     if not _tesseract_binary_available(pytesseract):
         raise ExtractionError(
             "tesseract binary not found on PATH. Install it (macOS: "
@@ -341,3 +423,147 @@ def _tesseract_binary_available(pytesseract) -> bool:
         return True
     except Exception:
         return False
+
+
+# ---------------------------------------------------------------------------
+# Link
+# ---------------------------------------------------------------------------
+
+
+def extract_link(
+    url: str,
+    *,
+    timeout_seconds: float = 10.0,
+    user_agent: str = "MeetingMinutesTaker/1.0",
+    max_response_bytes: int = 10 * 1024 * 1024,
+) -> tuple[str, str, dict[str, str]]:
+    """Fetch ``url`` and extract its readable text + a small metadata dict.
+
+    Returns ``(text, "link-trafilatura", metadata)`` where ``metadata``
+    carries ``page_title`` (and possibly ``og_image``) for the storage
+    layer to record on the row. The caller — :func:`storage.add_link` —
+    decides what to do with that metadata; we keep this function
+    side-effect-free so it can also serve a future "refresh link"
+    operation.
+
+    Failure modes (timeout, 404, non-HTML body, response too large) all
+    raise :class:`ExtractionError` with a one-line summary so the worker
+    surfaces something the user can act on.
+
+    The body is fetched with ``httpx`` (already a dep) and parsed by
+    ``trafilatura``, which is purpose-built for readable-text extraction
+    from web pages — strips chrome, ads, and navigation.
+    """
+    try:
+        import httpx  # type: ignore
+        import trafilatura  # type: ignore
+    except ImportError as exc:
+        raise ExtractionError(
+            "httpx or trafilatura is not installed. Reinstall the project "
+            "to pick up the new dependencies."
+        ) from exc
+
+    try:
+        with httpx.Client(
+            follow_redirects=True,
+            timeout=timeout_seconds,
+            headers={"User-Agent": user_agent},
+        ) as client:
+            response = client.get(url)
+    except httpx.HTTPError as exc:
+        raise ExtractionError(f"Could not fetch URL: {exc}") from exc
+
+    if response.status_code >= 400:
+        raise ExtractionError(
+            f"Fetch returned HTTP {response.status_code} for {url}"
+        )
+
+    content_type = (response.headers.get("content-type") or "").split(";")[0].strip()
+    if content_type and not content_type.startswith(("text/html", "application/xhtml")):
+        raise ExtractionError(
+            f"URL returned {content_type or 'unknown'} (expected HTML)"
+        )
+
+    if len(response.content) > max_response_bytes:
+        raise ExtractionError(
+            f"Response too large ({len(response.content)} bytes > "
+            f"{max_response_bytes} cap)"
+        )
+
+    html = response.text
+    extracted = trafilatura.extract(
+        html,
+        include_comments=False,
+        include_tables=True,
+        no_fallback=False,
+    )
+    if not extracted:
+        # Fall back to a plain-text strip so the user at least gets the
+        # raw page content for grounding. trafilatura is conservative
+        # and can return None on pages it doesn't recognize as articles.
+        extracted = _crude_html_to_text(html)
+
+    metadata = _extract_link_metadata(html)
+    return (extracted or "").strip(), "link-trafilatura", metadata
+
+
+def _crude_html_to_text(html: str) -> str:
+    """Last-resort HTML→text converter when trafilatura returns nothing.
+
+    Strips tags via the stdlib ``html.parser``. Not pretty — the goal
+    is to give the summarizer *something* to work with for pages where
+    the article-detection heuristics fail (e.g. landing pages,
+    internal wikis with non-standard markup).
+    """
+    from html.parser import HTMLParser
+
+    class _Strip(HTMLParser):
+        def __init__(self) -> None:
+            super().__init__()
+            self.parts: list[str] = []
+            self._skip_depth = 0
+
+        def handle_starttag(self, tag: str, attrs) -> None:  # noqa: ANN001
+            if tag in {"script", "style", "noscript"}:
+                self._skip_depth += 1
+
+        def handle_endtag(self, tag: str) -> None:
+            if tag in {"script", "style", "noscript"} and self._skip_depth:
+                self._skip_depth -= 1
+
+        def handle_data(self, data: str) -> None:
+            if self._skip_depth == 0:
+                self.parts.append(data)
+
+    p = _Strip()
+    p.feed(html)
+    return " ".join("".join(p.parts).split())
+
+
+def _extract_link_metadata(html: str) -> dict[str, str]:
+    """Pull out ``<title>`` and ``og:image`` for storage.
+
+    Best-effort: regex-only so we don't drag in another HTML parser
+    dependency. The title goes onto the attachment row when the user
+    didn't supply one; ``og_image`` is recorded but unused until the
+    thumbnail-rendering batch lands.
+    """
+    import re
+
+    metadata: dict[str, str] = {}
+
+    title_match = re.search(
+        r"<title[^>]*>(.*?)</title>", html, re.IGNORECASE | re.DOTALL
+    )
+    if title_match:
+        metadata["page_title"] = " ".join(title_match.group(1).split())
+
+    og_match = re.search(
+        r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\']([^"\']+)["\']',
+        html,
+        re.IGNORECASE,
+    )
+    if og_match:
+        metadata["og_image"] = og_match.group(1)
+
+    return metadata

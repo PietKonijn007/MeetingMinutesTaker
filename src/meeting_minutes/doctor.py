@@ -506,13 +506,43 @@ def check_tesseract() -> CheckResult:
     )
 
 
+def check_poppler() -> CheckResult:
+    """Check 13 — poppler binary present for scanned-PDF OCR fallback (spec/09).
+
+    The PDF text-layer extractor handles 99% of PDFs without poppler.
+    Poppler is only needed for scanned PDFs whose text layer is empty,
+    where we render pages → images → tesseract. Surfaced as ``warn``
+    because most attachment workflows never need it.
+
+    Probe via the bundled ``pdftoppm`` binary, which is what
+    ``pdf2image`` shells out to under the hood.
+    """
+    binary = shutil.which("pdftoppm")
+    if not binary:
+        return CheckResult(
+            name="poppler",
+            status="warn",
+            detail="pdftoppm (poppler) not on PATH",
+            fix_hint=(
+                "Scanned PDFs will fall through to empty extraction. "
+                "Install poppler (macOS): brew install poppler"
+            ),
+            fix_command="brew install poppler",
+        )
+    return CheckResult(
+        name="poppler",
+        status="ok",
+        detail=f"poppler at {binary}",
+    )
+
+
 # ---------------------------------------------------------------------------
 # Public entry point
 # ---------------------------------------------------------------------------
 
 
 def run_checks(config: AppConfig) -> list[CheckResult]:
-    """Run all twelve diagnostic checks in order."""
+    """Run all thirteen diagnostic checks in order."""
     return [
         check_python_version(),
         check_ffmpeg(),
@@ -526,4 +556,5 @@ def run_checks(config: AppConfig) -> list[CheckResult]:
         check_sqlite_vec(),
         check_weasyprint(),
         check_tesseract(),
+        check_poppler(),
     ]

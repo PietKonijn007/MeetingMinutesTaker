@@ -159,6 +159,61 @@ def add_file(
     return row
 
 
+def add_link(
+    *,
+    session: Session,
+    meeting_id: str,
+    url: str,
+    title: str | None = None,
+    caption: str | None = None,
+    source: str = "upload",
+) -> AttachmentORM:
+    """Persist a link attachment.
+
+    No filesystem write at this point — the link's content gets fetched
+    inside the worker and stored in the sidecar markdown. Dedupe is by
+    (meeting_id, url): re-pasting the same link is a no-op (returns the
+    existing row via :class:`DuplicateAttachment`).
+    """
+    if session.get(MeetingORM, meeting_id) is None:
+        raise ValueError(f"No meeting with ID {meeting_id}")
+
+    normalized_url = (url or "").strip()
+    if not normalized_url:
+        raise ValueError("URL cannot be empty")
+
+    existing = (
+        session.query(AttachmentORM)
+        .filter_by(meeting_id=meeting_id, kind="link", url=normalized_url)
+        .one_or_none()
+    )
+    if existing is not None:
+        raise DuplicateAttachment(existing.attachment_id)
+
+    attachment_id = str(uuid.uuid4())
+    now = datetime.now(timezone.utc)
+    row = AttachmentORM(
+        attachment_id=attachment_id,
+        meeting_id=meeting_id,
+        kind="link",
+        source=source,
+        original_filename=None,
+        mime_type=None,
+        size_bytes=None,
+        sha256=None,
+        url=normalized_url,
+        title=title or normalized_url,
+        caption=caption,
+        status="pending",
+        error=None,
+        created_at=now,
+        updated_at=now,
+    )
+    session.add(row)
+    session.flush()
+    return row
+
+
 def get(session: Session, attachment_id: str) -> AttachmentORM | None:
     return session.get(AttachmentORM, attachment_id)
 

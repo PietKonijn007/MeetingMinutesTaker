@@ -31,7 +31,11 @@ from typing import Callable
 
 from meeting_minutes.attachments import sidecar as sidecar_mod
 from meeting_minutes.attachments import storage as storage_mod
-from meeting_minutes.attachments.extractors import ExtractionError, extract
+from meeting_minutes.attachments.extractors import (
+    ExtractionError,
+    extract,
+    extract_link,
+)
 from meeting_minutes.attachments.summarizer import (
     SummaryRequest,
     summarize_attachment,
@@ -128,26 +132,31 @@ def _run_extraction(
             return None
 
         meeting_id = row.meeting_id
-        original = storage_mod.original_path(
-            data_dir,
-            meeting_id,
-            attachment_id,
-            Path(row.original_filename or "").suffix or "",
-        )
-        if not original.exists():
-            _set_error(
-                session,
-                attachment_id,
-                meeting_id,
-                f"Original file missing on disk: {original}",
-            )
-            return None
 
         storage_mod.update_status(session, attachment_id, "extracting")
         session.commit()
 
         try:
-            extracted, method = extract(original, row.mime_type)
+            if row.kind == "link":
+                extracted, method = _extract_link_for_row(row)
+                source_label = row.url or ""
+            else:
+                original = storage_mod.original_path(
+                    data_dir,
+                    meeting_id,
+                    attachment_id,
+                    Path(row.original_filename or "").suffix or "",
+                )
+                if not original.exists():
+                    _set_error(
+                        session,
+                        attachment_id,
+                        meeting_id,
+                        f"Original file missing on disk: {original}",
+                    )
+                    return None
+                extracted, method = extract(original, row.mime_type)
+                source_label = row.original_filename or ""
         except ExtractionError as exc:
             _set_error(session, attachment_id, meeting_id, str(exc))
             return None
@@ -168,7 +177,7 @@ def _run_extraction(
                 "meeting_id": meeting_id,
                 "kind": row.kind,
                 "title": row.title,
-                "source": row.original_filename or "",
+                "source": source_label,
                 "extracted_at": datetime.now(timezone.utc).isoformat(),
                 "extraction_method": method,
                 "summary_status": "pending",
@@ -185,10 +194,28 @@ def _run_extraction(
             extraction_method=method,
             title=row.title,
             caption=row.caption,
-            source=row.original_filename or "",
+            source=source_label,
         )
     finally:
         session.close()
+
+
+def _extract_link_for_row(row: AttachmentORM) -> tuple[str, str]:
+    """Run the link extractor + opportunistically improve the row's title.
+
+    The page ``<title>`` is a much better default than the raw URL,
+    but only when the user didn't already pick something. Caller's
+    session commits the title change as part of the same transaction
+    that flips status to ``summarizing``.
+    """
+    if not row.url:
+        raise ExtractionError("Link attachment has no URL set")
+
+    text, method, metadata = extract_link(row.url)
+    page_title = (metadata.get("page_title") or "").strip()
+    if page_title and (not row.title or row.title == row.url):
+        row.title = page_title
+    return text, method
 
 
 async def _run_summary(

@@ -38,6 +38,7 @@ from meeting_minutes.attachments.extractors import (
     extract,
     extract_docx,
     extract_image,
+    extract_link,
     extract_pdf,
     extract_pptx,
 )
@@ -479,6 +480,277 @@ def test_extract_image_ocr_failure_wraps_to_extraction_error(tmp_path, monkeypat
     with pytest.raises(ExtractionError) as exc_info:
         extract_image(path)
     assert "OCR failed" in str(exc_info.value)
+
+
+def test_extract_image_dispatches_heic_via_extension(tmp_path, monkeypatch):
+    """HEIC routes to extract_image even without an image/* MIME — by extension."""
+    import pytesseract  # type: ignore
+
+    path = tmp_path / "iphone.heic"
+    # We don't actually build a real HEIC; pillow-heif registration is
+    # mocked, and we just need a path with the right extension to trigger
+    # dispatch + the registration branch in extract_image.
+    _build_image(path.with_suffix(".png"))
+    path.write_bytes((tmp_path / "iphone.png").read_bytes())
+
+    monkeypatch.setattr(pytesseract, "get_tesseract_version", lambda: "5.0.0")
+    monkeypatch.setattr(pytesseract, "image_to_string", lambda img, **kw: "heic body")
+
+    text, method = extract(path, None)
+    assert method == "ocr"
+    assert text == "heic body"
+
+
+# ---------------------------------------------------------------------------
+# Scanned-PDF OCR fallback
+# ---------------------------------------------------------------------------
+
+
+def test_pdf_ocr_fallback_engages_when_text_layer_thin(tmp_path, monkeypatch):
+    """When pdf-text-layer extraction is thin, pdf2image + tesseract take over."""
+    from PIL import Image  # type: ignore
+    import pytesseract  # type: ignore
+
+    from meeting_minutes.attachments import extractors as extractors_mod
+
+    # Build a "blank" PDF — the writer puts no /Contents text layer.
+    from pypdf import PdfWriter
+
+    writer = PdfWriter()
+    writer.add_blank_page(width=612, height=792)
+    path = tmp_path / "scanned.pdf"
+    with path.open("wb") as f:
+        writer.write(f)
+
+    # Stub the Poppler render layer so we don't need the binary at test time.
+    fake_image = Image.new("RGB", (10, 10), color=(255, 255, 255))
+
+    def _fake_convert(p, dpi=200):
+        assert dpi == 200
+        return [fake_image]
+
+    monkeypatch.setattr(
+        "pdf2image.convert_from_path", _fake_convert,
+    )
+    monkeypatch.setattr(pytesseract, "get_tesseract_version", lambda: "5.0.0")
+    monkeypatch.setattr(
+        pytesseract, "image_to_string", lambda img, **kw: "OCR'd page body"
+    )
+
+    text, method = extract_pdf(path)
+    assert method == "pdf-ocr"
+    assert "OCR'd page body" in text
+    assert "--- Page 1 ---" in text
+
+
+def test_pdf_ocr_fallback_returns_text_layer_when_poppler_missing(tmp_path, monkeypatch):
+    """No Poppler → caller gets the (possibly empty) text-layer output, no raise."""
+    from pypdf import PdfWriter
+
+    writer = PdfWriter()
+    writer.add_blank_page(width=612, height=792)
+    path = tmp_path / "scanned.pdf"
+    with path.open("wb") as f:
+        writer.write(f)
+
+    from pdf2image.exceptions import PDFInfoNotInstalledError
+
+    def _fake_convert(p, dpi=200):
+        raise PDFInfoNotInstalledError("missing")
+
+    monkeypatch.setattr("pdf2image.convert_from_path", _fake_convert)
+
+    text, method = extract_pdf(path)
+    assert method == "pdf-text-layer"
+    # No content from the blank PDF, but the call doesn't crash.
+    assert text == ""
+
+
+# ---------------------------------------------------------------------------
+# Link extractor
+# ---------------------------------------------------------------------------
+
+
+class _FakeHttpResponse:
+    """Tiny stand-in for httpx.Response."""
+
+    def __init__(
+        self,
+        text: str = "",
+        status_code: int = 200,
+        content_type: str = "text/html",
+    ):
+        self.text = text
+        self.content = text.encode("utf-8")
+        self.status_code = status_code
+        self.headers = {"content-type": content_type}
+
+
+class _FakeHttpClient:
+    """Context-manager-compatible httpx.Client stand-in."""
+
+    def __init__(self, response: _FakeHttpResponse):
+        self._response = response
+        self.last_url: str | None = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_a):
+        return False
+
+    def get(self, url: str):
+        self.last_url = url
+        return self._response
+
+
+@pytest.fixture
+def fake_httpx_get(monkeypatch):
+    """Replace httpx.Client with one that returns a controllable response."""
+    holder: dict[str, _FakeHttpClient] = {}
+
+    def _install(text: str = "", status_code: int = 200, content_type: str = "text/html"):
+        client = _FakeHttpClient(_FakeHttpResponse(text, status_code, content_type))
+        holder["client"] = client
+
+        import httpx
+
+        def _fake_client(**kwargs):
+            return client
+
+        monkeypatch.setattr(httpx, "Client", _fake_client)
+        return client
+
+    return _install
+
+
+def test_extract_link_pulls_readable_text_and_title(fake_httpx_get):
+    html = (
+        "<html><head><title>Q3 Plan</title>"
+        '<meta property="og:image" content="https://example.com/og.png"></head>'
+        "<body><article><p>EMEA mid-market drove $12.7M ARR.</p>"
+        "<p>Renewal risk in APAC is rising.</p></article></body></html>"
+    )
+    fake_httpx_get(text=html)
+
+    text, method, metadata = extract_link("https://example.com/article")
+    assert method == "link-trafilatura"
+    assert "$12.7M ARR" in text
+    assert "Renewal risk in APAC" in text
+    assert metadata["page_title"] == "Q3 Plan"
+    assert metadata["og_image"] == "https://example.com/og.png"
+
+
+def test_extract_link_rejects_non_html_response(fake_httpx_get):
+    fake_httpx_get(text="binary data", content_type="application/zip")
+    with pytest.raises(ExtractionError) as exc_info:
+        extract_link("https://example.com/file.zip")
+    assert "expected HTML" in str(exc_info.value)
+
+
+def test_extract_link_rejects_http_error_status(fake_httpx_get):
+    fake_httpx_get(text="not found", status_code=404)
+    with pytest.raises(ExtractionError) as exc_info:
+        extract_link("https://example.com/missing")
+    assert "HTTP 404" in str(exc_info.value)
+
+
+def test_extract_link_falls_back_to_crude_strip_when_trafilatura_returns_none(
+    fake_httpx_get, monkeypatch,
+):
+    """If trafilatura can't find an article, the crude strip kicks in."""
+    import trafilatura
+
+    monkeypatch.setattr(trafilatura, "extract", lambda *a, **kw: None)
+    fake_httpx_get(
+        text="<html><body><div>fallback content here</div></body></html>"
+    )
+    text, method, _ = extract_link("https://example.com")
+    assert method == "link-trafilatura"
+    assert "fallback content here" in text
+
+
+def test_extract_link_network_error_wraps(monkeypatch):
+    """httpx errors surface as a clean ExtractionError, not a stack trace."""
+    import httpx
+
+    class _BoomClient:
+        def __init__(self, **kw): ...
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def get(self, url):
+            raise httpx.ConnectTimeout("timed out")
+
+    monkeypatch.setattr(httpx, "Client", _BoomClient)
+    with pytest.raises(ExtractionError) as exc_info:
+        extract_link("https://nope.example/")
+    assert "Could not fetch URL" in str(exc_info.value)
+
+
+# ---------------------------------------------------------------------------
+# Link API + storage
+# ---------------------------------------------------------------------------
+
+
+def test_add_link_storage_dedupes_by_url(session, meeting_id):
+    first = storage_mod.add_link(
+        session=session,
+        meeting_id=meeting_id,
+        url="https://example.com/spec",
+        title="Spec",
+    )
+    session.commit()
+
+    with pytest.raises(DuplicateAttachment) as exc_info:
+        storage_mod.add_link(
+            session=session,
+            meeting_id=meeting_id,
+            url="https://example.com/spec",
+        )
+    assert exc_info.value.attachment_id == first.attachment_id
+
+
+def test_api_add_link_creates_row(client, meeting_id):
+    response = client.post(
+        f"/api/meetings/{meeting_id}/attachments/link",
+        json={"url": "https://example.com/spec", "title": "Spec doc"},
+    )
+    assert response.status_code == 202, response.text
+    payload = response.json()
+    assert payload["kind"] == "link"
+    assert payload["title"] == "Spec doc"
+    assert payload["status"] == "pending"
+
+
+def test_api_add_link_rejects_unscheme(client, meeting_id):
+    response = client.post(
+        f"/api/meetings/{meeting_id}/attachments/link",
+        json={"url": "ftp://example.com/file"},
+    )
+    assert response.status_code == 422
+    assert "http" in response.json()["detail"]
+
+
+def test_api_add_link_404_for_unknown_meeting(client):
+    response = client.post(
+        "/api/meetings/no-such-meeting/attachments/link",
+        json={"url": "https://example.com/"},
+    )
+    assert response.status_code == 404
+
+
+def test_api_add_link_dedup_returns_existing(client, meeting_id):
+    first = client.post(
+        f"/api/meetings/{meeting_id}/attachments/link",
+        json={"url": "https://example.com/dedupe"},
+    )
+    aid = first.json()["attachment_id"]
+    second = client.post(
+        f"/api/meetings/{meeting_id}/attachments/link",
+        json={"url": "https://example.com/dedupe"},
+    )
+    assert second.status_code in (200, 202)
+    assert second.json()["attachment_id"] == aid
 
 
 # ---------------------------------------------------------------------------

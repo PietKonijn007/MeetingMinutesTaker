@@ -38,6 +38,7 @@ from meeting_minutes.attachments.sidecar import (
 )
 from meeting_minutes.attachments.storage import (
     add_file,
+    add_link,
     attachment_dir,
     delete,
     get,
@@ -57,6 +58,7 @@ __all__ = [
     "SummaryResult",
     "SummaryTier",
     "add_file",
+    "add_link",
     "append_attachments_section_to_files",
     "attachment_dir",
     "delete",

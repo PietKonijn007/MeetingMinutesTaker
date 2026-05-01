@@ -32,7 +32,7 @@ from fastapi import (
     status,
 )
 from fastapi.responses import FileResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from meeting_minutes.api.deps import get_config, get_db_session
@@ -93,6 +93,19 @@ class AttachmentDetail(AttachmentSummary):
     summary: str = ""
     extracted_text: str = ""
     summary_status: str | None = None
+    url: str | None = None  # populated for kind='link'
+
+
+class LinkAttachmentRequest(BaseModel):
+    """Body for ``POST /api/meetings/{id}/attachments/link``.
+
+    Only ``url`` is required; the worker will fall back to the page
+    ``<title>`` when ``title`` isn't supplied.
+    """
+
+    url: str = Field(..., min_length=1)
+    title: str | None = None
+    caption: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -190,6 +203,56 @@ async def upload_attachment(
     return AttachmentSummary.from_orm_row(row)
 
 
+@router.post(
+    "/api/meetings/{meeting_id}/attachments/link",
+    status_code=status.HTTP_202_ACCEPTED,
+    response_model=AttachmentSummary,
+)
+async def add_link_attachment(
+    meeting_id: str,
+    body: LinkAttachmentRequest,
+    config: Annotated[AppConfig, Depends(get_config)],
+    session: Annotated[Session, Depends(get_db_session)],
+):
+    """Attach a URL to a meeting; worker fetches + summarizes asynchronously."""
+    cfg = config.attachments
+    if not cfg.enabled:
+        raise HTTPException(status_code=403, detail="Attachments are disabled in config.")
+
+    if session.get(MeetingORM, meeting_id) is None:
+        raise HTTPException(status_code=404, detail=f"No meeting with ID {meeting_id}")
+
+    # Cheap URL sanity check at the boundary — full validation lives in
+    # the extractor, but rejecting obviously-bad inputs here keeps junk
+    # rows out of the DB.
+    url = body.url.strip()
+    if not url.lower().startswith(("http://", "https://")):
+        raise HTTPException(
+            status_code=422,
+            detail="URL must start with http:// or https://",
+        )
+
+    try:
+        row = storage_mod.add_link(
+            session=session,
+            meeting_id=meeting_id,
+            url=url,
+            title=(body.title or "").strip() or None,
+            caption=(body.caption or "").strip() or None,
+        )
+    except DuplicateAttachment as exc:
+        existing = storage_mod.get(session, exc.attachment_id)
+        if existing is None:  # pragma: no cover
+            raise HTTPException(status_code=500, detail="Duplicate row vanished")
+        return AttachmentSummary.from_orm_row(existing)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+    session.commit()
+    worker_mod.schedule(config, row.attachment_id)
+    return AttachmentSummary.from_orm_row(row)
+
+
 # ---------------------------------------------------------------------------
 # Read
 # ---------------------------------------------------------------------------
@@ -232,6 +295,7 @@ async def get_attachment(
         summary=sidecar.summary,
         extracted_text=sidecar.extracted,
         summary_status=sidecar.frontmatter.get("summary_status"),
+        url=row.url,
     )
 
 
