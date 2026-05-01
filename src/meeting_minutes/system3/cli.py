@@ -633,6 +633,18 @@ def rediarize_cmd(
     biggest single quality and runtime win for noisy diarization.
     """
     config = _load_config()
+    # Up-front diagnostic so a user can see at a glance which backend will
+    # run — saves an hour of debugging when the rediarize is hitting the
+    # local PyTorch path and they expected the cloud one.
+    console.print(
+        f"  [dim]Diarization backend: {config.diarization.engine} "
+        f"(model={config.diarization.model})[/dim]"
+    )
+    if config.diarization.engine == "pyannote-ai":
+        console.print(
+            f"  [dim]Tier: {config.diarization.pyannote_ai.tier} | "
+            f"key from ${config.diarization.pyannote_ai.api_key_env}[/dim]"
+        )
 
     async def _run():
         from meeting_minutes.pipeline import PipelineOrchestrator

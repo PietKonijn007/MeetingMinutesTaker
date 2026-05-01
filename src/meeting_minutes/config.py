@@ -358,9 +358,26 @@ class ConfigLoader:
 
     @staticmethod
     def load_default() -> AppConfig:
-        """Load from default locations: ./config/config.yaml or ~/.meeting-minutes/config.yaml."""
+        """Load from default locations.
+
+        Order of precedence:
+          1. ``$CWD/config/config.yaml`` — preserved for the launchd service
+             and for users running commands from the project root.
+          2. ``<repo-root>/config/config.yaml`` resolved from this file's
+             location — handles the common case of invoking ``mm`` from a
+             subdirectory (e.g. ``data/recordings/``). Without this fallback
+             every CLI command run from a non-root cwd silently used
+             ``AppConfig()`` defaults, which masked engine/model overrides.
+          3. ``~/.meeting-minutes/config.yaml`` — per-user override.
+
+        Falls through to ``AppConfig()`` defaults when none exist.
+        """
+        # ``config.py`` lives at ``src/meeting_minutes/config.py``, so three
+        # ``parent`` hops yields the repository root.
+        repo_root = Path(__file__).resolve().parent.parent.parent
         candidates = [
             Path("config/config.yaml"),
+            repo_root / "config" / "config.yaml",
             Path.home() / ".meeting-minutes" / "config.yaml",
         ]
         for path in candidates:

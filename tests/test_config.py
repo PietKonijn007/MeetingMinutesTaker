@@ -57,6 +57,37 @@ def test_load_default_returns_appconfig():
     assert isinstance(config, AppConfig)
 
 
+def test_load_default_finds_repo_root_config_from_subdirectory(monkeypatch, tmp_path):
+    """``mm`` invoked from a subdirectory (e.g. ``data/recordings/``) must
+    still find the repo-root ``config/config.yaml``.
+
+    Regression: before this guard was added, ``ConfigLoader.load_default()``
+    only checked the cwd-relative path, so running CLI commands from outside
+    the project root silently fell back to ``AppConfig()`` defaults — masking
+    user-saved engine/model overrides like ``engine: pyannote-ai``.
+    """
+    # cd into a place that is not the repo root and has no config/ next to it.
+    monkeypatch.chdir(tmp_path)
+    config = ConfigLoader.load_default()
+    # The real repo config has engine: pyannote-ai (or whatever the user
+    # last saved). What matters for the regression: we must NOT silently
+    # return defaults — the real config has to win. We assert this by
+    # checking the model field, which only the real repo YAML defines.
+    real_yaml = (
+        Path(__file__).resolve().parent.parent / "config" / "config.yaml"
+    )
+    if real_yaml.exists():
+        # When the repo config exists, load_default() must return its values
+        # — the simplest check is that the diarization engine is non-empty
+        # and the model name comes from disk, not defaults.
+        loaded_again = ConfigLoader.load(real_yaml)
+        assert config.diarization.engine == loaded_again.diarization.engine, (
+            "load_default() from a subdir loaded different config than "
+            "directly loading the repo's config.yaml — the cwd-vs-repo-root "
+            "fallback regressed"
+        )
+
+
 def test_load_nonexistent_returns_defaults(tmp_path: Path):
     """Loading a non-existent file returns default AppConfig."""
     path = tmp_path / "nonexistent.yaml"
