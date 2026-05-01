@@ -411,6 +411,13 @@ When minutes are generated (or regenerated) for the meeting, the pipeline:
 
 System dependencies (auto-installed by `install.sh` on macOS): `tesseract` (image and scanned-PDF OCR), `poppler` (rendering scanned PDFs to images for OCR). `mm doctor` reports both as warnings (not failures) — image and scanned-PDF attachments need them, but other kinds work without.
 
+Attachments also feed into:
+
+- **Search.** Extracted attachment text is folded into the FTS5 minutes index, so keyword search hits the body of attached PDFs / DOCX / OCR'd images.
+- **Chat.** Each ready summary contributes one `attachment_summary` chunk to the embedding store, so "what did the Q3 deck say about EMEA?" surfaces the right material with a clear citation.
+- **Speaker rename.** During minutes generation, the LLM that maps `SPEAKER_xx` labels to human names also sees attachment summaries — title-slide presenter names and explicit attendee lists are useful tie-breakers (weighted lower than meeting-app notes, since attachment authors aren't always participants).
+- **Long documents.** Inputs over ~100k characters get a two-phase **map-reduce** summarization (chunk-by-chunk → synthesis) so book-length PDFs are summarized end-to-end rather than truncated.
+
 API:
 
 - `POST /api/meetings/{id}/attachments` — multipart upload (file).

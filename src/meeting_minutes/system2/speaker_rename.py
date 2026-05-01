@@ -42,22 +42,28 @@ _SYSTEM_PROMPT = (
 
 _USER_PROMPT_TEMPLATE = """\
 Below is (A) a diarized transcript sample where each turn starts with an
-anonymous label, and (B) external notes exported from the meeting app that
-was running during the same meeting. The external notes usually attribute
-utterances to real names, or list the participants explicitly.
+anonymous label, plus one or both of these supplementary sources:
+  (B) external notes exported from the meeting app — these usually
+      attribute utterances to real names or list the participants;
+  (C) summaries of materials attached to the meeting (slide decks,
+      docs, links) — title-slide presenter names, "prepared by"
+      footers, and explicit attendee lists are common signals.
 
 Your job: produce a JSON object that maps every anonymous label listed in
 "Labels to map" to the real name of the person behind it, based on the
-evidence in the external notes and the transcript.
+evidence in the supplementary sources and the transcript.
 
 Rules:
 - Output ONLY a JSON object, no prose, no code fences.
 - Keys must be exactly the labels listed in "Labels to map".
 - Omit any label you cannot confidently identify. An empty object {{}} is a
   valid answer.
-- Names must be the person's name as it appears in the external notes
-  (preserve capitalization).
-- Do NOT invent names that do not appear in the external notes.
+- Names must be the person's name as it appears in the supplementary
+  sources (preserve capitalization).
+- Do NOT invent names that do not appear in the supplementary sources.
+- Attachments are weaker evidence than external notes for attribution
+  (the deck author isn't necessarily a meeting participant). Use them
+  to confirm or as a tie-breaker, not as the sole basis for a mapping.
 
 Labels to map: {labels}
 
@@ -66,6 +72,9 @@ Labels to map: {labels}
 
 === B. External notes from the meeting app ===
 {external_notes}
+
+=== C. Attached materials (summaries) ===
+{attachment_context}
 
 Respond with the JSON object only.
 """
@@ -129,6 +138,7 @@ async def infer_speaker_names(
     current_labels: list[str],
     transcript_sample: str,
     external_notes: str,
+    attachment_context: str = "",
 ) -> dict[str, str]:
     """Ask the LLM to map generic diarization labels to human names.
 
@@ -147,7 +157,14 @@ async def infer_speaker_names(
         the current transcript. A few thousand characters is plenty — more
         just burns tokens.
     external_notes
-        The verbatim paste from the meeting app. No preprocessing needed.
+        The verbatim paste from the meeting app, or ``""`` when not
+        available. May be empty if attachment_context carries the signal.
+    attachment_context
+        Per-attachment summaries (title + body) for materials attached to
+        the meeting. Title-slide presenter names and explicit attendee
+        lists are useful tie-breakers; the LLM is told to weight this
+        weaker than external_notes since attachment authors aren't
+        always participants.
 
     Returns
     -------
@@ -157,14 +174,17 @@ async def infer_speaker_names(
         on any failure (LLM error, malformed JSON, no confident matches). The
         caller should treat an empty mapping as "no change" and move on.
     """
-    # Fast-path: nothing to infer, nothing to send to the LLM.
-    if not current_labels or not external_notes.strip():
+    # Fast-path: nothing to infer, or no supplementary signal to draw on.
+    if not current_labels:
+        return {}
+    if not external_notes.strip() and not attachment_context.strip():
         return {}
 
     prompt = _USER_PROMPT_TEMPLATE.format(
         labels=", ".join(current_labels),
         transcript_sample=(transcript_sample or "").strip() or "(no transcript sample)",
-        external_notes=external_notes.strip(),
+        external_notes=external_notes.strip() or "(none provided)",
+        attachment_context=attachment_context.strip() or "(none provided)",
     )
 
     try:

@@ -695,6 +695,61 @@ class PipelineOrchestrator:
                     exc,
                 )
 
+        # Attachment-aware speaker rename (spec/09 phase 2): if any
+        # SPEAKER_xx labels are still generic and we have at least one
+        # ready attachment summary, ask the LLM to map labels using the
+        # attachments as supplementary evidence. Best-effort — failures
+        # log and let generation proceed with the original labels.
+        if attachment_entries and any(
+            e.summary_status == "ready" and e.summary.strip()
+            for e in attachment_entries
+        ):
+            try:
+                from meeting_minutes.api.routes.meetings import apply_speaker_mapping
+                from meeting_minutes.system2.speaker_rename import (
+                    build_transcript_sample,
+                    infer_speaker_names,
+                )
+
+                segments = tj.transcript.get("segments", []) or []
+                all_labels = [
+                    s.label for s in (tj.speakers or []) if getattr(s, "label", None)
+                ]
+                generic = [l for l in all_labels if l.startswith("SPEAKER_")]
+                if generic:
+                    sample = build_transcript_sample(segments)
+                    # gen_config isn't bound yet at this point — the
+                    # template-routing block sets it lower down — so go
+                    # straight at the underlying config.
+                    rename_llm = LLMClient(self._config.generation.llm)
+                    rename_context = _att.pipeline_integration.render_for_speaker_rename(
+                        attachment_entries
+                    )
+                    mapping = await infer_speaker_names(
+                        llm=rename_llm,
+                        current_labels=generic,
+                        transcript_sample=sample,
+                        external_notes="",
+                        attachment_context=rename_context,
+                    )
+                    if mapping:
+                        apply_speaker_mapping(self._data_dir, meeting_id, mapping)
+                        # Reload transcript with the renamed labels in
+                        # place so the rest of generation sees them.
+                        transcript_data = ingester.ingest(transcript_path)
+                        tj = transcript_data.transcript_json
+                        _console(
+                            f"  Attachment-aware speaker rename: "
+                            f"{len(mapping)} label(s) mapped — {mapping}",
+                            "cyan",
+                        )
+            except Exception as exc:  # noqa: BLE001
+                self._logger.warning(
+                    "Attachment-aware speaker rename failed for %s: %s",
+                    meeting_id,
+                    exc,
+                )
+
         # Route to template
         gen_config = self._config.generation
         templates_dir = Path(gen_config.templates_dir)

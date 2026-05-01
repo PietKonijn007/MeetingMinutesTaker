@@ -127,6 +127,27 @@ async def wait_for_pending(
         await asyncio.sleep(min(poll_interval_s, remaining))
 
 
+def render_for_speaker_rename(entries: list[AttachmentEntry]) -> str:
+    """Render attachment summaries as a compact context block for speaker rename.
+
+    Different shape from :func:`render_llm_context_block`: shorter, no
+    ground-truth preamble, since the speaker-rename prompt has its own
+    instructions about how to weight attachment evidence. Only ready
+    summaries with non-empty bodies are included; pending or errored
+    sidecars contribute nothing.
+    """
+    blocks: list[str] = []
+    for entry in entries:
+        if entry.summary_status != "ready" or not entry.summary.strip():
+            continue
+        blocks.append(
+            f"### {entry.title}\n"
+            f"Source: {entry.source or '(unspecified)'}\n\n"
+            f"{entry.summary.strip()}"
+        )
+    return "\n\n".join(blocks)
+
+
 def render_llm_context_block(entries: list[AttachmentEntry]) -> str:
     """Render the ATTACHED MATERIAL block injected into the LLM prompt.
 

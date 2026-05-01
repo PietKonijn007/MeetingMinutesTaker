@@ -1861,6 +1861,95 @@ def test_embedding_chunk_meeting_includes_attachment_summaries(data_dir, meeting
     assert all("Pending one" not in c["text"] for c in attachment_chunks)
 
 
+# ---------------------------------------------------------------------------
+# Attachment-aware speaker rename (phase 2)
+# ---------------------------------------------------------------------------
+
+
+def test_render_for_speaker_rename_skips_unready():
+    entries = [
+        pi_mod.AttachmentEntry(
+            attachment_id="a1", title="Title slide deck", source="deck.pdf",
+            summary="Presented by Alice Smith. Q3 metrics.",
+            summary_status="ready",
+            extraction_method="pdf-text-layer", kind="file",
+        ),
+        pi_mod.AttachmentEntry(
+            attachment_id="a2", title="Pending one", source="x.pdf",
+            summary="", summary_status="pending",
+            extraction_method="pdf-text-layer", kind="file",
+        ),
+    ]
+    block = pi_mod.render_for_speaker_rename(entries)
+    assert "Title slide deck" in block
+    assert "Alice Smith" in block
+    assert "Pending one" not in block
+    # No "ground-truth" preamble — the speaker rename prompt has its own
+    # framing.
+    assert "ground-truth" not in block
+
+
+def test_render_for_speaker_rename_empty_for_no_ready_entries():
+    assert pi_mod.render_for_speaker_rename([]) == ""
+
+
+def test_infer_speaker_names_uses_attachment_context_when_external_notes_empty():
+    """attachment_context is sufficient signal — don't bail when external_notes is empty."""
+    from meeting_minutes.system2.speaker_rename import infer_speaker_names
+
+    fake = _FakeLLM(response_text='{"SPEAKER_00": "Alice Smith"}')
+    mapping = asyncio.run(infer_speaker_names(
+        llm=fake,
+        current_labels=["SPEAKER_00", "SPEAKER_01"],
+        transcript_sample="SPEAKER_00: hi\nSPEAKER_01: hello",
+        external_notes="",
+        attachment_context="### Title slide\nPresented by Alice Smith.",
+    ))
+    assert mapping == {"SPEAKER_00": "Alice Smith"}
+    # The attachment context was actually included in the prompt.
+    assert len(fake.calls) == 1
+    _, user_prompt = fake.calls[0]
+    assert "Alice Smith" in user_prompt
+    assert "C. Attached materials" in user_prompt
+
+
+def test_infer_speaker_names_bails_when_both_sources_empty():
+    """No external notes AND no attachments → no LLM call."""
+    from meeting_minutes.system2.speaker_rename import infer_speaker_names
+
+    fake = _FakeLLM()
+    mapping = asyncio.run(infer_speaker_names(
+        llm=fake,
+        current_labels=["SPEAKER_00"],
+        transcript_sample="SPEAKER_00: hi",
+        external_notes="",
+        attachment_context="",
+    ))
+    assert mapping == {}
+    assert fake.calls == []
+
+
+def test_infer_speaker_names_carries_both_sources_into_prompt():
+    """When both external_notes AND attachment_context are present, both surface."""
+    from meeting_minutes.system2.speaker_rename import infer_speaker_names
+
+    fake = _FakeLLM(response_text='{"SPEAKER_00": "Alice"}')
+    asyncio.run(infer_speaker_names(
+        llm=fake,
+        current_labels=["SPEAKER_00"],
+        transcript_sample="SPEAKER_00: hi",
+        external_notes="meeting attendees: Alice, Bob",
+        attachment_context="### Slides\nPresented by Alice Smith.",
+    ))
+    _, user_prompt = fake.calls[0]
+    assert "B. External notes" in user_prompt
+    assert "C. Attached materials" in user_prompt
+    assert "meeting attendees" in user_prompt
+    assert "Presented by Alice Smith" in user_prompt
+    # The prompt explicitly tells the LLM to weight attachments lower.
+    assert "weaker evidence" in user_prompt.lower() or "tie-breaker" in user_prompt.lower()
+
+
 def test_embedding_chunk_meeting_empty_when_no_attachments(data_dir, meeting_id):
     """No attachments folder is fine — no attachment_summary chunks emitted."""
     from meeting_minutes.embeddings import EmbeddingEngine
