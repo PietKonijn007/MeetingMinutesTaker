@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Optional
 
 from sqlalchemy import text
@@ -11,6 +13,47 @@ from sqlalchemy.orm import Session
 
 from meeting_minutes.models import SearchQuery, SearchResult, SearchResults
 from meeting_minutes.system3.db import MeetingORM
+
+_LOG = logging.getLogger(__name__)
+
+
+def _gather_attachment_text_for_fts(data_dir: Path, meeting_id: str) -> str:
+    """Concatenate per-attachment extracted text for FTS indexing.
+
+    Reads every sidecar under ``data/attachments/{meeting_id}/`` and
+    returns ``"### {title}\\n\\n{extracted_body}"`` blocks joined by
+    blank lines. Best-effort: a malformed sidecar is logged and
+    skipped, never blocks indexing.
+
+    Returns the LLM summary too — it lives in the same sidecar — but
+    not as a separate block since the summary is also already in the
+    rendered minutes (via the post-appended ``## Attachments`` section).
+    The duplication is fine for FTS; the user's keyword query just
+    matches both occurrences.
+    """
+    folder = data_dir / "attachments" / meeting_id
+    if not folder.exists():
+        return ""
+
+    # Lazy import: search.py is imported by the API layer at startup,
+    # but the attachments module pulls in pypdf / Pillow that aren't
+    # always desirable to load there (slower cold start, optional dep
+    # cascades). Defer until we actually need to read sidecars.
+    from meeting_minutes.attachments.sidecar import parse_attachment_sidecar
+
+    blocks: list[str] = []
+    for sidecar_path in sorted(folder.glob("*.md")):
+        try:
+            parsed = parse_attachment_sidecar(sidecar_path)
+        except Exception as exc:  # noqa: BLE001
+            _LOG.warning("Could not parse sidecar %s for FTS: %s", sidecar_path, exc)
+            continue
+        title = parsed.frontmatter.get("title", "Untitled attachment")
+        body = parsed.extracted.strip()
+        if not body:
+            continue
+        blocks.append(f"### {title}\n\n{body}")
+    return "\n\n".join(blocks)
 
 
 class SearchEngine:
@@ -173,8 +216,27 @@ class SearchEngine:
         except Exception:
             return ""
 
-    def reindex_meeting(self, meeting_id: str) -> None:
-        """Reindex a meeting in the FTS table."""
+    def reindex_meeting(
+        self,
+        meeting_id: str,
+        *,
+        data_dir: Path | None = None,
+    ) -> None:
+        """Reindex a meeting in the FTS table.
+
+        Attachment extracted text is concatenated into the ``minutes_text``
+        column so keyword search hits the body of attached PDFs / DOCX /
+        OCR'd images, not just the LLM's summary of them. We don't add a
+        new FTS column — that would require a schema migration to drop
+        and recreate the virtual table — and the visible search snippet
+        is fine carrying attachment content (it tells the user where
+        the match came from).
+
+        ``data_dir`` is optional: when omitted, attachment indexing is
+        skipped (used by tests that don't care about attachments).
+        Production callers go through :class:`MinutesIngester` which
+        passes ``data_dir`` explicitly.
+        """
         meeting = self._session.get(MeetingORM, meeting_id)
         if meeting is None:
             return
@@ -186,6 +248,14 @@ class SearchEngine:
         minutes_text = ""
         if meeting.minutes:
             minutes_text = meeting.minutes.markdown_content or ""
+
+        if data_dir is not None:
+            attachment_text = _gather_attachment_text_for_fts(data_dir, meeting_id)
+            if attachment_text:
+                minutes_text = (
+                    f"{minutes_text}\n\n--- ATTACHMENT BODIES ---\n\n"
+                    f"{attachment_text}"
+                )
 
         self._session.execute(
             text("DELETE FROM meetings_fts WHERE meeting_id = :mid"),

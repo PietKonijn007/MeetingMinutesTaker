@@ -245,6 +245,42 @@ class EmbeddingEngine:
             except Exception as exc:
                 logger.warning("Failed to chunk transcript for %s: %s", meeting_id, exc)
 
+        # --- Attachment summary chunks ---
+        # Each ready attachment contributes one chunk: its LLM-generated
+        # summary, prefixed with the attachment title so chat citations
+        # render meaningfully ("[Attachment: Q3 forecast deck] ..."). We
+        # embed the SUMMARY, not the full extracted text — the summary
+        # is the curated/grounded version, and OCR garbage in the raw
+        # extract would pollute semantic search. Full extracted text is
+        # already searchable via FTS5 (the keyword path).
+        attachment_dir = data_dir / "attachments" / meeting_id
+        if attachment_dir.exists():
+            try:
+                from meeting_minutes.attachments.sidecar import (
+                    parse_attachment_sidecar,
+                )
+
+                for sidecar_path in sorted(attachment_dir.glob("*.md")):
+                    parsed = parse_attachment_sidecar(sidecar_path)
+                    fm = parsed.frontmatter
+                    if fm.get("summary_status") != "ready":
+                        continue
+                    summary = parsed.summary.strip()
+                    if not summary:
+                        continue
+                    title = fm.get("title", "Untitled attachment")
+                    chunks.append({
+                        "meeting_id": meeting_id,
+                        "chunk_type": "attachment_summary",
+                        "speaker": None,
+                        "text": f"[Attachment: {title}] {summary}",
+                        "meeting_date": meeting_date,
+                        "meeting_type": meeting_type,
+                        "owner": None,
+                    })
+            except Exception as exc:
+                logger.warning("Failed to chunk attachments for %s: %s", meeting_id, exc)
+
         return chunks
 
     # ------------------------------------------------------------------

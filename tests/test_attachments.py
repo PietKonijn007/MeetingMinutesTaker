@@ -1723,6 +1723,153 @@ def test_append_attachments_section_handles_errored_summary(tmp_path):
     assert "Summary failed" in md
 
 
+# ---------------------------------------------------------------------------
+# FTS5 + embeddings (phase 2)
+# ---------------------------------------------------------------------------
+
+
+def test_fts_reindex_includes_attachment_extracted_text(
+    session_factory, data_dir, meeting_id,
+):
+    """Keyword search should hit content from attached PDFs / DOCX / OCR."""
+    from meeting_minutes.system3.search import SearchEngine
+    from sqlalchemy import text as sql_text
+
+    # Seed two sidecars under the meeting's attachment folder. Each
+    # carries a unique phrase so we can prove FTS sees it.
+    _seed_sidecar(
+        data_dir, meeting_id,
+        attachment_id="att-pdf",
+        title="Forecast deck",
+        extracted="ARR landed at $12.7M zorblaxsentinel.",
+        summary="Brief.",
+    )
+    _seed_sidecar(
+        data_dir, meeting_id,
+        attachment_id="att-doc",
+        title="Risks memo",
+        extracted="Mention of EMEA renewal slippage gronkulussentinel.",
+        summary="Brief.",
+    )
+
+    # Minimal meeting+minutes row so reindex_meeting has somewhere to
+    # write FTS rows for. Skip the full storage layer — direct ORM
+    # writes are enough for this test.
+    from meeting_minutes.system3.db import MinutesORM
+
+    session = session_factory()
+    try:
+        m = session.get(MeetingORM, meeting_id)
+        m.minutes = MinutesORM(
+            meeting_id=meeting_id,
+            minutes_id="mid-1",
+            markdown_content="# Test minutes\nbody body body.",
+            summary="x",
+            generated_at=datetime.now(timezone.utc),
+            llm_model="x",
+        )
+        session.commit()
+
+        engine = SearchEngine(session)
+        engine.reindex_meeting(meeting_id, data_dir=data_dir)
+
+        # Look up via the FTS table directly to avoid the rest of the
+        # SearchEngine surface (filters, ranking) — just prove the text
+        # is in the index.
+        for keyword in ("zorblaxsentinel", "gronkulussentinel"):
+            row = session.execute(
+                sql_text(
+                    "SELECT meeting_id FROM meetings_fts "
+                    "WHERE meetings_fts MATCH :q"
+                ),
+                {"q": keyword},
+            ).fetchone()
+            assert row is not None, f"FTS missed {keyword!r}"
+            assert row[0] == meeting_id
+    finally:
+        session.close()
+
+
+def test_fts_reindex_without_data_dir_skips_attachments(
+    session_factory, data_dir, meeting_id,
+):
+    """Existing callers that don't pass data_dir keep working unchanged."""
+    from meeting_minutes.system3.search import SearchEngine
+    from meeting_minutes.system3.db import MinutesORM
+
+    _seed_sidecar(
+        data_dir, meeting_id,
+        attachment_id="att-x",
+        title="t", extracted="shouldnotbeindexedsentinel", summary="x",
+    )
+
+    session = session_factory()
+    try:
+        session.get(MeetingORM, meeting_id).minutes = MinutesORM(
+            meeting_id=meeting_id, minutes_id="mid-2",
+            markdown_content="just minutes body", summary="x",
+            generated_at=datetime.now(timezone.utc), llm_model="x",
+        )
+        session.commit()
+
+        engine = SearchEngine(session)
+        engine.reindex_meeting(meeting_id)  # data_dir omitted
+
+        from sqlalchemy import text as sql_text
+        row = session.execute(
+            sql_text("SELECT 1 FROM meetings_fts WHERE meetings_fts MATCH :q"),
+            {"q": "shouldnotbeindexedsentinel"},
+        ).fetchone()
+        assert row is None
+    finally:
+        session.close()
+
+
+def test_embedding_chunk_meeting_includes_attachment_summaries(data_dir, meeting_id):
+    """Ready attachments contribute one chunk_type='attachment_summary' chunk each."""
+    from meeting_minutes.embeddings import EmbeddingEngine
+
+    # Two ready, one pending — only the ready ones should be embedded.
+    _seed_sidecar(
+        data_dir, meeting_id,
+        attachment_id="a-ready-1", title="Q3 forecast",
+        summary="Q3 ARR landed at $12.7M.",
+        summary_status="ready",
+    )
+    _seed_sidecar(
+        data_dir, meeting_id,
+        attachment_id="a-ready-2", title="Risks memo",
+        summary="EMEA renewal risk.",
+        summary_status="ready",
+    )
+    _seed_sidecar(
+        data_dir, meeting_id,
+        attachment_id="a-pending", title="Pending one",
+        summary="", summary_status="pending",
+    )
+
+    engine = EmbeddingEngine.__new__(EmbeddingEngine)  # skip model load
+    chunks = engine.chunk_meeting(meeting_id, data_dir)
+
+    attachment_chunks = [c for c in chunks if c["chunk_type"] == "attachment_summary"]
+    assert len(attachment_chunks) == 2
+    titles_seen = {c["text"].split("]")[0] for c in attachment_chunks}
+    assert "[Attachment: Q3 forecast" in titles_seen
+    assert "[Attachment: Risks memo" in titles_seen
+    # Pending attachment is NOT embedded — its summary would be empty,
+    # and embedding empty/draft text would pollute chat retrieval.
+    assert all("Pending one" not in c["text"] for c in attachment_chunks)
+
+
+def test_embedding_chunk_meeting_empty_when_no_attachments(data_dir, meeting_id):
+    """No attachments folder is fine — no attachment_summary chunks emitted."""
+    from meeting_minutes.embeddings import EmbeddingEngine
+
+    engine = EmbeddingEngine.__new__(EmbeddingEngine)
+    chunks = engine.chunk_meeting(meeting_id, data_dir)
+    assert all(c["chunk_type"] != "attachment_summary" for c in chunks)
+
+
 def test_append_attachments_section_empty_strips_stale_block(tmp_path):
     """Calling with no entries removes any prior section but doesn't add a new one."""
     minutes_dir = tmp_path / "data" / "minutes"
