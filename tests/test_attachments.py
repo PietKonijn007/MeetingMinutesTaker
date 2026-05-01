@@ -36,7 +36,10 @@ from meeting_minutes.attachments import worker as worker_mod
 from meeting_minutes.attachments.extractors import (
     ExtractionError,
     extract,
+    extract_docx,
+    extract_image,
     extract_pdf,
+    extract_pptx,
 )
 from meeting_minutes.attachments.storage import DuplicateAttachment
 from meeting_minutes.attachments.summarizer import (
@@ -256,6 +259,226 @@ def test_extract_unknown_mime_raises(tmp_path):
     path.write_bytes(b"whatever")
     with pytest.raises(ExtractionError):
         extract(path, "application/x-unknown")
+
+
+# ---------------------------------------------------------------------------
+# DOCX extractor
+# ---------------------------------------------------------------------------
+
+
+def _build_docx(path: Path, *, paragraphs: list[str], table_rows: list[list[str]] | None = None) -> None:
+    """Helper: write a real DOCX with the given paragraphs + an optional table."""
+    from docx import Document  # type: ignore
+
+    doc = Document()
+    for p in paragraphs:
+        doc.add_paragraph(p)
+    if table_rows:
+        table = doc.add_table(rows=len(table_rows), cols=len(table_rows[0]))
+        for ri, row in enumerate(table_rows):
+            for ci, cell_text in enumerate(row):
+                table.rows[ri].cells[ci].text = cell_text
+    doc.save(str(path))
+
+
+def test_extract_docx_returns_paragraphs_in_order(tmp_path):
+    path = tmp_path / "doc.docx"
+    _build_docx(path, paragraphs=["First paragraph.", "Second paragraph."])
+
+    text, method = extract_docx(path)
+    assert method == "docx"
+    assert text.index("First paragraph.") < text.index("Second paragraph.")
+
+
+def test_extract_docx_renders_table_as_markdown(tmp_path):
+    path = tmp_path / "with_table.docx"
+    _build_docx(
+        path,
+        paragraphs=["Lead paragraph."],
+        table_rows=[
+            ["Name", "Owner"],
+            ["Migration", "Alice"],
+            ["Rollout", "Bob"],
+        ],
+    )
+
+    text, method = extract_docx(path)
+    assert method == "docx"
+    # Table renders as `| col | col |`-style rows; verify content survived.
+    assert "| Name | Owner |" in text
+    assert "| Migration | Alice |" in text
+    assert "| Rollout | Bob |" in text
+
+
+def test_extract_docx_dispatch(tmp_path):
+    path = tmp_path / "via_dispatch.docx"
+    _build_docx(path, paragraphs=["dispatched"])
+    text, method = extract(
+        path,
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    )
+    assert "dispatched" in text
+    assert method == "docx"
+
+
+# ---------------------------------------------------------------------------
+# PPTX extractor
+# ---------------------------------------------------------------------------
+
+
+def _build_pptx(
+    path: Path,
+    *,
+    slides: list[tuple[str, list[str], str | None]],  # (title, body_lines, notes)
+) -> None:
+    """Helper: build a real PPTX with title-only slides plus notes."""
+    from pptx import Presentation  # type: ignore
+
+    prs = Presentation()
+    blank_layout = prs.slide_layouts[5]  # title-only layout
+    for title, body_lines, notes in slides:
+        slide = prs.slides.add_slide(blank_layout)
+        if title and slide.shapes.title is not None:
+            slide.shapes.title.text = title
+        if body_lines:
+            # Add a separate text box for body content.
+            from pptx.util import Inches  # type: ignore
+
+            tx = slide.shapes.add_textbox(
+                Inches(1), Inches(2), Inches(8), Inches(4)
+            ).text_frame
+            tx.text = body_lines[0]
+            for extra in body_lines[1:]:
+                tx.add_paragraph().text = extra
+        if notes:
+            slide.notes_slide.notes_text_frame.text = notes
+    prs.save(str(path))
+
+
+def test_extract_pptx_includes_titles_bodies_and_notes(tmp_path):
+    path = tmp_path / "deck.pptx"
+    _build_pptx(
+        path,
+        slides=[
+            ("Q3 forecast", ["ARR landed at $12.7M", "EMEA mid-market drove growth"], "Talk about EMEA wins"),
+            ("Risks", ["Renewals slipping in APAC"], None),
+        ],
+    )
+
+    text, method = extract_pptx(path)
+    assert method == "pptx"
+    # Slide markers + titles
+    assert "--- Slide 1: Q3 forecast ---" in text
+    assert "--- Slide 2: Risks ---" in text
+    # Body content survives
+    assert "$12.7M" in text
+    assert "EMEA mid-market drove growth" in text
+    assert "Renewals slipping in APAC" in text
+    # Speaker notes carry through with a label so the LLM knows what they are
+    assert "Speaker notes:" in text
+    assert "Talk about EMEA wins" in text
+
+
+def test_extract_pptx_blank_slide_renders_placeholder(tmp_path):
+    path = tmp_path / "thin.pptx"
+    _build_pptx(path, slides=[("Title only", [], None)])
+
+    text, _ = extract_pptx(path)
+    assert "--- Slide 1: Title only ---" in text
+    assert "no text content" in text
+
+
+# ---------------------------------------------------------------------------
+# Image OCR
+# ---------------------------------------------------------------------------
+
+
+def _build_image(path: Path, color=(255, 255, 255), size=(100, 50)) -> None:
+    """Helper: write a tiny PNG so we have an image file on disk."""
+    from PIL import Image  # type: ignore
+
+    Image.new("RGB", size, color=color).save(str(path), format="PNG")
+
+
+def test_extract_image_uses_ocr_method(tmp_path, monkeypatch):
+    """Image OCR happy path with pytesseract stubbed out — no binary needed."""
+    import pytesseract  # type: ignore
+
+    path = tmp_path / "screenshot.png"
+    _build_image(path)
+
+    monkeypatch.setattr(pytesseract, "get_tesseract_version", lambda: "5.0.0")
+    monkeypatch.setattr(
+        pytesseract, "image_to_string", lambda img, **kw: "OCR'd line one\nLine two"
+    )
+
+    text, method = extract_image(path)
+    assert method == "ocr"
+    assert "OCR'd line one" in text
+    assert "Line two" in text
+
+
+def test_extract_image_dispatch_via_mime(tmp_path, monkeypatch):
+    """Dispatcher routes image/* mime to extract_image."""
+    import pytesseract  # type: ignore
+
+    path = tmp_path / "x.png"
+    _build_image(path)
+    monkeypatch.setattr(pytesseract, "get_tesseract_version", lambda: "5.0.0")
+    monkeypatch.setattr(pytesseract, "image_to_string", lambda img, **kw: "ok")
+
+    text, method = extract(path, "image/png")
+    assert method == "ocr"
+    assert text == "ok"
+
+
+def test_extract_image_missing_binary_raises_with_install_hint(tmp_path, monkeypatch):
+    """When tesseract isn't on PATH, surface a clear error — not a stack trace."""
+    import pytesseract  # type: ignore
+
+    path = tmp_path / "x.png"
+    _build_image(path)
+
+    def _boom():
+        raise EnvironmentError("tesseract is not installed")
+
+    monkeypatch.setattr(pytesseract, "get_tesseract_version", _boom)
+
+    with pytest.raises(ExtractionError) as exc_info:
+        extract_image(path)
+    assert "tesseract" in str(exc_info.value).lower()
+    assert "brew install tesseract" in str(exc_info.value)
+
+
+def test_extract_image_empty_result_is_not_an_error(tmp_path, monkeypatch):
+    """A blank image OCR'ing to nothing is valid — return empty string, no raise."""
+    import pytesseract  # type: ignore
+
+    path = tmp_path / "blank.png"
+    _build_image(path)
+
+    monkeypatch.setattr(pytesseract, "get_tesseract_version", lambda: "5.0.0")
+    monkeypatch.setattr(pytesseract, "image_to_string", lambda img, **kw: "")
+
+    text, method = extract_image(path)
+    assert text == ""
+    assert method == "ocr"
+
+
+def test_extract_image_ocr_failure_wraps_to_extraction_error(tmp_path, monkeypatch):
+    import pytesseract  # type: ignore
+
+    path = tmp_path / "x.png"
+    _build_image(path)
+    monkeypatch.setattr(pytesseract, "get_tesseract_version", lambda: "5.0.0")
+
+    def _raise(img, **kw):
+        raise RuntimeError("OCR engine crashed")
+
+    monkeypatch.setattr(pytesseract, "image_to_string", _raise)
+    with pytest.raises(ExtractionError) as exc_info:
+        extract_image(path)
+    assert "OCR failed" in str(exc_info.value)
 
 
 # ---------------------------------------------------------------------------

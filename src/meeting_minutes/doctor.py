@@ -469,13 +469,50 @@ def check_weasyprint() -> CheckResult:
     )
 
 
+def check_tesseract() -> CheckResult:
+    """Check 12 — tesseract binary present for image OCR (spec/09).
+
+    Image attachments need OCR to produce extracted text the summarizer
+    can ground on. Both failure modes (Python wrapper missing, binary
+    missing) surface as ``warn`` — image uploads still succeed, the
+    user just gets an extraction error per image until they fix it.
+    """
+    try:
+        import pytesseract  # type: ignore  # noqa: F401
+    except ImportError as exc:
+        return CheckResult(
+            name="tesseract",
+            status="warn",
+            detail=f"pytesseract package not installed: {exc}",
+            fix_hint="Image OCR unavailable. Run: pip install pytesseract",
+            fix_command="pip install pytesseract",
+        )
+    binary = shutil.which("tesseract")
+    if not binary:
+        return CheckResult(
+            name="tesseract",
+            status="warn",
+            detail="tesseract binary not on PATH",
+            fix_hint=(
+                "Image attachments will fail to extract text. Install "
+                "tesseract (macOS): brew install tesseract"
+            ),
+            fix_command="brew install tesseract",
+        )
+    return CheckResult(
+        name="tesseract",
+        status="ok",
+        detail=f"tesseract at {binary}",
+    )
+
+
 # ---------------------------------------------------------------------------
 # Public entry point
 # ---------------------------------------------------------------------------
 
 
 def run_checks(config: AppConfig) -> list[CheckResult]:
-    """Run all eleven diagnostic checks in order."""
+    """Run all twelve diagnostic checks in order."""
     return [
         check_python_version(),
         check_ffmpeg(),
@@ -488,4 +525,5 @@ def run_checks(config: AppConfig) -> list[CheckResult]:
         check_whisper_model(config),
         check_sqlite_vec(),
         check_weasyprint(),
+        check_tesseract(),
     ]

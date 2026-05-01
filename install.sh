@@ -70,6 +70,20 @@ else
     fi
 fi
 
+# ─── Install tesseract (required for image OCR on attachments) ───────
+echo -e "${BOLD}[2.6/10] Checking tesseract (required for image attachment OCR)...${NC}"
+if command -v tesseract &>/dev/null; then
+    echo -e "  ${GREEN}✓${NC} tesseract is installed"
+else
+    echo -e "  ${YELLOW}! tesseract not found. Installing via Homebrew...${NC}"
+    if command -v brew &>/dev/null; then
+        brew install tesseract && echo -e "  ${GREEN}✓${NC} tesseract installed" || \
+            echo -e "  ${YELLOW}! tesseract install failed (image attachment OCR will not work)${NC}"
+    else
+        echo -e "  ${YELLOW}! Homebrew not found. Install tesseract manually for image OCR to work.${NC}"
+    fi
+fi
+
 # ─── Install WeasyPrint native deps (required for PDF export) ────────
 echo -e "${BOLD}[2.7/10] Checking WeasyPrint native libs (required for PDF export)...${NC}"
 if [ "$(uname -s)" = "Darwin" ]; then
