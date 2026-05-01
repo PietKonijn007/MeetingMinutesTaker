@@ -12,11 +12,62 @@
   let peopleIds = $state([]);
   let meetingType = $state(null);
 
+  // Attendee picker state.
+  let allPeople = $state([]);            // every PersonORM the API knows about
+  let selectedPeople = $state([]);       // [{ person_id, name, email }]
+  let attendeeQuery = $state('');        // search text in the picker
+  let pickerOpen = $state(false);
+
   // BRF-2 inputs — topic and focus_items.
   let topic = $state('');
   let focusText = $state(''); // multi-line; one focus item per non-empty line
   let regenerating = $state(false);
   let downloading = $state(false);
+
+  const filteredPeople = $derived.by(() => {
+    const selectedIds = new Set(selectedPeople.map(p => p.person_id));
+    const q = attendeeQuery.trim().toLowerCase();
+    return allPeople
+      .filter(p => !selectedIds.has(p.person_id))
+      .filter(p => {
+        if (!q) return true;
+        return (p.name || '').toLowerCase().includes(q) ||
+               (p.email || '').toLowerCase().includes(q);
+      })
+      .slice(0, 20);
+  });
+
+  function addAttendee(person) {
+    if (selectedPeople.some(p => p.person_id === person.person_id)) return;
+    selectedPeople = [...selectedPeople, person];
+    peopleIds = selectedPeople.map(p => p.person_id);
+    attendeeQuery = '';
+  }
+
+  function removeAttendee(personId) {
+    selectedPeople = selectedPeople.filter(p => p.person_id !== personId);
+    peopleIds = selectedPeople.map(p => p.person_id);
+  }
+
+  async function reloadBriefForCurrentSelection() {
+    if (peopleIds.length === 0) {
+      brief = null;
+      return;
+    }
+    loading = true;
+    try {
+      // No topic/focus → BRF-1 fast path.
+      brief = await api.getBriefing(peopleIds, meetingType);
+      title = brief.suggested_start?.title || '';
+      selectedType = brief.suggested_start?.meeting_type || 'other';
+      attendeesText = (brief.suggested_start?.attendee_labels || []).join(', ');
+      carryNote = brief.suggested_start?.carry_forward_note || '';
+    } catch (e) {
+      addToast(`Could not load briefing: ${e.message}`, 'error');
+    } finally {
+      loading = false;
+    }
+  }
 
   // Start Recording panel state
   let title = $state('');
@@ -41,6 +92,17 @@
     topic = sp.get('topic') || '';
     const focusFromUrl = sp.getAll('focus');
     if (focusFromUrl.length) focusText = focusFromUrl.join('\n');
+
+    // Load the directory in parallel — needed both for the picker and to
+    // resolve URL-supplied person ids into full attendee cards.
+    try {
+      allPeople = await api.getPeople();
+    } catch (e) {
+      addToast(`Could not load people directory: ${e.message}`, 'error');
+      allPeople = [];
+    }
+    const byId = new Map(allPeople.map(p => [p.person_id, p]));
+    selectedPeople = peopleIds.map(pid => byId.get(pid)).filter(Boolean);
 
     if (peopleIds.length === 0) {
       loading = false;
@@ -163,6 +225,76 @@
     Everything you should know before you walk in, plus a shortcut to start recording.
   </p>
 
+  <!-- Attendee picker — always visible so the user can grow / shrink the
+       attendee set without leaving the page. -->
+  <section class="bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg p-5 mb-4">
+    <h2 class="text-sm font-semibold uppercase tracking-wide text-[var(--text-secondary)] mb-3">
+      Attendees
+    </h2>
+
+    {#if selectedPeople.length > 0}
+      <div class="flex flex-wrap gap-2 mb-3">
+        {#each selectedPeople as p}
+          <span class="inline-flex items-center gap-1.5 px-3 py-1 text-sm rounded-full bg-[var(--accent)]/10 text-[var(--text-primary)]">
+            {p.name}
+            <button
+              type="button"
+              onclick={() => removeAttendee(p.person_id)}
+              aria-label={`Remove ${p.name}`}
+              class="ml-1 -mr-0.5 w-4 h-4 inline-flex items-center justify-center rounded-full hover:bg-[var(--accent)]/30 text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+            >
+              ×
+            </button>
+          </span>
+        {/each}
+        <button
+          type="button"
+          onclick={reloadBriefForCurrentSelection}
+          disabled={loading}
+          class="px-2 py-1 text-xs rounded-lg border border-[var(--border-subtle)] text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] disabled:opacity-50"
+        >
+          Refresh
+        </button>
+      </div>
+    {:else}
+      <p class="text-sm text-[var(--text-secondary)] mb-3">
+        Pick the people you'll be meeting with — start typing a name or email.
+      </p>
+    {/if}
+
+    <div class="relative">
+      <input
+        type="text"
+        bind:value={attendeeQuery}
+        onfocus={() => (pickerOpen = true)}
+        onblur={() => setTimeout(() => (pickerOpen = false), 150)}
+        placeholder="Add attendee — search by name or email"
+        class="w-full px-3 py-2 text-sm rounded border border-[var(--border-subtle)] bg-[var(--bg-primary)] text-[var(--text-primary)]"
+      />
+      {#if pickerOpen && filteredPeople.length > 0}
+        <ul class="absolute z-10 left-0 right-0 mt-1 max-h-72 overflow-y-auto bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg shadow-lg">
+          {#each filteredPeople as p}
+            <li>
+              <button
+                type="button"
+                onmousedown={(e) => { e.preventDefault(); addAttendee(p); }}
+                class="w-full text-left px-3 py-2 text-sm hover:bg-[var(--bg-surface-hover)] text-[var(--text-primary)]"
+              >
+                <span class="font-medium">{p.name}</span>
+                {#if p.email}<span class="text-xs text-[var(--text-secondary)] ml-2">{p.email}</span>{/if}
+              </button>
+            </li>
+          {/each}
+        </ul>
+      {:else if pickerOpen && attendeeQuery.trim() && filteredPeople.length === 0}
+        <div class="absolute z-10 left-0 right-0 mt-1 px-3 py-2 text-sm bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg text-[var(--text-secondary)]">
+          No matching person.
+          <a href="/people" class="text-[var(--accent)] hover:underline ml-1">Create one →</a>
+        </div>
+      {/if}
+    </div>
+  </section>
+
   {#if loading}
     <div class="space-y-3">
       <Skeleton height="64px" />
@@ -172,12 +304,9 @@
   {:else if peopleIds.length === 0}
     <div class="bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg p-6">
       <p class="text-[var(--text-primary)] font-medium mb-2">No attendees selected.</p>
-      <p class="text-sm text-[var(--text-secondary)] mb-4">
-        Open a briefing from a person's profile or from a series page.
+      <p class="text-sm text-[var(--text-secondary)]">
+        Add at least one attendee above to load their pre-meeting context.
       </p>
-      <a href="/people" class="inline-block px-3 py-1.5 text-xs font-medium rounded-lg bg-[var(--accent)] text-white hover:opacity-90">
-        Browse people
-      </a>
     </div>
   {:else if !brief}
     <div class="bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg p-6">
