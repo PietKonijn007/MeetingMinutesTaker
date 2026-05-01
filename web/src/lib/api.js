@@ -212,6 +212,7 @@ export const api = {
   deleteAttachment: (id) => fetch(`/api/attachments/${id}`, { method: 'DELETE' }).then((res) => {
     if (!res.ok && res.status !== 204) throw new Error(`Delete failed: ${res.status}`);
   }),
+  reprocessAttachment: (id) => request(`/attachments/${id}/reprocess`, { method: 'POST' }),
   attachmentRawUrl: (id) => `/api/attachments/${id}/raw`,
 
   // Backups

@@ -22,6 +22,7 @@
    */
   import { api } from '../api.js';
   import { onMount, onDestroy } from 'svelte';
+  import MarkdownRenderer from './MarkdownRenderer.svelte';
 
   let { meetingId, onChanged = () => {}, enablePaste = true } = $props();
 
@@ -145,9 +146,15 @@
     }
   }
 
+  let detailTab = $state('summary');  // 'summary' | 'extracted' | 'metadata'
+  let detailReprocessing = $state(false);
+  let detailCopyConfirm = $state(false);
+
   async function openDetail(att) {
     detail = { ...att, summary: '', extracted_text: '', loading: true };
     detailLoading = true;
+    detailTab = 'summary';
+    detailCopyConfirm = false;
     try {
       const full = await api.getAttachment(att.attachment_id);
       detail = full;
@@ -160,6 +167,34 @@
 
   function closeDetail() {
     detail = null;
+  }
+
+  async function reprocessFromDetail() {
+    if (!detail) return;
+    detailReprocessing = true;
+    try {
+      await api.reprocessAttachment(detail.attachment_id);
+      // Close the modal — the row in the list will start polling again
+      // and the user can re-open once it's ready.
+      closeDetail();
+      await refresh();
+    } catch (e) {
+      alert(`Reprocess failed: ${e.message || e}`);
+    } finally {
+      detailReprocessing = false;
+    }
+  }
+
+  async function copySummary() {
+    if (!detail?.summary) return;
+    try {
+      await navigator.clipboard.writeText(detail.summary);
+      detailCopyConfirm = true;
+      setTimeout(() => (detailCopyConfirm = false), 1500);
+    } catch {
+      // Clipboard API requires HTTPS or localhost — silently no-op
+      // if it's blocked.
+    }
   }
 
   function formatBytes(n) {
@@ -393,12 +428,12 @@
 -->
 {#if detail}
   <div
-    class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+    class="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"
     onclick={closeDetail}
     role="presentation"
   >
     <div
-      class="bg-[var(--bg-base)] border border-[var(--border-subtle)] rounded-lg max-w-3xl w-full max-h-[85vh] overflow-hidden flex flex-col"
+      class="bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-xl shadow-2xl max-w-5xl w-full max-h-[88vh] overflow-hidden flex flex-col"
       role="dialog"
       aria-modal="true"
       aria-label={detail.title}
@@ -406,47 +441,176 @@
       onclick={(e) => e.stopPropagation()}
       onkeydown={(e) => e.stopPropagation()}
     >
-      <div class="px-4 py-3 border-b border-[var(--border-subtle)] flex items-center justify-between">
-        <div>
-          <div class="text-sm font-semibold text-[var(--text-primary)]">{detail.title}</div>
-          <div class="text-[11px] text-[var(--text-muted)]">
-            {detail.kind} ·
-            {#if detail.url}<a href={detail.url} target="_blank" rel="noopener" class="hover:text-[var(--accent)]">{detail.url}</a>
-            {:else}{detail.original_filename || ''}{/if}
+      <!-- Sticky header: title + toolbar (Open · Reprocess · Copy · Close) -->
+      <div class="sticky top-0 z-10 px-6 py-4 border-b border-[var(--border-subtle)] bg-[var(--bg-surface)] flex items-start justify-between gap-4">
+        <div class="min-w-0 flex-1">
+          <div class="flex items-center gap-2">
+            <span class="text-2xl leading-none">{kindIcon(detail.kind)}</span>
+            <h2 class="text-base font-semibold text-[var(--text-primary)] truncate">
+              {detail.title}
+            </h2>
+            <span
+              class="text-[10px] px-1.5 py-0.5 rounded border whitespace-nowrap {statusClass(detail.status)}"
+            >
+              {statusLabel(detail.status)}
+            </span>
           </div>
-        </div>
-        <button
-          onclick={closeDetail}
-          class="text-[var(--text-muted)] hover:text-[var(--text-primary)] p-1"
-          aria-label="Close"
-        >
-          ✕
-        </button>
-      </div>
-
-      <div class="flex-1 overflow-y-auto p-4 space-y-4">
-        {#if detailLoading}
-          <div class="text-xs text-[var(--text-muted)]">Loading…</div>
-        {:else}
-          <div>
-            <h4 class="text-xs uppercase tracking-wide text-[var(--text-muted)] mb-2">Summary</h4>
-            {#if detail.summary}
-              <pre class="text-sm text-[var(--text-primary)] whitespace-pre-wrap font-sans">{detail.summary}</pre>
-            {:else if detail.summary_status === 'pending'}
-              <div class="text-xs text-[var(--text-muted)] italic">Summary still being generated…</div>
+          <div class="text-[11px] text-[var(--text-muted)] mt-1 truncate">
+            {#if detail.url}
+              <a href={detail.url} target="_blank" rel="noopener" class="hover:text-[var(--accent)]">{detail.url}</a>
             {:else}
-              <div class="text-xs text-[var(--text-muted)] italic">No summary available.</div>
+              {detail.original_filename || ''}
+              {#if detail.size_bytes != null} · {formatBytes(detail.size_bytes)}{/if}
             {/if}
           </div>
-          {#if detail.extracted_text}
-            <details>
-              <summary class="cursor-pointer text-xs uppercase tracking-wide text-[var(--text-muted)] mb-2">
-                Extracted content ({detail.extracted_text.length.toLocaleString()} chars)
-              </summary>
-              <pre class="text-xs text-[var(--text-muted)] whitespace-pre-wrap font-mono mt-2 p-2 bg-[var(--bg-surface)] rounded max-h-96 overflow-y-auto">{detail.extracted_text}</pre>
-            </details>
+        </div>
+
+        <!-- Toolbar -->
+        <div class="flex items-center gap-1 shrink-0">
+          {#if detail.kind !== 'link'}
+            <a
+              href={api.attachmentRawUrl(detail.attachment_id)}
+              target="_blank"
+              rel="noopener"
+              class="px-2.5 py-1.5 text-xs rounded-md text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-base)] transition-colors"
+              title="Open the original file in a new tab"
+            >
+              Open original
+            </a>
           {/if}
-        {/if}
+          <button
+            onclick={reprocessFromDetail}
+            disabled={detailReprocessing}
+            class="px-2.5 py-1.5 text-xs rounded-md text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-base)] transition-colors disabled:opacity-50"
+            title="Re-run extraction + summarization"
+          >
+            {detailReprocessing ? 'Reprocessing…' : 'Reprocess'}
+          </button>
+          <button
+            onclick={copySummary}
+            disabled={!detail.summary}
+            class="px-2.5 py-1.5 text-xs rounded-md text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-base)] transition-colors disabled:opacity-50"
+            title="Copy summary to clipboard"
+          >
+            {detailCopyConfirm ? '✓ Copied' : 'Copy summary'}
+          </button>
+          <button
+            onclick={closeDetail}
+            class="ml-1 text-[var(--text-muted)] hover:text-[var(--text-primary)] p-1.5 rounded-md hover:bg-[var(--bg-base)] transition-colors"
+            aria-label="Close"
+            title="Close (Esc)"
+          >
+            ✕
+          </button>
+        </div>
+      </div>
+
+      <!-- Two-pane body: metadata sidebar (left) + tabbed content (right) -->
+      <div class="flex-1 overflow-hidden flex">
+        <!-- Sidebar: kind / source / status / extraction method / counts -->
+        <aside class="w-56 shrink-0 border-r border-[var(--border-subtle)] bg-[var(--bg-base)] overflow-y-auto p-4 space-y-4 text-[11px]">
+          <div>
+            <div class="uppercase tracking-wide text-[var(--text-muted)] mb-1">Kind</div>
+            <div class="text-[var(--text-primary)] capitalize">{detail.kind}</div>
+          </div>
+          {#if detail.mime_type}
+            <div>
+              <div class="uppercase tracking-wide text-[var(--text-muted)] mb-1">MIME</div>
+              <div class="text-[var(--text-primary)] font-mono break-all">{detail.mime_type}</div>
+            </div>
+          {/if}
+          {#if detail.size_bytes != null}
+            <div>
+              <div class="uppercase tracking-wide text-[var(--text-muted)] mb-1">Size</div>
+              <div class="text-[var(--text-primary)]">{formatBytes(detail.size_bytes)}</div>
+            </div>
+          {/if}
+          {#if detail.summary_status}
+            <div>
+              <div class="uppercase tracking-wide text-[var(--text-muted)] mb-1">Summary status</div>
+              <div class="text-[var(--text-primary)] capitalize">{detail.summary_status}</div>
+            </div>
+          {/if}
+          {#if detail.extracted_text}
+            <div>
+              <div class="uppercase tracking-wide text-[var(--text-muted)] mb-1">Extracted</div>
+              <div class="text-[var(--text-primary)]">{detail.extracted_text.length.toLocaleString()} chars</div>
+            </div>
+          {/if}
+          {#if detail.caption}
+            <div>
+              <div class="uppercase tracking-wide text-[var(--text-muted)] mb-1">Caption</div>
+              <div class="text-[var(--text-primary)] italic leading-relaxed">{detail.caption}</div>
+            </div>
+          {/if}
+          {#if detail.created_at}
+            <div>
+              <div class="uppercase tracking-wide text-[var(--text-muted)] mb-1">Added</div>
+              <div class="text-[var(--text-primary)]">
+                {new Date(detail.created_at).toLocaleString()}
+              </div>
+            </div>
+          {/if}
+          {#if detail.error}
+            <div class="border-t border-[var(--border-subtle)] pt-3">
+              <div class="uppercase tracking-wide text-red-300 mb-1">Error</div>
+              <div class="text-red-300 leading-relaxed">{detail.error}</div>
+            </div>
+          {/if}
+        </aside>
+
+        <!-- Right pane: tabs + content -->
+        <div class="flex-1 flex flex-col overflow-hidden">
+          <!-- Tab strip -->
+          <div class="px-6 pt-3 border-b border-[var(--border-subtle)] bg-[var(--bg-surface)] flex gap-1">
+            {#each [
+              { key: 'summary', label: 'Summary' },
+              { key: 'extracted', label: detail.extracted_text ? `Extracted (${detail.extracted_text.length.toLocaleString()} chars)` : 'Extracted' },
+            ] as t}
+              <button
+                onclick={() => (detailTab = t.key)}
+                disabled={t.key === 'extracted' && !detail.extracted_text}
+                class="px-3 py-2 text-xs font-medium border-b-2 transition-colors disabled:opacity-40
+                  {detailTab === t.key
+                    ? 'border-[var(--accent)] text-[var(--text-primary)]'
+                    : 'border-transparent text-[var(--text-muted)] hover:text-[var(--text-primary)]'}"
+              >
+                {t.label}
+              </button>
+            {/each}
+          </div>
+
+          <!-- Tab body -->
+          <div class="flex-1 overflow-y-auto px-6 py-5 bg-[var(--bg-surface)]">
+            {#if detailLoading}
+              <div class="text-xs text-[var(--text-muted)]">Loading…</div>
+            {:else if detailTab === 'summary'}
+              {#if detail.summary}
+                <MarkdownRenderer content={detail.summary} />
+              {:else if detail.summary_status === 'pending'}
+                <div class="text-sm text-[var(--text-muted)] italic">
+                  Summary still being generated… The page will refresh automatically.
+                </div>
+              {:else if detail.summary_status === 'error'}
+                <div class="text-sm text-red-300">
+                  Summary generation failed. Try <button
+                    class="underline hover:text-red-200"
+                    onclick={reprocessFromDetail}
+                    disabled={detailReprocessing}
+                  >reprocessing</button>.
+                </div>
+              {:else}
+                <div class="text-sm text-[var(--text-muted)] italic">No summary available.</div>
+              {/if}
+            {:else if detailTab === 'extracted'}
+              {#if detail.extracted_text}
+                <pre class="text-xs text-[var(--text-secondary)] whitespace-pre-wrap font-mono leading-relaxed">{detail.extracted_text}</pre>
+              {:else}
+                <div class="text-sm text-[var(--text-muted)] italic">No extracted text yet.</div>
+              {/if}
+            {/if}
+          </div>
+        </div>
       </div>
     </div>
   </div>

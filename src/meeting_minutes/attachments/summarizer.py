@@ -106,20 +106,36 @@ _TIER_INSTRUCTIONS: dict[SummaryTier, str] = {
     ),
     SummaryTier.LONG: (
         "Produce a DETAILED summary of approximately 250 to 500 words. "
-        "Organize the summary with `###` subheadings that match the document's own "
+        "Organize the summary with `### Subheading` headers that match the document's own "
         "structure (chapters, sections, slide groups, agenda items). Under each "
         "subheading, write a short paragraph or a bullet list. Preserve the original "
-        "structure rather than imposing a different one."
+        "structure rather than imposing a different one.\n\n"
+        "FORMATTING — IMPORTANT:\n"
+        "- Use `### Heading` syntax for each top-level section. Do NOT use "
+        "`**Heading**:` bold-prefix-with-colon — that renders as inline prose, "
+        "not a real heading.\n"
+        "- Bold (`**text**`) is for emphasis WITHIN a paragraph or bullet, not "
+        "for labelling sections.\n"
+        "- Each `###` heading should be on its own line with a blank line "
+        "before and after."
     ),
     SummaryTier.XLONG: (
         "Produce a COMPREHENSIVE summary of approximately 500 to 800 words. "
-        "Organize with `###` subheadings matching the document's own structure. "
+        "Organize with `### Subheading` headers matching the document's own structure. "
         "Under each subheading, write a short paragraph followed by bullet highlights "
         "of the specific facts, numbers, and decisions in that section. "
         "End the summary with two extra subsections — `### Key numbers` (verbatim "
         "list of the most important numeric facts) and `### Key entities` (verbatim "
         "list of the most important people, products, and organizations). "
-        "Skip either if not applicable."
+        "Skip either if not applicable.\n\n"
+        "FORMATTING — IMPORTANT:\n"
+        "- Use `### Heading` syntax for each top-level section. Do NOT use "
+        "`**Heading**:` bold-prefix-with-colon — that renders as inline prose, "
+        "not a real heading.\n"
+        "- Bold (`**text**`) is for emphasis WITHIN a paragraph or bullet, not "
+        "for labelling sections.\n"
+        "- Each `###` heading should be on its own line with a blank line "
+        "before and after."
     ),
 }
 
@@ -232,7 +248,7 @@ async def summarize_attachment(
     system_prompt, user_prompt, tier, truncated = build_summary_prompt(req)
     response = await llm.generate(prompt=user_prompt, system_prompt=system_prompt)
     return SummaryResult(
-        summary_markdown=response.text.strip(),
+        summary_markdown=promote_bold_leads_to_headers(response.text.strip()),
         tier=tier,
         truncated=truncated,
     )
@@ -337,7 +353,7 @@ async def _summarize_via_map_reduce(
     )
     response = await llm.generate(prompt=user_prompt, system_prompt=system_prompt)
     return SummaryResult(
-        summary_markdown=response.text.strip(),
+        summary_markdown=promote_bold_leads_to_headers(response.text.strip()),
         tier=SummaryTier.XLONG,
         truncated=truncated,
     )
@@ -391,3 +407,43 @@ def _maybe_truncate(text: str) -> tuple[str, bool]:
         return text, False
     truncated = text[:_MAX_SINGLE_SHOT_CHARS]
     return truncated + "\n\n[... document truncated ...]", True
+
+
+# Belt-and-braces: when a line is JUST a bold-prefix-with-colon at column 0
+# ("**Foo**:" or "**Foo**:bar"), promote it to a real `### Foo` header so
+# the rendered summary visually separates sections instead of running them
+# together as inline prose. This catches the common LLM output style that
+# slips through the FORMATTING-IMPORTANT block in the prompt.
+import re as _re  # noqa: E402
+
+_BOLD_LEAD_RE = _re.compile(r"^\*\*([^*\n]{1,80})\*\*\s*:\s*(.*)$")
+
+
+def promote_bold_leads_to_headers(markdown: str) -> str:
+    """Rewrite ``**Heading**: body…`` line starts into ``### Heading\\n\\nbody…``.
+
+    Conservative — only fires when the bold-prefix is at the start of a
+    line, contains < 80 chars (avoids matching long bolded sentences),
+    and is followed by a colon. Preserves the body that came after the
+    colon by moving it to its own paragraph beneath the new header.
+    """
+    if not markdown or "**" not in markdown:
+        return markdown
+
+    out: list[str] = []
+    for line in markdown.splitlines():
+        match = _BOLD_LEAD_RE.match(line)
+        if match is None:
+            out.append(line)
+            continue
+        heading = match.group(1).strip()
+        body = match.group(2).strip()
+        # A leading blank line between the previous block and the new
+        # heading is required by markdown for the heading to render.
+        if out and out[-1].strip():
+            out.append("")
+        out.append(f"### {heading}")
+        if body:
+            out.append("")
+            out.append(body)
+    return "\n".join(out)

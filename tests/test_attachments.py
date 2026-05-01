@@ -48,6 +48,7 @@ from meeting_minutes.attachments.summarizer import (
     SummaryTier,
     build_summary_prompt,
     pick_tier,
+    promote_bold_leads_to_headers,
     summarize_attachment,
 )
 from meeting_minutes.config import AppConfig
@@ -1113,6 +1114,60 @@ def test_api_raw_returns_original_bytes(client, meeting_id):
     assert response.content == pdf
 
 
+def test_api_reprocess_resets_status_and_fires_worker(
+    client, session_factory, data_dir, meeting_id, monkeypatch,
+):
+    """POST /reprocess flips status to 'pending' and schedules the worker."""
+    upload = client.post(
+        f"/api/meetings/{meeting_id}/attachments",
+        files={"file": ("doc.pdf", _minimal_pdf_bytes("body"), "application/pdf")},
+    )
+    aid = upload.json()["attachment_id"]
+
+    # Manually set status='ready' so the reprocess flip back to 'pending'
+    # is observable.
+    session = session_factory()
+    try:
+        row = session.get(AttachmentORM, aid)
+        row.status = "ready"
+        session.commit()
+    finally:
+        session.close()
+
+    # Track worker invocations.
+    schedule_calls = []
+    real_schedule = worker_mod.schedule
+
+    def _spy(cfg, attachment_id):
+        schedule_calls.append(attachment_id)
+        # Return a no-op task so the handler can await it.
+        async def _noop():
+            return None
+        return asyncio.get_event_loop().create_task(_noop())
+
+    monkeypatch.setattr(worker_mod, "schedule", _spy)
+
+    response = client.post(f"/api/attachments/{aid}/reprocess")
+    assert response.status_code == 202, response.text
+    payload = response.json()
+    assert payload["attachment_id"] == aid
+
+    # Worker was scheduled with the right id.
+    assert schedule_calls == [aid]
+
+    # Status reset to 'pending'.
+    session = session_factory()
+    try:
+        assert session.get(AttachmentORM, aid).status == "pending"
+    finally:
+        session.close()
+
+
+def test_api_reprocess_unknown_attachment_404(client):
+    response = client.post("/api/attachments/no-such-id/reprocess")
+    assert response.status_code == 404
+
+
 def test_api_delete_removes_row(client, session_factory, data_dir, meeting_id):
     upload = client.post(
         f"/api/meetings/{meeting_id}/attachments",
@@ -1199,6 +1254,90 @@ def test_build_summary_prompt_truncates_oversized_input():
     # We don't blow the prompt up to 200k chars — the tail is replaced.
     assert "[... document truncated ...]" in user
     assert user.count("x") < 110_000
+
+
+def test_long_tier_prompt_emphasizes_headers_over_bold():
+    """Long/xlong tiers explicitly tell the LLM to use ### not **bold**:."""
+    req_long = SummaryRequest(
+        title="t", caption=None, source="x", extraction_method="pdf-text-layer",
+        extracted_text="x" * 6_000,
+    )
+    _, user_long, tier_long, _ = build_summary_prompt(req_long)
+    assert tier_long == SummaryTier.LONG
+    assert "Do NOT use" in user_long and "**Heading**:" in user_long
+    assert "FORMATTING" in user_long.upper()
+
+    req_xlong = SummaryRequest(
+        title="t", caption=None, source="x", extraction_method="pdf-text-layer",
+        extracted_text="x" * 60_000,
+    )
+    _, user_xlong, tier_xlong, _ = build_summary_prompt(req_xlong)
+    assert tier_xlong == SummaryTier.XLONG
+    assert "Do NOT use" in user_xlong and "**Heading**:" in user_xlong
+
+
+# ---------------------------------------------------------------------------
+# promote_bold_leads_to_headers — post-process pass
+# ---------------------------------------------------------------------------
+
+
+def test_promote_bold_leads_lifts_section_labels_to_h3():
+    """`**Heading**: body` at column 0 becomes `### Heading\\n\\nbody`."""
+    src = (
+        "Executive Summary\n"
+        "**Mission**: build a sales engine.\n"
+        "**Impact**: $595M pipeline FY26.\n"
+    )
+    out = promote_bold_leads_to_headers(src)
+    assert "### Mission" in out
+    assert "### Impact" in out
+    assert "build a sales engine." in out
+    assert "$595M pipeline FY26." in out
+    # Inline body survives, on its own line below the header.
+    lines = out.splitlines()
+    mission_idx = next(i for i, l in enumerate(lines) if l.strip() == "### Mission")
+    assert any("build a sales engine." in l for l in lines[mission_idx + 1 : mission_idx + 4])
+
+
+def test_promote_bold_leads_leaves_inline_bolds_alone():
+    """Bolds that are NOT line-leading + colon should stay as-is."""
+    src = (
+        "We discussed the **Q3 forecast** in detail. The team is **on track**\n"
+        "but the **EMEA renewal risk** remains.\n"
+    )
+    out = promote_bold_leads_to_headers(src)
+    # No ### was inserted — the original bolds are mid-sentence.
+    assert "###" not in out
+    assert "**Q3 forecast**" in out
+    assert "**EMEA renewal risk**" in out
+
+
+def test_promote_bold_leads_skips_overly_long_bolds():
+    """Conservative cap: only short bold-prefixes get promoted."""
+    long_bold = "**" + "x" * 100 + "**: body"
+    out = promote_bold_leads_to_headers(long_bold)
+    # 100-char bold exceeds the 80-char cap — stays as-is.
+    assert out == long_bold
+
+
+def test_promote_bold_leads_idempotent():
+    """Running twice produces the same result as running once."""
+    src = "**Mission**: build it.\n**Impact**: ship it.\n"
+    once = promote_bold_leads_to_headers(src)
+    twice = promote_bold_leads_to_headers(once)
+    assert once == twice
+
+
+def test_summarize_attachment_runs_promote_pass():
+    """Even when the LLM emits **Heading**:, summarize_attachment promotes it."""
+    fake = _FakeLLM(response_text="**Mission**: scale revenue.\n**Impact**: $12.7M ARR.")
+    req = SummaryRequest(
+        title="t", caption=None, source="x", extraction_method="pdf-text-layer",
+        extracted_text="some content",
+    )
+    result = asyncio.run(summarize_attachment(fake, req))
+    assert "### Mission" in result.summary_markdown
+    assert "### Impact" in result.summary_markdown
 
 
 def test_build_summary_prompt_ocr_marks_skepticism():

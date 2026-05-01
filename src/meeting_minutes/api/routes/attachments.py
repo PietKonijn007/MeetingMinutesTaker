@@ -347,3 +347,34 @@ async def delete_attachment(
         raise HTTPException(status_code=404, detail=f"No attachment with ID {attachment_id}")
     session.commit()
     return None
+
+
+# ---------------------------------------------------------------------------
+# Reprocess
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/api/attachments/{attachment_id}/reprocess",
+    status_code=status.HTTP_202_ACCEPTED,
+    response_model=AttachmentSummary,
+)
+async def reprocess_attachment(
+    attachment_id: str,
+    config: Annotated[AppConfig, Depends(get_config)],
+    session: Annotated[Session, Depends(get_db_session)],
+):
+    """Re-run extraction + summarization for an existing attachment.
+
+    Useful after editing the title/caption (so the LLM sees the new
+    framing), or simply to retry after a transient error. The on-disk
+    original isn't touched; we just re-fire the worker against it.
+    """
+    row = storage_mod.get(session, attachment_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"No attachment with ID {attachment_id}")
+
+    storage_mod.update_status(session, attachment_id, "pending", error=None)
+    session.commit()
+    worker_mod.schedule(config, attachment_id)
+    return AttachmentSummary.from_orm_row(row)
