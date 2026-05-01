@@ -127,6 +127,37 @@ class BriefSuggestedStart(BaseModel):
     carry_forward_note: str
 
 
+# ---- BRF-2 additions ----
+
+
+class BriefCitation(BaseModel):
+    """A pointer back to a concrete artifact already in the payload.
+
+    ``kind`` says what to look up; ``ref_id`` is the corresponding
+    primary key (action_item_id / decision_id / meeting_id / etc.).
+    """
+
+    kind: str  # action | decision | open_question | excerpt | sentiment | focus
+    ref_id: str
+    meeting_id: str | None = None
+    snippet: str | None = None
+
+
+class BriefFocusFinding(BaseModel):
+    focus: str
+    answer: str
+    citations: list[BriefCitation] = []
+    related_actions: list[str] = []
+    related_decisions: list[str] = []
+
+
+class BriefTalkingPoint(BaseModel):
+    text: str
+    rationale: str
+    citations: list[BriefCitation] = []
+    priority: str = "medium"  # high | medium | low
+
+
 class BriefingPayload(BaseModel):
     people: list[BriefAttendee]
     meeting_type: str | None = None
@@ -138,6 +169,11 @@ class BriefingPayload(BaseModel):
     context_excerpts: list[BriefContextExcerpt]
     suggested_start: BriefSuggestedStart
     summary: str | None = None
+    # BRF-2 — additive, defaults preserve BRF-1 behavior.
+    topic: str | None = None
+    focus_items: list[str] = []
+    focus_findings: list[BriefFocusFinding] = []
+    talking_points: list[BriefTalkingPoint] = []
 
 
 # ---------------------------------------------------------------------------
@@ -537,6 +573,7 @@ def _build_context_excerpts(
     *,
     limit: int = 3,
     window_days: int = 90,
+    topic: str | None = None,
 ) -> list[BriefContextExcerpt]:
     """Section 6 — top-N relevant transcript chunks.
 
@@ -559,8 +596,12 @@ def _build_context_excerpts(
     meeting_date_by_id = {m.meeting_id: m.date for m in meetings}
     meeting_title_by_id = {m.meeting_id: m.title for m in meetings}
 
-    # Build a simple retrieval query from attendee names.
-    query_text = " ".join(p.name for p in people if p.name)[:200]
+    # BRF-2: when a topic is supplied, retrieve by topic instead of
+    # attendee names — that's the whole point of taking a topic.
+    if topic and topic.strip():
+        query_text = topic.strip()[:200]
+    else:
+        query_text = " ".join(p.name for p in people if p.name)[:200]
 
     try:
         from meeting_minutes.embeddings import EmbeddingEngine
@@ -713,21 +754,21 @@ async def _maybe_summarize(
 # ---------------------------------------------------------------------------
 
 
-@router.get("", response_model=BriefingPayload)
-async def get_briefing(
-    session: Annotated[Session, Depends(get_db_session)],
-    config: Annotated[AppConfig, Depends(get_config)],
-    people: list[str] = Query(default=[], alias="people"),
-    type: Optional[str] = Query(default=None, alias="type"),
+async def _build_briefing_payload(
+    session: Session,
+    config: AppConfig,
+    person_ids: list[str],
+    *,
+    meeting_type: str | None,
+    topic: str | None,
+    focus_items: list[str],
 ) -> BriefingPayload:
-    """Return a pre-meeting briefing payload for the given attendee set."""
-    person_ids = [pid for pid in (people or []) if pid]
-    if not person_ids:
-        raise HTTPException(
-            status_code=400,
-            detail="Provide at least one ?people=<person_id> query parameter.",
-        )
+    """Shared core: build a full ``BriefingPayload`` from validated inputs.
 
+    Used by every entry point — GET /api/brief, the /export endpoint, the
+    CLI, etc. Always runs through the BRF-1 sections; BRF-2 additions
+    (focus_findings, talking_points) are layered on additively.
+    """
     resolved = _resolve_people(session, person_ids)
     if not resolved:
         raise HTTPException(
@@ -737,22 +778,28 @@ async def get_briefing(
 
     all_meetings = _meetings_with_any_attendee(session, [p.person_id for p in resolved])
     typed_meetings = (
-        [m for m in all_meetings if m.meeting_type == type]
-        if type
+        [m for m in all_meetings if m.meeting_type == meeting_type]
+        if meeting_type
         else all_meetings
     )
 
     # Fall back to un-typed meetings for history if the type filter removes everything.
     hist_meetings = typed_meetings if typed_meetings else all_meetings
 
-    inferred_type = type or _infer_meeting_type(all_meetings)
+    inferred_type = meeting_type or _infer_meeting_type(all_meetings)
 
     who = _build_who_and_when_last(session, resolved, hist_meetings)
     opens = _build_open_commitments(session, resolved, all_meetings)
     topics = _build_unresolved_topics(session, hist_meetings)
     sentiment = _build_recent_sentiment(session, resolved, hist_meetings)
     decisions = _build_recent_decisions(session, resolved, hist_meetings)
-    excerpts = _build_context_excerpts(session, config, resolved, hist_meetings)
+    excerpts = _build_context_excerpts(
+        session,
+        config,
+        resolved,
+        hist_meetings,
+        topic=topic,
+    )
     suggested = _build_suggested_start(resolved, inferred_type, opens)
 
     payload = BriefingPayload(
@@ -768,6 +815,8 @@ async def get_briefing(
         recent_decisions=decisions,
         context_excerpts=excerpts,
         suggested_start=suggested,
+        topic=(topic.strip() if topic and topic.strip() else None),
+        focus_items=[f.strip() for f in (focus_items or []) if (f or "").strip()],
     )
 
     if config.brief.summarize_with_llm:
@@ -775,4 +824,145 @@ async def get_briefing(
         if summary:
             payload.summary = summary
 
+    # ---- BRF-2 additions ----
+    if payload.focus_items:
+        from meeting_minutes.api.routes.brief_focus import build_focus_findings
+
+        cutoff_iso = (
+            datetime.now(timezone.utc)
+            - timedelta(days=int(config.brief.lookback_days))
+        ).strftime("%Y-%m-%d")
+        attendee_names = [p.name for p in resolved if p.name]
+        payload.focus_findings = await build_focus_findings(
+            config=config,
+            session=session,
+            focus_items=payload.focus_items,
+            history_meetings=hist_meetings,
+            cutoff_iso=cutoff_iso,
+            attendee_names=attendee_names,
+        )
+
+    if config.brief.talking_points_enabled():
+        from meeting_minutes.api.routes.brief_talking_points import (
+            generate_talking_points,
+        )
+
+        payload.talking_points = await generate_talking_points(config, payload)
+
     return payload
+
+
+class BriefRequest(BaseModel):
+    """POST /api/brief request body — supports BRF-2 inputs cleanly."""
+
+    people: list[str]
+    type: Optional[str] = None
+    topic: Optional[str] = None
+    focus_items: list[str] = []
+
+
+@router.get("", response_model=BriefingPayload)
+async def get_briefing(
+    session: Annotated[Session, Depends(get_db_session)],
+    config: Annotated[AppConfig, Depends(get_config)],
+    people: list[str] = Query(default=[], alias="people"),
+    type: Optional[str] = Query(default=None, alias="type"),
+    topic: Optional[str] = Query(default=None, alias="topic"),
+    focus: list[str] = Query(default=[], alias="focus"),
+) -> BriefingPayload:
+    """Return a pre-meeting briefing payload for the given attendee set.
+
+    BRF-1 query params (``people``, ``type``) keep working unchanged.
+    BRF-2 adds ``topic`` and repeated ``focus`` query params; for many
+    focus items prefer ``POST /api/brief`` with a JSON body.
+    """
+    person_ids = [pid for pid in (people or []) if pid]
+    if not person_ids:
+        raise HTTPException(
+            status_code=400,
+            detail="Provide at least one ?people=<person_id> query parameter.",
+        )
+
+    return await _build_briefing_payload(
+        session=session,
+        config=config,
+        person_ids=person_ids,
+        meeting_type=type,
+        topic=topic,
+        focus_items=list(focus or []),
+    )
+
+
+@router.post("", response_model=BriefingPayload)
+async def post_briefing(
+    body: BriefRequest,
+    session: Annotated[Session, Depends(get_db_session)],
+    config: Annotated[AppConfig, Depends(get_config)],
+) -> BriefingPayload:
+    """JSON-body variant — easier to call with multi-line focus items."""
+    person_ids = [pid for pid in (body.people or []) if pid]
+    if not person_ids:
+        raise HTTPException(
+            status_code=400,
+            detail="Provide at least one person_id in 'people'.",
+        )
+    return await _build_briefing_payload(
+        session=session,
+        config=config,
+        person_ids=person_ids,
+        meeting_type=body.type,
+        topic=body.topic,
+        focus_items=list(body.focus_items or []),
+    )
+
+
+# ---------------------------------------------------------------------------
+# BRF-2 — markdown export
+# ---------------------------------------------------------------------------
+
+
+@router.get("/export")
+async def export_briefing(
+    session: Annotated[Session, Depends(get_db_session)],
+    config: Annotated[AppConfig, Depends(get_config)],
+    people: list[str] = Query(default=[], alias="people"),
+    type: Optional[str] = Query(default=None, alias="type"),
+    topic: Optional[str] = Query(default=None, alias="topic"),
+    focus: list[str] = Query(default=[], alias="focus"),
+    format: str = Query(default="md", alias="format"),
+):
+    """Return the brief as a downloadable file (md or json)."""
+    from fastapi.responses import PlainTextResponse, JSONResponse
+
+    person_ids = [pid for pid in (people or []) if pid]
+    if not person_ids:
+        raise HTTPException(
+            status_code=400,
+            detail="Provide at least one ?people=<person_id> query parameter.",
+        )
+    if format not in ("md", "json"):
+        raise HTTPException(
+            status_code=400,
+            detail="format must be 'md' or 'json'.",
+        )
+
+    payload = await _build_briefing_payload(
+        session=session,
+        config=config,
+        person_ids=person_ids,
+        meeting_type=type,
+        topic=topic,
+        focus_items=list(focus or []),
+    )
+
+    if format == "json":
+        return JSONResponse(content=payload.model_dump())
+
+    from meeting_minutes.api.routes.brief_export import render_markdown
+
+    md = render_markdown(payload)
+    return PlainTextResponse(
+        content=md,
+        media_type="text/markdown",
+        headers={"Content-Disposition": "attachment; filename=brief.md"},
+    )

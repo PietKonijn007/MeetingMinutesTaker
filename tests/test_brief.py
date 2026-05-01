@@ -475,7 +475,7 @@ def test_summarize_with_llm_attaches_summary(session, monkeypatch):
         "meeting_minutes.api.routes.brief._maybe_summarize", fake_summary,
     )
 
-    payload = asyncio.run(get_briefing(session=session, config=cfg, people=[jon.person_id], type=None))  # type: ignore[arg-type]
+    payload = asyncio.run(get_briefing(session=session, config=cfg, people=[jon.person_id], type=None, topic=None, focus=[]))  # type: ignore[arg-type]
     assert payload.summary is not None
     assert payload.summary.startswith("Be ready")
 
@@ -493,5 +493,5 @@ def test_summarize_with_llm_disabled_omits_summary(session, monkeypatch):
     cfg = AppConfig()
     assert cfg.brief.summarize_with_llm is False
 
-    payload = asyncio.run(get_briefing(session=session, config=cfg, people=[jon.person_id], type=None))  # type: ignore[arg-type]
+    payload = asyncio.run(get_briefing(session=session, config=cfg, people=[jon.person_id], type=None, topic=None, focus=[]))  # type: ignore[arg-type]
     assert payload.summary is None

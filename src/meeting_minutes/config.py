@@ -230,13 +230,64 @@ class NotificationsConfig(BaseModel):
         return self
 
 
+class BriefFocusConfig(BaseModel):
+    """BRF-2 focus-area retrieval settings."""
+
+    max_items: int = 10
+    top_k: int = 5
+    # When the best embedding similarity for a focus item is below this
+    # score, the finding emits "No relevant history found." and skips the
+    # LLM synthesis call entirely.
+    min_score: float = 0.55
+
+
+class BriefTalkingPointsConfig(BaseModel):
+    """BRF-2 LLM talking-points generator settings."""
+
+    # ``None`` (default) means "follow ``summarize_with_llm``". Set to
+    # True/False to override.
+    enabled: bool | None = None
+    max: int = 5
+    require_citation: bool = True
+
+
+class BriefExportConfig(BaseModel):
+    output_dir: str = "data/briefs"
+
+
+class BriefCacheConfig(BaseModel):
+    max_age_minutes: int = 240
+
+
 class BriefConfig(BaseModel):
-    """Pre-meeting briefing page settings (BRF-1)."""
+    """Pre-meeting briefing page settings (BRF-1 + BRF-2)."""
 
     # When True, the briefing endpoint runs a single two-sentence LLM
     # synthesis over the aggregated sections and attaches it as
     # ``summary``. Off by default — default briefings are purely DB-sourced.
     summarize_with_llm: bool = False
+
+    # ---- BRF-2 ----
+    lookback_days: int = 90
+    topic_rag_top_k: int = 8
+    # ``inherit`` reuses the System-2 LLM provider configured in
+    # ``generation.llm``. Other values (claude / openai / openrouter / ollama)
+    # are reserved for a future per-feature provider override; v1 only
+    # honors ``inherit``.
+    llm_provider: str = "inherit"
+    focus: BriefFocusConfig = BriefFocusConfig()
+    talking_points: BriefTalkingPointsConfig = BriefTalkingPointsConfig()
+    export: BriefExportConfig = BriefExportConfig()
+    cache: BriefCacheConfig = BriefCacheConfig()
+
+    def talking_points_enabled(self) -> bool:
+        """Resolve the tri-state ``talking_points.enabled`` flag.
+
+        ``None`` follows ``summarize_with_llm``; explicit booleans win.
+        """
+        if self.talking_points.enabled is None:
+            return self.summarize_with_llm
+        return bool(self.talking_points.enabled)
 
 
 class ExportConfig(BaseModel):

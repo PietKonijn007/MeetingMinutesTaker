@@ -329,6 +329,42 @@ class AttachmentORM(Base):
     )
 
 
+class MeetingBriefORM(Base):
+    """Cached pre-meeting brief artifact (BRF-2).
+
+    A row is written every time a brief is generated successfully. Subsequent
+    requests with the same inputs (and an unchanged underlying history) reuse
+    the cached row instead of re-running retrieval and the LLM. Markdown +
+    JSON sidecars live on disk at the paths in ``markdown_path`` /
+    ``json_path``; the DB row stays small.
+    """
+    __tablename__ = "meeting_briefs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    attendee_set_hash = Column(String, nullable=False, index=True)
+    topic = Column(Text, nullable=True)
+    topic_hash = Column(String, nullable=True)
+    focus_items = Column(Text, nullable=True)        # JSON-encoded list[str]
+    focus_items_hash = Column(String, nullable=False)
+    meeting_type = Column(String, nullable=True)
+    markdown_path = Column(Text, nullable=False)
+    json_path = Column(Text, nullable=False)
+    generated_at = Column(DateTime, nullable=False)
+    model = Column(String, nullable=True)
+    source_meeting_ids = Column(Text, nullable=True)  # JSON-encoded list[str]
+    superseded_by = Column(Integer, ForeignKey("meeting_briefs.id"), nullable=True)
+
+    __table_args__ = (
+        Index(
+            "idx_meeting_briefs_cache_key",
+            "attendee_set_hash",
+            "topic_hash",
+            "focus_items_hash",
+            "generated_at",
+        ),
+    )
+
+
 class PipelineStageORM(Base):
     """Per-(meeting, stage) state for the resumable pipeline (PIP-1)."""
     __tablename__ = "pipeline_stages"

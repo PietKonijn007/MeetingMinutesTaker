@@ -446,6 +446,135 @@ def generate_cmd(
 
 
 # ---------------------------------------------------------------------------
+# mm brief — BRF-2 prep brief
+# ---------------------------------------------------------------------------
+
+
+def _resolve_attendees_to_person_ids(session, names_or_emails: list[str]) -> tuple[list[str], list[str]]:
+    """Match attendee tokens against PersonORM.name and .email.
+
+    Returns ``(matched_person_ids, unmatched_tokens)`` preserving caller order.
+    Tokens are matched case-insensitively against email (exact) then name
+    (exact, then case-insensitive).
+    """
+    from meeting_minutes.system3.db import PersonORM
+
+    if not names_or_emails:
+        return [], []
+
+    all_people = session.query(PersonORM).all()
+    by_email = {(p.email or "").lower(): p for p in all_people if p.email}
+    by_name = {(p.name or "").lower(): p for p in all_people if p.name}
+
+    matched: list[str] = []
+    unmatched: list[str] = []
+    for token in names_or_emails:
+        t = (token or "").strip()
+        if not t:
+            continue
+        person = by_email.get(t.lower()) or by_name.get(t.lower())
+        if person is None:
+            unmatched.append(t)
+        else:
+            matched.append(person.person_id)
+    return matched, unmatched
+
+
+@app.command("brief")
+def brief_cmd(
+    attendees: str = typer.Option(
+        ...,
+        "--attendees", "-a",
+        help="Comma-separated names or emails (e.g. 'Jon Porter,sarah@acme.com').",
+    ),
+    topic: str = typer.Option(
+        ...,
+        "--topic", "-t",
+        help="What the meeting is about. Drives topic-RAG retrieval.",
+    ),
+    focus: list[str] = typer.Option(
+        [],
+        "--focus", "-f",
+        help="A specific thing to look for. Repeat for multiple items.",
+    ),
+    type: Optional[str] = typer.Option(
+        None, "--type", help="Optional meeting-type hint (vendor_call, etc.)",
+    ),
+    format: str = typer.Option(
+        "md", "--format", help="Output format: md | json",
+    ),
+    out: Optional[Path] = typer.Option(
+        None, "--out", "-o",
+        help="File to write to. Omit to write a default-named file under data/briefs/.",
+    ),
+):
+    """Generate a pre-meeting brief (BRF-2)."""
+    if format not in ("md", "json"):
+        err_console.print("[red]--format must be 'md' or 'json'[/red]")
+        raise typer.Exit(code=2)
+
+    config = _load_config()
+    session = _get_db_session(config)
+
+    tokens = [t.strip() for t in (attendees or "").split(",") if t.strip()]
+    person_ids, unmatched = _resolve_attendees_to_person_ids(session, tokens)
+    for u in unmatched:
+        err_console.print(
+            f"[yellow]warning:[/yellow] no person found for '{u}' — skipping. "
+            "Create the person first or fix the spelling."
+        )
+    if not person_ids:
+        err_console.print("[red]No matching attendees. Aborting.[/red]")
+        raise typer.Exit(code=2)
+
+    async def _run():
+        from meeting_minutes.api.routes.brief import _build_briefing_payload
+        from meeting_minutes.api.routes.brief_export import render_markdown
+        from meeting_minutes.api.routes.brief_cache import write as cache_write
+
+        payload = await _build_briefing_payload(
+            session=session,
+            config=config,
+            person_ids=person_ids,
+            meeting_type=type,
+            topic=topic,
+            focus_items=list(focus or []),
+        )
+        markdown = render_markdown(payload)
+
+        # Write to data/briefs/ via cache module, plus optional --out copy.
+        row = cache_write(
+            session=session,
+            config=config,
+            payload=payload,
+            person_ids=person_ids,
+            markdown=markdown,
+            model=config.generation.llm.model,
+        )
+
+        if out is not None:
+            out.parent.mkdir(parents=True, exist_ok=True)
+            if format == "md":
+                out.write_text(markdown, encoding="utf-8")
+            else:
+                out.write_text(payload.model_dump_json(indent=2), encoding="utf-8")
+            console.print(f"[green]Brief written to {out}[/green]")
+        else:
+            if format == "md":
+                console.print(f"[green]Brief written to {row.markdown_path}[/green]")
+            else:
+                console.print(f"[green]Brief written to {row.json_path}[/green]")
+
+    try:
+        asyncio.run(_run())
+    except SystemExit:
+        raise
+    except Exception as exc:
+        err_console.print(f"[red]Brief generation failed: {exc}[/red]")
+        raise typer.Exit(code=1)
+
+
+# ---------------------------------------------------------------------------
 # mm export — EXP-1 (per-meeting or bulk series)
 # ---------------------------------------------------------------------------
 

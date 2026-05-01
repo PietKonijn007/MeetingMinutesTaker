@@ -300,6 +300,25 @@ Deep-links:
 
 All six sections are pure SQL queries over existing tables — no LLM call by default. Flip `brief.summarize_with_llm: true` in `config.yaml` to attach a two-sentence synthesis built from the aggregates.
 
+### Topic + focus-area briefs (BRF-2)
+
+On top of BRF-1 the brief endpoint accepts a `topic` (free-text description of what the meeting is about) and a list of `focus_items` (specific things to look for, e.g. *"Outstanding asks from Jon"*, *"What did we decide about SLA penalties?"*). The brief reroutes its context-excerpts retrieval to the topic and runs an independent RAG pass for each focus item, producing a "What you asked about" section with grounded answers and citations to the action items / decisions / transcript chunks they came from.
+
+When focus retrieval finds nothing relevant (similarity below `brief.focus.min_score`) the answer is the literal `"No relevant history found."` and **no LLM call is made** — keeping briefs cheap and free of hallucinated answers.
+
+The brief can be downloaded as a stable, deterministic markdown file (`GET /api/brief/export?format=md`) or generated from the CLI:
+
+```bash
+mm brief --attendees "Jon Porter,Sarah Lee" \
+         --topic "Q3 vendor pricing review" \
+         --focus "Outstanding asks from Jon" \
+         --focus "What did we decide about SLA penalties?"
+```
+
+Briefs are persisted under `data/briefs/` (markdown + JSON sidecar) and cached in the `meeting_briefs` table — re-requesting an unchanged brief returns the cached row without re-running retrieval or the LLM. There is no scheduled / background generation; briefs are produced only on demand.
+
+When `brief.talking_points.enabled` is on (defaults to following `summarize_with_llm`), the brief also includes a short list of LLM-generated **suggested talking points**. Every emitted point must cite a concrete artifact already in the payload — a post-generation validator drops uncited points to prevent generic "discuss progress" filler.
+
 ## Desktop notifications (NOT-1)
 
 macOS Notification Center alerts fire on two pipeline events: every successful completion (`Meeting ready: <title>` with duration and action-item count) and any stage failure (`Pipeline failed: <title>` with stage + short error). Clicking the banner opens the meeting in the web UI. Ships disabled on non-macOS (via `pync`, which is macOS-only). Toggle in `config.yaml`:
