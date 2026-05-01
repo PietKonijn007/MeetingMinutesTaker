@@ -36,6 +36,7 @@ dependencies = [
     "weasyprint>=60.0",  # HTML -> PDF (EXP-1)
     "python-docx>=1.1.0",  # DOCX composition (EXP-1)
     "pync>=2.0.3; sys_platform == 'darwin'",  # macOS desktop notifications (NOT-1)
+    "pypdf>=4.0.0",  # PDF text-layer extraction for attachments (spec/09)
 ]
 
 [project.optional-dependencies]

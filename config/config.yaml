@@ -78,3 +78,14 @@ disk:
   flac_compression_factor: 0.6
   watchdog_interval_seconds: 30
   watchdog_graceful_stop_factor: 0.5
+attachments:
+  enabled: true
+  max_file_size_mb: 50
+  allowed_mime_types:
+    - application/pdf
+    - application/vnd.openxmlformats-officedocument.wordprocessingml.document
+    - application/vnd.openxmlformats-officedocument.presentationml.presentation
+    - image/png
+    - image/jpeg
+    - image/heic
+  summary_wait_seconds: 60

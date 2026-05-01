@@ -88,6 +88,7 @@ app.add_middleware(
 
 # ── Routers ───────────────────────────────────────────────────────────────
 from meeting_minutes.api.routes.actions import router as actions_router  # noqa: E402
+from meeting_minutes.api.routes.attachments import router as attachments_router  # noqa: E402
 from meeting_minutes.api.routes.config import router as config_router  # noqa: E402
 from meeting_minutes.api.routes.decisions import router as decisions_router  # noqa: E402
 from meeting_minutes.api.routes.meetings import router as meetings_router  # noqa: E402
@@ -131,6 +132,7 @@ app.include_router(doctor_router)
 app.include_router(series_router)
 app.include_router(series_meeting_router)
 app.include_router(brief_router)
+app.include_router(attachments_router)
 app.include_router(ws_router)
 
 # ── Static files (Svelte SPA) ────────────────────────────────────────────
