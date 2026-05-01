@@ -1260,6 +1260,154 @@ def test_summarize_attachment_skips_llm_for_empty_extraction():
 
 
 # ---------------------------------------------------------------------------
+# Map-reduce summarization (>100k char inputs)
+# ---------------------------------------------------------------------------
+
+
+class _SequencedLLM:
+    """Fake LLM that returns a different response per call.
+
+    Useful for map-reduce tests where the map and reduce phases need
+    distinguishable responses so we can assert on the orchestration.
+    """
+
+    def __init__(self, responses: list[str]):
+        self.responses = list(responses)
+        self.calls: list[tuple[str, str]] = []
+
+    async def generate(self, prompt: str, system_prompt: str = "") -> LLMResponse:
+        self.calls.append((system_prompt, prompt))
+        if not self.responses:
+            text = f"DEFAULT-RESPONSE-{len(self.calls)}"
+        else:
+            text = self.responses.pop(0)
+        return LLMResponse(
+            text=text,
+            provider="fake",
+            model="fake",
+            input_tokens=len(prompt) // 4,
+            output_tokens=len(text) // 4,
+            cost_usd=0.0,
+            processing_time_seconds=0.01,
+        )
+
+
+def test_summarize_attachment_map_reduce_kicks_in_above_threshold():
+    """A 200k char document triggers map+reduce with multiple LLM calls."""
+    big_text = ("Paragraph with $12.7M ARR mentioned.\n\n" * 6000).strip()
+    assert len(big_text) > 100_000
+
+    # Reduce-aware fake: distinguishes the reduce prompt by the
+    # _REDUCE_PREAMBLE substring and returns a known final summary.
+    final_marker = "### Final synthesis: $12.7M ARR landed Q3."
+
+    class _ReduceAwareLLM(_SequencedLLM):
+        async def generate(self, prompt: str, system_prompt: str = "") -> LLMResponse:
+            text = (
+                final_marker
+                if "final summary" in prompt.lower()
+                else f"Chunk summary {len(self.calls) + 1} mentions $12.7M."
+            )
+            self.calls.append((system_prompt, prompt))
+            return LLMResponse(
+                text=text, provider="fake", model="fake",
+                input_tokens=10, output_tokens=10, cost_usd=0.0,
+                processing_time_seconds=0.01,
+            )
+
+    fake = _ReduceAwareLLM([])
+    req = SummaryRequest(
+        title="Big PDF", caption=None, source="big.pdf",
+        extraction_method="pdf-text-layer", extracted_text=big_text,
+    )
+    result = asyncio.run(summarize_attachment(fake, req))
+
+    # More than one LLM call: chunks + 1 reduce.
+    assert len(fake.calls) > 1
+    assert result.tier == SummaryTier.XLONG
+    assert result.summary_markdown == final_marker
+    # The reduce phase carries the chunk summaries, not the original
+    # giant text — verify the reduce prompt is much smaller than the input.
+    last_user_prompt = fake.calls[-1][1]
+    assert len(last_user_prompt) < len(big_text)
+    assert "final summary" in last_user_prompt.lower()
+
+
+def test_summarize_attachment_caps_chunk_count_and_marks_truncated():
+    """Documents that need more chunks than _MAX_MAP_CHUNKS are flagged truncated."""
+    from meeting_minutes.attachments.summarizer import _MAP_CHUNK_CHARS, _MAX_MAP_CHUNKS
+
+    # Build a doc large enough to require > _MAX_MAP_CHUNKS chunks.
+    huge_text = ("paragraph body.\n\n" * (_MAX_MAP_CHUNKS * _MAP_CHUNK_CHARS // 16))
+    # Each "paragraph body.\n\n" is ~17 chars, so this lands well above
+    # the cap — paragraph-aware splitting will produce > _MAX_MAP_CHUNKS chunks.
+
+    fake = _SequencedLLM([])  # use default responses
+    req = SummaryRequest(
+        title="Huge", caption=None, source="huge.pdf",
+        extraction_method="pdf-text-layer", extracted_text=huge_text,
+    )
+    result = asyncio.run(summarize_attachment(fake, req))
+
+    # Number of LLM calls should be exactly _MAX_MAP_CHUNKS map + 1 reduce.
+    assert len(fake.calls) == _MAX_MAP_CHUNKS + 1
+    assert result.truncated is True
+    # The reduce prompt mentions truncation so the final summary doesn't
+    # silently lie about completeness.
+    last_user_prompt = fake.calls[-1][1]
+    assert "tail of the document was skipped" in last_user_prompt.lower() or \
+           "longer than what was summarized" in last_user_prompt.lower()
+
+
+def test_split_into_chunks_paragraph_aware():
+    """Splitter prefers paragraph breaks; never produces a chunk over the cap."""
+    from meeting_minutes.attachments.summarizer import (
+        _MAP_CHUNK_CHARS,
+        _split_into_chunks,
+    )
+
+    # Each paragraph is ~1100 chars; 50 paragraphs ≈ 55k chars; with a
+    # 30k cap that lands at 2 chunks.
+    paragraphs = [f"paragraph-{i:03d} " + ("x" * 1100) for i in range(50)]
+    text = "\n\n".join(paragraphs)
+    chunks = _split_into_chunks(text)
+
+    assert len(chunks) >= 2  # something got split
+    for chunk in chunks:
+        assert len(chunk) <= _MAP_CHUNK_CHARS
+    # Reassembling the chunks with double-newlines should be lossless
+    # (modulo joins) — every paragraph survives intact.
+    rejoined = "\n\n".join(chunks)
+    for paragraph in paragraphs:
+        assert paragraph in rejoined
+
+
+def test_split_into_chunks_handles_pathological_long_paragraph():
+    """A single paragraph longer than the cap gets hard-sliced, not dropped."""
+    from meeting_minutes.attachments.summarizer import (
+        _MAP_CHUNK_CHARS,
+        _split_into_chunks,
+    )
+
+    text = "x" * (_MAP_CHUNK_CHARS * 3 + 100)
+    chunks = _split_into_chunks(text)
+    assert sum(len(c) for c in chunks) == len(text)  # nothing dropped
+    for chunk in chunks:
+        assert len(chunk) <= _MAP_CHUNK_CHARS
+
+
+def test_build_summary_prompt_tier_override():
+    """tier_override forces a specific tier instruction even for short input."""
+    req = SummaryRequest(
+        title="Short", caption=None, source="x.txt",
+        extraction_method="pdf-text-layer", extracted_text="just a few chars",
+    )
+    _, user, tier, _ = build_summary_prompt(req, tier_override=SummaryTier.XLONG)
+    assert tier == SummaryTier.XLONG
+    assert "COMPREHENSIVE" in user
+
+
+# ---------------------------------------------------------------------------
 # Worker — full extract + summarize round trip
 # ---------------------------------------------------------------------------
 
