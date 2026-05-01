@@ -2,14 +2,74 @@
 
 from __future__ import annotations
 
-import logging
 import re
+import time
 from pathlib import Path
 
 from meeting_minutes.config import DiarizationConfig
+from meeting_minutes.logging import get_logger
 from meeting_minutes.models import DiarizationResult, DiarizationSegment
 
-logger = logging.getLogger(__name__)
+# Use the project's structured-JSON logger so device/timing diagnostics land
+# in `logs/server.log`. A plain `logging.getLogger(__name__)` here was a dead
+# end — no handler was attached anywhere up the chain, so INFO messages from
+# this module silently disappeared and we couldn't tell from logs whether
+# diarization was actually using MPS, CUDA, or CPU.
+logger = get_logger("system1.diarize")
+
+
+class _StageTimer:
+    """pyannote ``hook`` callable that logs per-stage wall-clock time.
+
+    pyannote.audio's diarization pipeline calls ``hook(step_name, ...)``
+    multiple times — once at the start of each major stage and again on
+    progress ticks. We only care about stage transitions, so we track the
+    last-seen ``step_name`` and log when it changes. ``finish()`` flushes
+    the final stage. The output looks like::
+
+        Diarization stage: segmentation done in 47.2s
+        Diarization stage: embeddings done in 2810.5s
+        Diarization stage: discrete_diarization done in 2503.1s
+
+    which tells us at a glance where pyannote is actually spending time
+    so we know whether to attack batch sizes (embeddings) or clustering
+    (discrete_diarization).
+    """
+
+    def __init__(self) -> None:
+        self._stage: str | None = None
+        self._stage_start: float | None = None
+        self._t0 = time.monotonic()
+
+    def __call__(
+        self,
+        step_name: str,
+        step_artifact=None,
+        file=None,
+        total: int | None = None,
+        completed: int | None = None,
+    ) -> None:
+        if step_name == self._stage:
+            return  # progress tick within the current stage — ignore
+        now = time.monotonic()
+        if self._stage is not None and self._stage_start is not None:
+            logger.info(
+                "Diarization stage: %s done in %.1fs",
+                self._stage,
+                now - self._stage_start,
+            )
+        self._stage = step_name
+        self._stage_start = now
+
+    def finish(self) -> None:
+        now = time.monotonic()
+        if self._stage is not None and self._stage_start is not None:
+            logger.info(
+                "Diarization stage: %s done in %.1fs",
+                self._stage,
+                now - self._stage_start,
+            )
+        logger.info("Diarization stages total: %.1fs", now - self._t0)
 
 
 class DiarizationEngine:
@@ -51,14 +111,55 @@ class DiarizationEngine:
                 import torch
                 if platform.system() == "Darwin" and platform.machine() == "arm64" and torch.backends.mps.is_available():
                     device = torch.device("mps")
-                    logger.info("Diarization: using Apple Silicon GPU (MPS)")
+                    logger.info("Diarization: requesting Apple Silicon GPU (MPS)")
                 elif torch.cuda.is_available():
                     device = torch.device("cuda")
-                    logger.info("Diarization: using NVIDIA CUDA")
+                    logger.info("Diarization: requesting NVIDIA CUDA")
                 else:
                     device = torch.device("cpu")
-                    logger.info("Diarization: using CPU (slow — expect ~1x real-time)")
+                    logger.info("Diarization: requesting CPU (slow — expect ~1x real-time)")
                 self._pipeline.to(device)
+
+                # Verify the move actually took effect. pyannote.audio's
+                # Pipeline.to() walks submodels, but historically some
+                # submodels (notably the speaker-embedding model) silently
+                # stayed on CPU because of MPS operator gaps. Read the device
+                # back from the pipeline state so the logs reflect reality
+                # rather than intent.
+                seg_device = embed_device = "?"
+                try:
+                    seg_model = getattr(getattr(self._pipeline, "_segmentation", None), "model", None)
+                    if seg_model is not None:
+                        seg_device = str(next(seg_model.parameters()).device)
+                except Exception:  # pragma: no cover — diagnostics only
+                    pass
+                try:
+                    emb = getattr(self._pipeline, "_embedding", None)
+                    # PretrainedSpeakerEmbedding may wrap a nn.Module under
+                    # `.model_` or be one itself; try both.
+                    emb_module = getattr(emb, "model_", emb)
+                    if emb_module is not None and hasattr(emb_module, "parameters"):
+                        embed_device = str(next(emb_module.parameters()).device)
+                    elif emb is not None:
+                        # Fall back to the wrapper's reported device, if any.
+                        emb_dev_attr = getattr(emb, "device", None)
+                        if emb_dev_attr is not None:
+                            embed_device = str(emb_dev_attr)
+                except Exception:  # pragma: no cover — diagnostics only
+                    pass
+                pipeline_device = str(getattr(self._pipeline, "device", device))
+                logger.info(
+                    "Diarization device check: pipeline=%s segmentation=%s embedding=%s",
+                    pipeline_device, seg_device, embed_device,
+                )
+                if device.type != "cpu" and (
+                    seg_device.startswith("cpu") or embed_device.startswith("cpu")
+                ):
+                    logger.warning(
+                        "Diarization: requested %s but a submodel stayed on CPU "
+                        "(segmentation=%s embedding=%s) — expect slow runtime",
+                        device.type, seg_device, embed_device,
+                    )
             except Exception as device_exc:
                 logger.warning("Could not move diarization pipeline to GPU: %s — using CPU", device_exc)
         except ImportError as exc:
@@ -119,7 +220,15 @@ class DiarizationEngine:
                 pyannote_kwargs["max_speakers"] = int(max_speakers)
             if pyannote_kwargs:
                 logger.info("Diarization called with hints: %s", pyannote_kwargs)
-            diarization = pipeline(str(audio_path), **pyannote_kwargs)
+            stage_timer = _StageTimer()
+            try:
+                diarization = pipeline(
+                    str(audio_path), hook=stage_timer, **pyannote_kwargs,
+                )
+            finally:
+                # Always flush final stage timing, even if the pipeline raised
+                # — partial timings are still informative for diagnosis.
+                stage_timer.finish()
         except Exception as exc:
             # Graceful failure — return empty result with actionable diagnostics
             import warnings
