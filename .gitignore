@@ -4,6 +4,9 @@ __pycache__/
 
 # Auto-generated model cache (refreshed from provider APIs)
 config/model_cache.json
+
+# Per-user config snapshots written by the upgrade flow
+config/config.yaml.user-backup-*
 *.egg-info/
 dist/
 build/
