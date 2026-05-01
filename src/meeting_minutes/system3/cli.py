@@ -1872,20 +1872,31 @@ def upgrade_cmd(
                     )
         # else: silently skip — non-brew macOS users manage their own libs.
 
-    # 3. Install Python dependencies
+    # 3. Install Python dependencies.
+    #
+    # Extras: always install ``dev`` (test deps) and ``diarize-cloud`` (the
+    # pyannoteAI SDK, platform-agnostic and tiny). Add ``diarize-mlx`` only
+    # on Apple Silicon — its only dependency is the ``mlx`` wheel, which is
+    # Apple-Silicon-only and would fail on Intel macOS / Linux / Windows.
+    # This guarantees the engine the user picks in the settings page is
+    # actually runnable post-upgrade, instead of silently falling back.
     console.print("[bold][3/5] Updating Python dependencies...[/bold]")
     venv_pip = project_root / ".venv" / "bin" / "pip"
     if not venv_pip.exists():
         err_console.print("[red]Virtual environment not found. Run install.sh first.[/red]")
         raise typer.Exit(code=1)
+    extras = ["dev", "diarize-cloud"]
+    if _platform.system() == "Darwin" and _platform.machine() == "arm64":
+        extras.append("diarize-mlx")
+    extras_spec = ",".join(extras)
     result = subprocess.run(
-        [str(venv_pip), "install", "--quiet", "-e", ".[dev]"],
+        [str(venv_pip), "install", "--quiet", "-e", f".[{extras_spec}]"],
         capture_output=True, text=True, cwd=project_root,
     )
     if result.returncode != 0:
         err_console.print(f"[red]pip install failed: {result.stderr}[/red]")
         raise typer.Exit(code=1)
-    console.print("  [green]✓[/green] Python dependencies updated")
+    console.print(f"  [green]✓[/green] Python dependencies updated (extras: {extras_spec})")
 
     # 3b. Ensure whisper.cpp engine is installed (best effort, hardware-aware)
     pywhispercpp_check = subprocess.run(
