@@ -1782,29 +1782,31 @@ def upgrade_cmd(
     )
     current_branch = cur_branch_result.stdout.strip()
 
-    # Switch to target branch if not already on it
-    if current_branch != branch:
-        console.print(f"  [yellow]Currently on '{current_branch}', switching to '{branch}'...[/yellow]")
-        switch_result = subprocess.run(
-            ["git", "checkout", branch],
+    def _do_switch_and_merge() -> None:
+        # Switch to target branch if not already on it. Runs inside the config
+        # preservation wrapper so a dirty config/config.yaml can't block the
+        # checkout — the wrapper has already reset that file to HEAD.
+        if current_branch != branch:
+            console.print(f"  [yellow]Currently on '{current_branch}', switching to '{branch}'...[/yellow]")
+            switch_result = subprocess.run(
+                ["git", "checkout", branch],
+                capture_output=True, text=True, cwd=project_root,
+            )
+            if switch_result.returncode != 0:
+                err_console.print(f"[red]Failed to switch to '{branch}': {switch_result.stderr}[/red]")
+                err_console.print(f"[dim]Stay on '{current_branch}' or resolve conflicts manually.[/dim]")
+                raise typer.Exit(code=1)
+            console.print(f"  [green]✓[/green] Switched to '{branch}'")
+
+        # Fetch + fast-forward merge from origin/<branch>
+        fetch_result = subprocess.run(
+            ["git", "fetch", "origin", branch],
             capture_output=True, text=True, cwd=project_root,
         )
-        if switch_result.returncode != 0:
-            err_console.print(f"[red]Failed to switch to '{branch}': {switch_result.stderr}[/red]")
-            err_console.print(f"[dim]Stay on '{current_branch}' or resolve conflicts manually.[/dim]")
+        if fetch_result.returncode != 0:
+            err_console.print(f"[red]git fetch failed: {fetch_result.stderr}[/red]")
             raise typer.Exit(code=1)
-        console.print(f"  [green]✓[/green] Switched to '{branch}'")
 
-    # Fetch + fast-forward merge from origin/<branch>
-    fetch_result = subprocess.run(
-        ["git", "fetch", "origin", branch],
-        capture_output=True, text=True, cwd=project_root,
-    )
-    if fetch_result.returncode != 0:
-        err_console.print(f"[red]git fetch failed: {fetch_result.stderr}[/red]")
-        raise typer.Exit(code=1)
-
-    def _do_merge() -> None:
         result = subprocess.run(
             ["git", "merge", "--ff-only", f"origin/{branch}"],
             capture_output=True, text=True, cwd=project_root,
@@ -1818,9 +1820,10 @@ def upgrade_cmd(
             raise typer.Exit(code=1)
         console.print(f"  {result.stdout.strip() or 'Already up to date.'}")
 
-    # Protect the user's config/config.yaml: stash any local edits, merge, then
-    # re-apply user values on top of the (possibly updated) shipped defaults.
-    _preserve_user_config_through_upgrade(project_root, _do_merge)
+    # Protect the user's config/config.yaml across the branch switch + merge:
+    # stash local edits, switch+merge, then re-apply user values on top of the
+    # (possibly updated) shipped defaults.
+    _preserve_user_config_through_upgrade(project_root, _do_switch_and_merge)
 
     # 2b. Refresh macOS native deps for WeasyPrint (idempotent; Homebrew-only).
     # Needed for PDF export (EXP-1) — existing installs predate this requirement.
