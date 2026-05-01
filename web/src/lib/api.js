@@ -185,6 +185,35 @@ export const api = {
     return res.json();
   }),
 
+  // Attachments (spec/09): file uploads, link adds, list/get/delete.
+  // Worker runs extraction + LLM summary in background; clients poll
+  // listAttachments and watch each row's `status` until 'ready' (or
+  // 'error'). Detail view exposes the parsed sidecar (summary + extracted).
+  listAttachments: (meetingId) => request(`/meetings/${meetingId}/attachments`),
+  getAttachment: (id) => request(`/attachments/${id}`),
+  uploadAttachment: (meetingId, file, { title = '', caption = '' } = {}) => {
+    const fd = new FormData();
+    fd.append('file', file);
+    if (title) fd.append('title', title);
+    if (caption) fd.append('caption', caption);
+    return fetch(`/api/meetings/${meetingId}/attachments`, { method: 'POST', body: fd }).then(async (res) => {
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || res.statusText);
+      }
+      return res.json();
+    });
+  },
+  addLinkAttachment: (meetingId, { url, title = '', caption = '' }) =>
+    request(`/meetings/${meetingId}/attachments/link`, {
+      method: 'POST',
+      body: JSON.stringify({ url, title: title || undefined, caption: caption || undefined }),
+    }),
+  deleteAttachment: (id) => fetch(`/api/attachments/${id}`, { method: 'DELETE' }).then((res) => {
+    if (!res.ok && res.status !== 204) throw new Error(`Delete failed: ${res.status}`);
+  }),
+  attachmentRawUrl: (id) => `/api/attachments/${id}/raw`,
+
   // Backups
   getBackups: () => request('/backups'),
   createBackup: () => request('/backups', { method: 'POST' }),

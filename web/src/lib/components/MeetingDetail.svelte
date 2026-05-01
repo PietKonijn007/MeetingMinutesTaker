@@ -12,6 +12,7 @@
   import Skeleton from './Skeleton.svelte';
   import ConfirmModal from './ConfirmModal.svelte';
   import ExportMenu from './ExportMenu.svelte';
+  import AttachmentsPanel from './AttachmentsPanel.svelte';
   import { addToast } from '$lib/stores/toasts.js';
 
   /** @type {{ meetingId: string }} */
@@ -483,6 +484,7 @@
     // between Minutes and Transcript so it's easy to land on after reading
     // the generated summary.
     { key: 'external', label: 'External notes' },
+    { key: 'attachments', label: 'Attachments' },
     { key: 'transcript', label: 'Transcript' },
     { key: 'actions', label: actionsTabLabel(meeting) },
     { key: 'decisions', label: `Decisions${meeting?.decisions?.length ? ` (${meeting.decisions.length})` : ''}` },
@@ -1351,6 +1353,31 @@
               {submittingExternalNotes ? 'Saving…' : 'Save & update minutes'}
             </button>
           </div>
+        </div>
+
+      {:else if activeTab === 'attachments'}
+        <!--
+          Attachments tab (spec/09). Files / links / pasted images
+          attached to this meeting. Each attachment is extracted +
+          summarized in the background; the summary is injected into
+          minutes generation, and a verbatim ## Attachments section is
+          appended to the rendered minutes so readers can crosscheck.
+        -->
+        <div class="space-y-4 max-w-3xl">
+          <div>
+            <h3 class="text-sm font-semibold text-[var(--text-primary)] mb-1">
+              Attachments
+            </h3>
+            <p class="text-xs text-[var(--text-muted)] leading-relaxed">
+              Drop slide decks, PDFs, screenshots, or paste a link.
+              Each attachment is summarized by the LLM and the summary
+              is injected into the meeting minutes so the reader can
+              crosscheck against the source. Click any item to view its
+              extracted text and summary. Re-generate the minutes after
+              changes via the Minutes tab to apply.
+            </p>
+          </div>
+          <AttachmentsPanel meetingId={meetingId} />
         </div>
 
       {:else if activeTab === 'transcript'}
