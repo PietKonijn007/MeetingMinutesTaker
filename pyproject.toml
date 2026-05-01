@@ -36,6 +36,13 @@ dependencies = [
     "weasyprint>=60.0",  # HTML -> PDF (EXP-1)
     "python-docx>=1.1.0",  # DOCX composition (EXP-1)
     "pync>=2.0.3; sys_platform == 'darwin'",  # macOS desktop notifications (NOT-1)
+    "pypdf>=4.0.0",  # PDF text-layer extraction for attachments (spec/09)
+    "python-pptx>=0.6.23",  # PPTX extraction for attachments (spec/09)
+    "pytesseract>=0.3.10",  # OCR wrapper for image attachments (spec/09)
+    "Pillow>=10.0.0",  # Image loading for OCR (spec/09); transitive for many already
+    "pdf2image>=1.17.0",  # Render PDF pages → images for scanned-PDF OCR fallback (spec/09)
+    "pillow-heif>=0.16.0",  # HEIC support for iPhone screenshot attachments (spec/09)
+    "trafilatura>=1.8.0",  # Readable-text extraction from links (spec/09)
 ]
 
 [project.optional-dependencies]

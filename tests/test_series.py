@@ -193,6 +193,7 @@ def test_series_aggregates(session):
                 description=f"Ship feature {idx}",
                 owner="Jon",
                 status="open",
+                proposal_state="confirmed",
             )
         )
         session.add(
@@ -211,6 +212,7 @@ def test_series_aggregates(session):
             description="Closed",
             owner="Jon",
             status="done",
+            proposal_state="confirmed",
         )
     )
     # Seed parking-lot chunks — same text across 2 meetings → recurring.

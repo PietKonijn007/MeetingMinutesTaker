@@ -195,6 +195,35 @@ class ExportConfig(BaseModel):
     default_out_dir: str = "data/exports"
 
 
+class AttachmentsConfig(BaseModel):
+    """Per-meeting attachments (spec/09-attachments.md).
+
+    Files / links / images attached to a meeting get extracted, summarized
+    by the LLM, and injected into minutes generation. This config gates the
+    upload boundary; downstream behavior (worker, summarizer, pipeline
+    injection) ships in subsequent batches.
+    """
+
+    enabled: bool = True
+    max_file_size_mb: int = 50
+    # MIME allowlist enforced at upload. Sniffing-based validation (vs.
+    # trusting the multipart Content-Type alone) lands in a follow-up; for
+    # now we trust the client and lean on the extension whitelist below.
+    allowed_mime_types: list[str] = Field(
+        default_factory=lambda: [
+            "application/pdf",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            "image/png",
+            "image/jpeg",
+            "image/heic",
+        ]
+    )
+    # How long minutes generation waits for in-flight summaries before
+    # proceeding without them. Wired up when pipeline injection lands.
+    summary_wait_seconds: int = 60
+
+
 def resolve_db_path(sqlite_path: str) -> Path:
     """Resolve the sqlite_path config value to an absolute Path.
 
@@ -232,6 +261,7 @@ class AppConfig(BaseModel):
     notifications: NotificationsConfig = NotificationsConfig()
     brief: BriefConfig = BriefConfig()
     export: ExportConfig = ExportConfig()
+    attachments: AttachmentsConfig = AttachmentsConfig()
 
     def model_post_init(self, __context) -> None:
         """Apply performance settings to process env vars (affects torch, etc.)."""

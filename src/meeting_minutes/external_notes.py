@@ -308,11 +308,20 @@ async def run_background_update(
                 if generic:
                     llm = LLMClient(config.generation.llm)
                     sample = build_transcript_sample(segments)
+                    # Phase 2: also feed attachment summaries — they may
+                    # carry presenter names from title slides, "prepared
+                    # by" footers, or explicit attendee lists.
+                    from meeting_minutes.attachments import (
+                        pipeline_integration as _att_pi,
+                    )
+                    att_entries = _att_pi.gather_entries(data_dir, meeting_id)
+                    rename_context = _att_pi.render_for_speaker_rename(att_entries)
                     mapping = await infer_speaker_names(
                         llm=llm,
                         current_labels=generic,
                         transcript_sample=sample,
                         external_notes=external_text,
+                        attachment_context=rename_context,
                     )
                     if mapping:
                         apply_speaker_mapping(data_dir, meeting_id, mapping)

@@ -66,7 +66,14 @@ class MinutesIngester:
         )
 
         self._storage.upsert_meeting(minutes_data)
-        # FTS indexing is done inside upsert_meeting, but also ensure reindex
-        self._search.reindex_meeting(minutes_json.meeting_id)
+        # FTS indexing is done inside upsert_meeting, but also ensure
+        # reindex — and pass data_dir so attachment text gets folded
+        # into the indexed body. data_dir is the parent of the minutes
+        # folder (i.e. the project's data root).
+        data_dir = minutes_path.parent.parent
+        self._search.reindex_meeting(
+            minutes_json.meeting_id,
+            data_dir=data_dir,
+        )
 
         return minutes_json.meeting_id

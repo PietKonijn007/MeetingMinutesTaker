@@ -54,6 +54,9 @@ class MeetingORM(Base):
     action_items = relationship("ActionItemORM", back_populates="meeting", cascade="all, delete-orphan")
     decisions = relationship("DecisionORM", back_populates="meeting", cascade="all, delete-orphan")
     attendees = relationship("PersonORM", secondary=meeting_attendees)
+    attachments = relationship(
+        "AttachmentORM", back_populates="meeting", cascade="all, delete-orphan"
+    )
 
 
 class TranscriptORM(Base):
@@ -271,6 +274,58 @@ class TopicClusterCacheORM(Base):
 
     __table_args__ = (
         Index("idx_topic_clusters_meeting", "meeting_id"),
+    )
+
+
+class AttachmentORM(Base):
+    """Files / links / images attached to a meeting (spec/09-attachments.md).
+
+    Lightweight metadata only — extracted text and the LLM-generated summary
+    live in a sidecar markdown file at
+    ``data/attachments/{meeting_id}/{attachment_id}.md`` so the DB stays small
+    and the canonical context survives DB rebuilds.
+    """
+    __tablename__ = "attachments"
+
+    attachment_id = Column(String, primary_key=True)
+    meeting_id = Column(
+        String,
+        ForeignKey("meetings.meeting_id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    kind = Column(String, nullable=False)              # 'file' | 'link' | 'image'
+    source = Column(String, nullable=False)            # 'upload' | 'paste' | 'preprep'
+    original_filename = Column(String, nullable=True)
+    mime_type = Column(String, nullable=True)
+    size_bytes = Column(Integer, nullable=True)
+    sha256 = Column(String, nullable=True)
+    url = Column(String, nullable=True)
+    title = Column(String, nullable=False)
+    caption = Column(Text, nullable=True)
+    status = Column(String, nullable=False, default="pending", server_default="pending")
+    error = Column(Text, nullable=True)
+    created_at = Column(DateTime, nullable=False)
+    updated_at = Column(DateTime, nullable=False)
+
+    meeting = relationship("MeetingORM", back_populates="attachments")
+
+    __table_args__ = (
+        CheckConstraint(
+            "kind IN ('file','link','image')",
+            name="ck_attachments_kind",
+        ),
+        CheckConstraint(
+            "status IN ('pending','extracting','summarizing','ready','error')",
+            name="ck_attachments_status",
+        ),
+        Index(
+            "idx_attachments_meeting_sha",
+            "meeting_id",
+            "sha256",
+            unique=True,
+            sqlite_where=text("sha256 IS NOT NULL"),
+        ),
     )
 
 

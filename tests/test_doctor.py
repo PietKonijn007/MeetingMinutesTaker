@@ -294,14 +294,16 @@ def test_weasyprint_missing_natives(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_run_checks_returns_eleven_in_order(config):
+def test_run_checks_returns_thirteen_in_order(config):
     results = doctor.run_checks(config)
-    assert len(results) == 11
+    assert len(results) == 13
     names = [r.name for r in results]
     assert names[0] == "python_version"
     assert names[1] == "ffmpeg"
-    assert names[-2] == "sqlite_vec"
-    assert names[-1] == "weasyprint"
+    assert names[-4] == "sqlite_vec"
+    assert names[-3] == "weasyprint"
+    assert names[-2] == "tesseract"
+    assert names[-1] == "poppler"
 
 
 def test_overall_status_reflects_worst(monkeypatch, config):

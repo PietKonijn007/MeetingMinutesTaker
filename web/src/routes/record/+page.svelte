@@ -7,6 +7,7 @@
   import { addToast } from '$lib/stores/toasts.js';
   import { MEETING_TYPE_GROUPS } from '$lib/meetingTypes.js';
   import ConfirmModal from '$lib/components/ConfirmModal.svelte';
+  import AttachmentsPanel from '$lib/components/AttachmentsPanel.svelte';
 
   // sessionStorage keys — survive tab navigation while the recording is in
   // flight, cleared once the user pushes Stop. Scoped to a single browser
@@ -966,6 +967,28 @@
           </p>
         </div>
       </div>
+
+      <!--
+        Attachments panel (spec/09). Visible only once the recording
+        has actually started — pre-recording reservation of a meeting
+        ID isn't supported yet. The panel kicks off async extraction
+        and LLM summarization for each attachment; by the time
+        recording stops and minutes generation runs, the summaries
+        are typically ready and get injected into the prompt.
+      -->
+      {#if recMeetingId}
+        <details class="w-full bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-xl mb-6" open>
+          <summary class="cursor-pointer px-4 py-3 text-sm font-medium text-[var(--text-primary)]">
+            📎 Attach files / links / screenshots
+            <span class="text-xs text-[var(--text-muted)] font-normal ml-2">
+              — summarized in the background, fed into your minutes
+            </span>
+          </summary>
+          <div class="px-4 pb-4">
+            <AttachmentsPanel meetingId={recMeetingId} />
+          </div>
+        </details>
+      {/if}
 
       <!-- Stop / Cancel buttons -->
       <div class="flex items-center gap-4">

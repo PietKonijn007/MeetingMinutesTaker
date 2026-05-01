@@ -664,6 +664,92 @@ class PipelineOrchestrator:
                     f"{external_notes}"
                 )
 
+        # Attachments (spec/09): wait briefly for any in-flight summaries,
+        # then build a labelled context block to splice into the prompt.
+        # Pending or errored summaries are silently skipped — they'll be
+        # picked up on the next regeneration once they land.
+        from meeting_minutes.attachments import pipeline_integration as _att
+        attachment_context = ""
+        attachment_entries: list[_att.AttachmentEntry] = []
+        if getattr(self._config, "attachments", None) and self._config.attachments.enabled:
+            try:
+                attachment_entries = await _att.wait_for_pending(
+                    self._data_dir,
+                    meeting_id,
+                    timeout_s=self._config.attachments.summary_wait_seconds,
+                )
+                attachment_context = _att.render_llm_context_block(attachment_entries)
+                ready = sum(
+                    1 for e in attachment_entries if e.summary_status == "ready"
+                )
+                if attachment_entries:
+                    _console(
+                        f"  Attachments: {len(attachment_entries)} found, "
+                        f"{ready} summaries ready",
+                        "cyan" if ready else "yellow",
+                    )
+            except Exception as exc:  # noqa: BLE001
+                self._logger.warning(
+                    "Attachment context gather failed for %s: %s — proceeding without",
+                    meeting_id,
+                    exc,
+                )
+
+        # Attachment-aware speaker rename (spec/09 phase 2): if any
+        # SPEAKER_xx labels are still generic and we have at least one
+        # ready attachment summary, ask the LLM to map labels using the
+        # attachments as supplementary evidence. Best-effort — failures
+        # log and let generation proceed with the original labels.
+        if attachment_entries and any(
+            e.summary_status == "ready" and e.summary.strip()
+            for e in attachment_entries
+        ):
+            try:
+                from meeting_minutes.api.routes.meetings import apply_speaker_mapping
+                from meeting_minutes.system2.speaker_rename import (
+                    build_transcript_sample,
+                    infer_speaker_names,
+                )
+
+                segments = tj.transcript.get("segments", []) or []
+                all_labels = [
+                    s.label for s in (tj.speakers or []) if getattr(s, "label", None)
+                ]
+                generic = [l for l in all_labels if l.startswith("SPEAKER_")]
+                if generic:
+                    sample = build_transcript_sample(segments)
+                    # gen_config isn't bound yet at this point — the
+                    # template-routing block sets it lower down — so go
+                    # straight at the underlying config.
+                    rename_llm = LLMClient(self._config.generation.llm)
+                    rename_context = _att.pipeline_integration.render_for_speaker_rename(
+                        attachment_entries
+                    )
+                    mapping = await infer_speaker_names(
+                        llm=rename_llm,
+                        current_labels=generic,
+                        transcript_sample=sample,
+                        external_notes="",
+                        attachment_context=rename_context,
+                    )
+                    if mapping:
+                        apply_speaker_mapping(self._data_dir, meeting_id, mapping)
+                        # Reload transcript with the renamed labels in
+                        # place so the rest of generation sees them.
+                        transcript_data = ingester.ingest(transcript_path)
+                        tj = transcript_data.transcript_json
+                        _console(
+                            f"  Attachment-aware speaker rename: "
+                            f"{len(mapping)} label(s) mapped — {mapping}",
+                            "cyan",
+                        )
+            except Exception as exc:  # noqa: BLE001
+                self._logger.warning(
+                    "Attachment-aware speaker rename failed for %s: %s",
+                    meeting_id,
+                    exc,
+                )
+
         # Route to template
         gen_config = self._config.generation
         templates_dir = Path(gen_config.templates_dir)
@@ -788,6 +874,19 @@ class PipelineOrchestrator:
                 f"{user_notes}"
             )
             _console(f"  Enhanced transcript with user notes ({len(user_notes)} chars)")
+
+        # Splice attachment summaries onto the prompt with a clear header so
+        # the LLM treats them as ground truth (see render_llm_context_block).
+        if attachment_context:
+            enhanced_transcript = (
+                f"{enhanced_transcript}\n\n"
+                f"---\n"
+                f"{attachment_context}"
+            )
+            _console(
+                f"  Enhanced transcript with attachment context ({len(attachment_context)} chars)",
+                "cyan",
+            )
 
         # Build custom system prompt additions from user instructions
         custom_system_addendum = ""
@@ -972,6 +1071,32 @@ class PipelineOrchestrator:
 
         _console(f"  ✓ Minutes saved: {json_path.name}", "green")
         _console(f"  ✓ Markdown saved: {md_path.name}", "green")
+
+        # Post-append the verbatim ## Attachments section so readers can
+        # cross-check against source material. We write it before
+        # ingestion runs so the DB picks it up via the JSON's
+        # minutes_markdown field — no separate DB-update needed here.
+        if attachment_entries:
+            try:
+                _att.append_attachments_section_to_files(
+                    self._data_dir,
+                    meeting_id,
+                    attachment_entries,
+                )
+                rendered = sum(
+                    1 for e in attachment_entries
+                    if e.summary_status == "ready" and e.summary.strip()
+                )
+                _console(
+                    f"  ✓ Appended ## Attachments section ({rendered}/{len(attachment_entries)} with summaries)",
+                    "green",
+                )
+            except Exception as exc:  # noqa: BLE001
+                self._logger.warning(
+                    "Failed to append ## Attachments section for %s: %s",
+                    meeting_id,
+                    exc,
+                )
 
         # Record successful model usage for custom model persistence
         _record_successful_model(llm_response.provider, llm_response.model)

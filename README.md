@@ -386,6 +386,47 @@ Each meeting detail page has an **External notes** tab between **Minutes** and *
 
 The tab shows a status pill (`processing` / `ready` / `error`) and polls every few seconds — no manual refresh needed. Submission is async: the endpoint returns 202 immediately; the background reprocess typically takes 15–60 s depending on the model and transcript length.
 
+### Attachments — files, links, and pasted images
+
+Each meeting has an **Attachments** tab on the detail page; the same panel also appears on the Record page once a recording starts so you can attach context mid-meeting (drop in a slide deck, paste a chart screenshot, drop a link to the spec being discussed).
+
+Supported inputs:
+
+- **Files:** PDF, DOCX, PPTX, PNG, JPG, HEIC. 50 MB cap.
+- **Links:** any HTTP(S) URL. Fetched server-side; readable text extracted via `trafilatura`.
+- **Pasted images:** clipboard image paste captured globally on the page.
+
+Per attachment, the worker runs in the background:
+
+1. Extracts text — text-layer for PDF, OCR fallback for scanned PDFs (`tesseract` + `poppler`), full-document order for DOCX, slide titles + body + speaker notes for PPTX, OCR for images, readable-text extraction for links.
+2. Stores the extracted content as a sidecar markdown at `data/attachments/{meeting_id}/{attachment_id}.md`.
+3. Calls the LLM with a separate prompt (tiered length: short for screenshots, comprehensive for long docs) to produce a summary that grounds the extracted text. The system prompt forbids paraphrasing numbers, dates, and proper nouns — verbatim quotes only.
+4. Marks the attachment `ready`.
+
+When minutes are generated (or regenerated) for the meeting, the pipeline:
+
+- Briefly waits for any in-flight summaries.
+- Splices a `## ATTACHED MATERIAL` block into the LLM prompt — the model treats it as ground truth.
+- Post-appends a verbatim `## Attachments` section to the rendered minutes (and the JSON's embedded markdown) listing each attachment with its summary and a link to the raw source, so a reader can crosscheck the minutes against the original material.
+
+System dependencies (auto-installed by `install.sh` on macOS): `tesseract` (image and scanned-PDF OCR), `poppler` (rendering scanned PDFs to images for OCR). `mm doctor` reports both as warnings (not failures) — image and scanned-PDF attachments need them, but other kinds work without.
+
+Attachments also feed into:
+
+- **Search.** Extracted attachment text is folded into the FTS5 minutes index, so keyword search hits the body of attached PDFs / DOCX / OCR'd images.
+- **Chat.** Each ready summary contributes one `attachment_summary` chunk to the embedding store, so "what did the Q3 deck say about EMEA?" surfaces the right material with a clear citation.
+- **Speaker rename.** During minutes generation, the LLM that maps `SPEAKER_xx` labels to human names also sees attachment summaries — title-slide presenter names and explicit attendee lists are useful tie-breakers (weighted lower than meeting-app notes, since attachment authors aren't always participants).
+- **Long documents.** Inputs over ~100k characters get a two-phase **map-reduce** summarization (chunk-by-chunk → synthesis) so book-length PDFs are summarized end-to-end rather than truncated.
+
+API:
+
+- `POST /api/meetings/{id}/attachments` — multipart upload (file).
+- `POST /api/meetings/{id}/attachments/link` — JSON `{ url, title?, caption? }`.
+- `GET /api/meetings/{id}/attachments` — list with status.
+- `GET /api/attachments/{id}` — detail (parsed sidecar, summary, extracted text).
+- `GET /api/attachments/{id}/raw` — original bytes (or 410 if pruned by retention).
+- `DELETE /api/attachments/{id}`.
+
 **Development** (with hot reload):
 ```bash
 mm serve                          # API on :8080
