@@ -192,6 +192,7 @@ def _mk_action(
         owner=owner,
         status=status,
         due_date=due_date,
+        proposal_state="confirmed",
     )
     session.add(ai)
     session.commit()

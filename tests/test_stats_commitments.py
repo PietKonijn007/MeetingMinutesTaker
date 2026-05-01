@@ -55,6 +55,7 @@ def _mk_action(session, *, meeting_id, owner, status="open", due_date=None):
         owner=owner,
         status=status,
         due_date=due_date,
+        proposal_state="confirmed",
     )
     session.add(ai)
     session.commit()
