@@ -35,7 +35,7 @@ def test_diarization_speaker_label_pattern(n_speakers: int):
     mock_diarization.itertracks = MagicMock(return_value=iter(segments))
 
     mock_pipeline = MagicMock(return_value=mock_diarization)
-    engine._pipeline = mock_pipeline
+    engine.backend._pipeline = mock_pipeline
 
     # Create dummy audio file
     import tempfile
@@ -168,7 +168,7 @@ def test_diarize_surfaces_cluster_embeddings_when_available():
     # mock provides both — but the first check succeeds, so the unwrap skips
     # the speaker_diarization branch. We explicitly provide itertracks to
     # keep the test aligned with what the engine actually sees.)
-    engine._pipeline = MagicMock(return_value=output)
+    engine.backend._pipeline = MagicMock(return_value=output)
 
     with tempfile.NamedTemporaryFile(suffix=".flac") as f:
         result = engine.diarize(Path(f.name))
@@ -188,7 +188,7 @@ def test_diarize_without_embeddings_leaves_cluster_embeddings_empty():
     config = DiarizationConfig(enabled=True)
     engine = DiarizationEngine(config)
     output = _build_mock_diarize_output(n_speakers=1, with_embeddings=False)
-    engine._pipeline = MagicMock(return_value=output)
+    engine.backend._pipeline = MagicMock(return_value=output)
 
     with tempfile.NamedTemporaryFile(suffix=".flac") as f:
         engine.diarize(Path(f.name))

@@ -179,6 +179,18 @@ export const api = {
   getProviderModels: (provider, refresh = false) =>
     request(`/config/provider-models?provider=${provider}&refresh=${refresh}`),
 
+  // Secrets — read-only metadata (is_set + preview); writes go through PUT.
+  // Server stores values in a gitignored .env; restart required for changes
+  // to reach already-running clients (pyannote, openai, etc.).
+  getSecret: (name) => request(`/config/secrets/${encodeURIComponent(name)}`),
+  setSecret: (name, value) => request(`/config/secrets/${encodeURIComponent(name)}`, {
+    method: 'PUT',
+    body: JSON.stringify({ value }),
+  }),
+  clearSecret: (name) => request(`/config/secrets/${encodeURIComponent(name)}`, {
+    method: 'DELETE',
+  }),
+
   // Upload
   uploadTranscript: (formData) => fetch('/api/upload-transcript', { method: 'POST', body: formData }).then(res => {
     if (!res.ok) return res.json().then(err => { throw new Error(err.detail || res.statusText); });

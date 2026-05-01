@@ -8,10 +8,39 @@ from typing import Annotated
 
 import yaml
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, Field
 
 from meeting_minutes.api.deps import get_config
 from meeting_minutes.api.schemas import ConfigResponse, ConfigUpdate
+from meeting_minutes.api.secrets import (
+    clear_secret,
+    get_secret_status,
+    is_valid_secret_name,
+    set_secret,
+)
 from meeting_minutes.config import AppConfig
+
+# ---------------------------------------------------------------------------
+# Secret management — env-var values stored in .env (gitignored).
+#
+# Used by the settings UI to set things like PYANNOTEAI_API_KEY without
+# requiring users to drop into a terminal. Values are write-only over the
+# API: GET only reports whether a key is set and a sanitized preview.
+# ---------------------------------------------------------------------------
+
+# Whitelist of env-var names the UI is allowed to write. Keeps the surface
+# narrow — random callers can't cram arbitrary names into .env.
+_WRITABLE_SECRETS = {
+    "PYANNOTEAI_API_KEY",
+    "HF_TOKEN",
+    "ANTHROPIC_API_KEY",
+    "OPENAI_API_KEY",
+    "OPENROUTER_API_KEY",
+}
+
+
+class SecretBody(BaseModel):
+    value: str = Field(..., min_length=1, max_length=4096)
 
 router = APIRouter(prefix="/api/config", tags=["config"])
 
@@ -106,6 +135,46 @@ async def get_provider_models_endpoint(
     from meeting_minutes.api.model_fetcher import get_provider_models
 
     return await get_provider_models(provider, force_refresh=refresh)
+
+
+@router.get("/secrets/{name}")
+def get_secret_endpoint(name: str):
+    """Return whether ``name`` is set in ``.env``, plus a sanitized preview.
+
+    Never returns the value itself. The preview (first/last few chars + length)
+    is enough for a user to confirm they pasted the right key without
+    exposing it on the wire.
+    """
+    if not is_valid_secret_name(name) or name not in _WRITABLE_SECRETS:
+        raise HTTPException(status_code=400, detail=f"Unknown or invalid secret: {name}")
+    return get_secret_status(name)
+
+
+@router.put("/secrets/{name}")
+def set_secret_endpoint(name: str, body: SecretBody):
+    """Write ``name=value`` to ``.env`` (gitignored).
+
+    Restart required: env vars are loaded at process start, so an in-flight
+    pyannote/openai client won't pick up the new value until the next server
+    launch. The response includes ``restart_required: true`` so the UI can
+    surface that to the user.
+    """
+    if not is_valid_secret_name(name) or name not in _WRITABLE_SECRETS:
+        raise HTTPException(status_code=400, detail=f"Unknown or invalid secret: {name}")
+    try:
+        set_secret(name, body.value.strip())
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    return {"is_set": True, "restart_required": True}
+
+
+@router.delete("/secrets/{name}")
+def delete_secret_endpoint(name: str):
+    """Remove ``name`` from ``.env``. Restart still required to take effect."""
+    if not is_valid_secret_name(name) or name not in _WRITABLE_SECRETS:
+        raise HTTPException(status_code=400, detail=f"Unknown or invalid secret: {name}")
+    removed = clear_secret(name)
+    return {"is_set": False, "removed": removed, "restart_required": removed}
 
 
 @router.get("/transcription-engines")

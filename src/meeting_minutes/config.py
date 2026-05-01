@@ -23,18 +23,64 @@ class TranscriptionConfig(BaseModel):
     custom_vocabulary: str | None = None
 
 
+class PyannoteAIConfig(BaseModel):
+    """Settings for the pyannoteAI hosted API backend (engine: pyannote-ai).
+
+    pyannoteAI is the commercial offering from the authors of pyannote.audio.
+    Two relevant tiers:
+
+    * ``community-1`` — same open-weights model as the local community-1 path
+      but hosted (~€0.04/hr at the time of writing). Useful for users who
+      don't want to install torch/pyannote locally.
+    * ``precision-2`` — proprietary flagship with the best published DER
+      (12.9 AMI / 14.7 DIHARD3 in their Apr-2026 numbers). ~€0.11/hr.
+    """
+
+    tier: str = "community-1"
+    # Env var name holding the API key — keeps the key out of the YAML so
+    # the config can be committed without leaking credentials.
+    api_key_env: str = "PYANNOTEAI_API_KEY"
+    # Wall-clock cap on the post-upload polling loop. A 2-hour meeting on
+    # Precision-2 typically finishes in 2–10 min; the wide default absorbs
+    # queue time during the API's busy hours.
+    poll_timeout_seconds: int = 1800
+    poll_interval_seconds: int = 4
+
+
+class PyannoteMLXConfig(BaseModel):
+    """Settings for the MLX-accelerated local backend (engine: pyannote-mlx).
+
+    This backend keeps pyannote's segmentation and clustering on PyTorch but
+    swaps the embedding stage — the measured ~95% of total runtime — for an
+    MLX-native WeSpeaker forward pass. Only meaningful on Apple Silicon;
+    on CUDA hosts the standard pyannote backend is already faster.
+    """
+
+    # MLX repo holding the weights. Default is the community port of the
+    # exact WeSpeaker ResNet-34 pyannote uses, so no accuracy change.
+    embedding_model: str = "mlx-community/wespeaker-voxceleb-resnet34-LM"
+
+
 class DiarizationConfig(BaseModel):
     enabled: bool = True
+    # Backend selector. ``pyannote`` runs the local PyTorch pipeline (default,
+    # no extra setup). ``pyannote-ai`` calls the hosted pyannoteAI API.
+    # ``pyannote-mlx`` uses Apple Silicon MLX for the embedding stage.
     engine: str = "pyannote"
-    # pyannote's pretrained config defaults both batch sizes to 32, which
-    # leaves the GPU/MPS heavily under-utilized for the embedding stage —
-    # the dominant cost on long meetings. Raising embedding_batch_size to
-    # 128 typically gives a 2–3× speedup on Apple Silicon with no accuracy
-    # change, since it just packs more crops into each forward pass of the
-    # ~6M-param wespeaker model. Lower if you hit MPS OOM on a constrained
-    # machine; raise if you have plenty of memory and want every last bit.
-    embedding_batch_size: int = 128
+    # HuggingFace repo for the local pyannote pipeline. ``community-1`` is
+    # the 2025 successor to ``3.1`` — same API, ~10% better DER, CC-BY-4.0
+    # commercial-friendly license. Override to
+    # ``pyannote/speaker-diarization-3.1`` for the legacy model.
+    model: str = "pyannote/speaker-diarization-community-1"
+    # pyannote's pretrained config defaults both batch sizes to 32. We keep
+    # the override knobs even though tuning these didn't move the needle on
+    # MPS in our measurements — they remain useful on CUDA and for users
+    # with unusual memory constraints.
+    embedding_batch_size: int = 32
     segmentation_batch_size: int = 32
+
+    pyannote_ai: PyannoteAIConfig = PyannoteAIConfig()
+    pyannote_mlx: PyannoteMLXConfig = PyannoteMLXConfig()
 
 
 class OllamaConfig(BaseModel):

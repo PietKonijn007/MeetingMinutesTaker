@@ -56,6 +56,16 @@ local-ai = [
     "pywhispercpp>=1.2.0",  # whisper.cpp transcription engine
     "psutil>=5.9.0",        # hardware detection (RAM, etc.)
 ]
+# Cloud diarization via the pyannoteAI hosted API (engine: pyannote-ai).
+# Install with: pip install -e '.[diarize-cloud]'
+diarize-cloud = [
+    "pyannoteai-sdk>=0.4.0",
+]
+# MLX-accelerated local diarization for Apple Silicon (engine: pyannote-mlx).
+# Install with: pip install -e '.[diarize-mlx]'  (Apple Silicon only)
+diarize-mlx = [
+    "mlx>=0.20.0",
+]
 
 [project.scripts]
 mm = "meeting_minutes.system3.cli:app"

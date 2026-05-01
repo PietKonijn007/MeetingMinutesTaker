@@ -18,6 +18,15 @@
   let transcription_model = $state('medium');
   let transcription_language = $state('auto');
   let diarization_enabled = $state(true);
+  // Diarization backend selection (pluggable architecture)
+  let diarization_engine = $state('pyannote');               // pyannote | pyannote-ai | pyannote-mlx
+  let diarization_model = $state('pyannote/speaker-diarization-community-1');
+  let diarization_pyannote_ai_tier = $state('community-1');  // community-1 | precision-2
+  let diarization_pyannote_ai_api_key_env = $state('PYANNOTEAI_API_KEY');
+  let diarization_pyannote_ai_api_key_input = $state('');    // not bound to config — write-only
+  let diarization_pyannote_ai_key_status = $state({ is_set: false, preview: null });
+  let saving_pyannote_key = $state(false);
+  let diarization_pyannote_mlx_embedding_model = $state('mlx-community/wespeaker-voxceleb-resnet34-LM');
 
   // Hardware info & local AI status
   let hardware_info = $state(null);
@@ -209,6 +218,13 @@
         transcription_model = t.whisper_model || 'medium';
         transcription_language = t.language || 'auto';
         diarization_enabled = d.enabled !== false;
+        diarization_engine = d.engine || 'pyannote';
+        diarization_model = d.model || 'pyannote/speaker-diarization-community-1';
+        const dai = d.pyannote_ai || {};
+        diarization_pyannote_ai_tier = dai.tier || 'community-1';
+        diarization_pyannote_ai_api_key_env = dai.api_key_env || 'PYANNOTEAI_API_KEY';
+        const dmlx = d.pyannote_mlx || {};
+        diarization_pyannote_mlx_embedding_model = dmlx.embedding_model || 'mlx-community/wespeaker-voxceleb-resnet34-LM';
         llm_provider = llm.primary_provider || 'anthropic';
         llm_model = llm.model || 'claude-sonnet-4-6';
         llm_temperature = llm.temperature ?? 0.2;
@@ -294,6 +310,14 @@
         custom_models = { anthropic: [], openai: [], openrouter: [], ollama: [] };
       }
 
+      // Refresh the pyannoteAI key status — never reveals the value, only
+      // whether it's present and a sanitized preview.
+      try {
+        diarization_pyannote_ai_key_status = await api.getSecret(diarization_pyannote_ai_api_key_env);
+      } catch (_) {
+        diarization_pyannote_ai_key_status = { is_set: false, preview: null };
+      }
+
       // Load dynamic model list for current provider
       loadProviderModels(llm_provider);
 
@@ -348,7 +372,16 @@
           custom_vocabulary: transcription_custom_vocabulary.trim() || null
         },
         diarization: {
-          enabled: diarization_enabled
+          enabled: diarization_enabled,
+          engine: diarization_engine,
+          model: diarization_model,
+          pyannote_ai: {
+            tier: diarization_pyannote_ai_tier,
+            api_key_env: diarization_pyannote_ai_api_key_env
+          },
+          pyannote_mlx: {
+            embedding_model: diarization_pyannote_mlx_embedding_model
+          }
         },
         generation: {
           llm: {
@@ -435,6 +468,38 @@
   async function reloadConfig() {
     await loadConfig();
     addToast('Reloaded from config.yaml', 'info');
+  }
+
+  async function savePyannoteApiKey() {
+    if (!diarization_pyannote_ai_api_key_input.trim()) return;
+    saving_pyannote_key = true;
+    try {
+      const result = await api.setSecret(
+        diarization_pyannote_ai_api_key_env,
+        diarization_pyannote_ai_api_key_input.trim(),
+      );
+      diarization_pyannote_ai_api_key_input = '';
+      diarization_pyannote_ai_key_status = await api.getSecret(diarization_pyannote_ai_api_key_env);
+      const restartNote = result?.restart_required ? ' Restart the server to apply.' : '';
+      addToast(`API key saved.${restartNote}`, 'success');
+    } catch (e) {
+      addToast(`Failed to save API key: ${e.message}`, 'error');
+    } finally {
+      saving_pyannote_key = false;
+    }
+  }
+
+  async function clearPyannoteApiKey() {
+    saving_pyannote_key = true;
+    try {
+      await api.clearSecret(diarization_pyannote_ai_api_key_env);
+      diarization_pyannote_ai_key_status = { is_set: false, preview: null };
+      addToast('API key removed. Restart the server to apply.', 'info');
+    } catch (e) {
+      addToast(`Failed to clear API key: ${e.message}`, 'error');
+    } finally {
+      saving_pyannote_key = false;
+    }
   }
 
   onMount(loadConfig);
@@ -592,18 +657,137 @@
         <h2 class="text-lg font-semibold text-[var(--text-primary)] mb-1">Speaker Identification</h2>
         <p class="text-sm text-[var(--text-muted)] mb-4">Speaker diarization settings.</p>
 
-        <label class="flex items-center gap-3 cursor-pointer">
-          <input
-            type="checkbox"
-            bind:checked={diarization_enabled}
-            class="w-4 h-4 rounded border-[var(--border-subtle)] text-[var(--accent)]
-                   focus:ring-[var(--accent)] focus:ring-2"
-          />
-          <div>
-            <span class="text-sm font-medium text-[var(--text-primary)]">Enable diarization</span>
-            <p class="text-xs text-[var(--text-muted)]">Identify and label individual speakers in the transcript.</p>
-          </div>
-        </label>
+        <div class="space-y-4">
+          <label class="flex items-center gap-3 cursor-pointer">
+            <input
+              type="checkbox"
+              bind:checked={diarization_enabled}
+              class="w-4 h-4 rounded border-[var(--border-subtle)] text-[var(--accent)]
+                     focus:ring-[var(--accent)] focus:ring-2"
+            />
+            <div>
+              <span class="text-sm font-medium text-[var(--text-primary)]">Enable diarization</span>
+              <p class="text-xs text-[var(--text-muted)]">Identify and label individual speakers in the transcript.</p>
+            </div>
+          </label>
+
+          {#if diarization_enabled}
+            <div>
+              <label for="diariz-engine" class="block text-sm font-medium text-[var(--text-primary)] mb-1">Backend</label>
+              <select
+                id="diariz-engine"
+                bind:value={diarization_engine}
+                class="w-full px-3 py-2 bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg text-sm text-[var(--text-primary)]
+                       focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
+              >
+                <option value="pyannote">Local — pyannote (PyTorch, default)</option>
+                <option value="pyannote-ai">Cloud — pyannoteAI hosted API (paid)</option>
+                <option value="pyannote-mlx">Local — pyannote-mlx (Apple Silicon, experimental)</option>
+              </select>
+              <p class="text-xs text-[var(--text-muted)] mt-1">
+                {#if diarization_engine === 'pyannote'}
+                  Runs in-process via PyTorch. Free, private. Slow on long meetings (~0.5–1× realtime).
+                {:else if diarization_engine === 'pyannote-ai'}
+                  Hosted API by the pyannote.audio authors. Fast (minutes), best DER. Paid (€0.04–€0.11/hr). Requires <code class="text-xs">pip install -e '.[diarize-cloud]'</code>.
+                {:else if diarization_engine === 'pyannote-mlx'}
+                  Apple Silicon hybrid: pyannote segmentation + MLX embedding. Experimental. Requires <code class="text-xs">pip install -e '.[diarize-mlx]'</code>.
+                {/if}
+              </p>
+            </div>
+
+            {#if diarization_engine === 'pyannote' || diarization_engine === 'pyannote-mlx'}
+              <div>
+                <label for="diariz-model" class="block text-sm font-medium text-[var(--text-primary)] mb-1">Local model</label>
+                <input
+                  id="diariz-model"
+                  type="text"
+                  bind:value={diarization_model}
+                  class="w-full px-3 py-2 bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg text-sm text-[var(--text-primary)] font-mono
+                         focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
+                />
+                <p class="text-xs text-[var(--text-muted)] mt-1">HuggingFace model name. Default: <code class="text-xs">pyannote/speaker-diarization-community-1</code> (open weights, CC-BY-4.0). Override to <code class="text-xs">pyannote/speaker-diarization-3.1</code> for the legacy model.</p>
+              </div>
+            {/if}
+
+            {#if diarization_engine === 'pyannote-ai'}
+              <div class="border border-[var(--border-subtle)] rounded-lg p-4 space-y-4 bg-[var(--bg-surface)]">
+                <div>
+                  <label for="diariz-tier" class="block text-sm font-medium text-[var(--text-primary)] mb-1">Tier</label>
+                  <select
+                    id="diariz-tier"
+                    bind:value={diarization_pyannote_ai_tier}
+                    class="w-full px-3 py-2 bg-[var(--bg-base)] border border-[var(--border-subtle)] rounded-lg text-sm text-[var(--text-primary)]
+                           focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
+                  >
+                    <option value="community-1">community-1 (~€0.04/hr, open weights)</option>
+                    <option value="precision-2">precision-2 (~€0.11/hr, best DER)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label for="diariz-key-env" class="block text-sm font-medium text-[var(--text-primary)] mb-1">API key env var</label>
+                  <input
+                    id="diariz-key-env"
+                    type="text"
+                    bind:value={diarization_pyannote_ai_api_key_env}
+                    class="w-full px-3 py-2 bg-[var(--bg-base)] border border-[var(--border-subtle)] rounded-lg text-sm text-[var(--text-primary)] font-mono
+                           focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
+                  />
+                  <p class="text-xs text-[var(--text-muted)] mt-1">Name of the environment variable holding the key. Default: <code class="text-xs">PYANNOTEAI_API_KEY</code>.</p>
+                </div>
+
+                <div>
+                  <label for="diariz-key" class="block text-sm font-medium text-[var(--text-primary)] mb-1">API key</label>
+                  {#if diarization_pyannote_ai_key_status.is_set}
+                    <div class="flex items-center gap-2 mb-2">
+                      <span class="text-xs px-2 py-1 rounded bg-[color-mix(in_srgb,var(--accent)_15%,transparent)] text-[var(--accent)] font-mono">
+                        ✓ {diarization_pyannote_ai_key_status.preview ?? 'set'}
+                      </span>
+                      <button
+                        type="button"
+                        onclick={clearPyannoteApiKey}
+                        disabled={saving_pyannote_key}
+                        class="text-xs px-2 py-1 rounded border border-[var(--border-subtle)] text-[var(--text-muted)] hover:text-[var(--text-primary)] disabled:opacity-50"
+                      >Remove</button>
+                    </div>
+                  {/if}
+                  <div class="flex gap-2">
+                    <input
+                      id="diariz-key"
+                      type="password"
+                      bind:value={diarization_pyannote_ai_api_key_input}
+                      placeholder={diarization_pyannote_ai_key_status.is_set ? 'Replace key…' : 'Paste your pyannoteAI API key'}
+                      autocomplete="off"
+                      class="flex-1 px-3 py-2 bg-[var(--bg-base)] border border-[var(--border-subtle)] rounded-lg text-sm text-[var(--text-primary)] font-mono
+                             focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
+                    />
+                    <button
+                      type="button"
+                      onclick={savePyannoteApiKey}
+                      disabled={saving_pyannote_key || !diarization_pyannote_ai_api_key_input.trim()}
+                      class="px-3 py-2 bg-[var(--accent)] text-white rounded-lg text-sm font-medium disabled:opacity-50"
+                    >{saving_pyannote_key ? 'Saving…' : 'Save key'}</button>
+                  </div>
+                  <p class="text-xs text-[var(--text-muted)] mt-1">Stored in <code class="text-xs">.env</code> (gitignored, file mode 600). Server restart required to take effect. Get a key at <a href="https://dashboard.pyannote.ai" target="_blank" rel="noopener" class="text-[var(--accent)] hover:underline">dashboard.pyannote.ai</a>.</p>
+                </div>
+              </div>
+            {/if}
+
+            {#if diarization_engine === 'pyannote-mlx'}
+              <div>
+                <label for="diariz-mlx-model" class="block text-sm font-medium text-[var(--text-primary)] mb-1">MLX embedding model</label>
+                <input
+                  id="diariz-mlx-model"
+                  type="text"
+                  bind:value={diarization_pyannote_mlx_embedding_model}
+                  class="w-full px-3 py-2 bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg text-sm text-[var(--text-primary)] font-mono
+                         focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
+                />
+                <p class="text-xs text-[var(--text-muted)] mt-1">MLX wespeaker port from the mlx-community HuggingFace org. Replaces only the embedding stage; segmentation and clustering still run on PyTorch.</p>
+              </div>
+            {/if}
+          {/if}
+        </div>
       </section>
 
       <!-- Performance & Hardware -->

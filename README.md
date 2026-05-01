@@ -458,6 +458,14 @@ transcription:
 
 diarization:
   enabled: true
+  engine: pyannote                  # pyannote (local) | pyannote-ai (cloud) | pyannote-mlx (Apple Silicon)
+  model: pyannote/speaker-diarization-community-1
+  # Cloud backend (engine: pyannote-ai) — paid, hosted by the pyannote authors.
+  # Install: pip install -e '.[diarize-cloud]'  + set $PYANNOTEAI_API_KEY
+  pyannote_ai:
+    tier: community-1               # community-1 (€0.04/hr) | precision-2 (€0.11/hr, best DER)
+  # MLX backend (engine: pyannote-mlx) — experimental Apple Silicon path.
+  # Install: pip install -e '.[diarize-mlx]'
 
 generation:
   llm:
@@ -513,7 +521,8 @@ MeetingMinutesTaker/
 │   ├── system1/               # Audio capture & transcription
 │   │   ├── capture.py         #   AudioCaptureEngine (sounddevice, circular buffer)
 │   │   ├── transcribe.py      #   Transcription engine factory (faster-whisper, whisper.cpp)
-│   │   ├── diarize.py         #   DiarizationEngine (pyannote.audio)
+│   │   ├── diarize.py         #   DiarizationEngine — façade over pluggable backends
+│   │   ├── diarization_backends/   # pyannote-local | pyannote-ai | pyannote-mlx
 │   │   └── output.py          #   TranscriptJSONWriter
 │   ├── system2/               # Minutes generation
 │   │   ├── ingest.py          #   TranscriptIngester (validation, speaker mapping)

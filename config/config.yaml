@@ -15,6 +15,16 @@ transcription:
 diarization:
   enabled: true
   engine: pyannote
+  model: pyannote/speaker-diarization-community-1
+  embedding_batch_size: 32
+  segmentation_batch_size: 32
+  pyannote_ai:
+    tier: community-1
+    api_key_env: PYANNOTEAI_API_KEY
+    poll_timeout_seconds: 1800
+    poll_interval_seconds: 4
+  pyannote_mlx:
+    embedding_model: mlx-community/wespeaker-voxceleb-resnet34-LM
 generation:
   llm:
     primary_provider: anthropic
@@ -82,10 +92,10 @@ attachments:
   enabled: true
   max_file_size_mb: 50
   allowed_mime_types:
-    - application/pdf
-    - application/vnd.openxmlformats-officedocument.wordprocessingml.document
-    - application/vnd.openxmlformats-officedocument.presentationml.presentation
-    - image/png
-    - image/jpeg
-    - image/heic
+  - application/pdf
+  - application/vnd.openxmlformats-officedocument.wordprocessingml.document
+  - application/vnd.openxmlformats-officedocument.presentationml.presentation
+  - image/png
+  - image/jpeg
+  - image/heic
   summary_wait_seconds: 60
