@@ -27,6 +27,7 @@
   let diarization_pyannote_ai_key_status = $state({ is_set: false, preview: null });
   let saving_pyannote_key = $state(false);
   let diarization_pyannote_mlx_embedding_model = $state('mlx-community/wespeaker-voxceleb-resnet34-LM');
+  let diarization_fallback_to_local = $state(true);   // auto-fall-back to local pyannote on cloud failures
 
   // Hardware info & local AI status
   let hardware_info = $state(null);
@@ -225,6 +226,7 @@
         diarization_pyannote_ai_api_key_env = dai.api_key_env || 'PYANNOTEAI_API_KEY';
         const dmlx = d.pyannote_mlx || {};
         diarization_pyannote_mlx_embedding_model = dmlx.embedding_model || 'mlx-community/wespeaker-voxceleb-resnet34-LM';
+        diarization_fallback_to_local = d.fallback_to_local !== false;
         llm_provider = llm.primary_provider || 'anthropic';
         llm_model = llm.model || 'claude-sonnet-4-6';
         llm_temperature = llm.temperature ?? 0.2;
@@ -375,6 +377,7 @@
           enabled: diarization_enabled,
           engine: diarization_engine,
           model: diarization_model,
+          fallback_to_local: diarization_fallback_to_local,
           pyannote_ai: {
             tier: diarization_pyannote_ai_tier,
             api_key_env: diarization_pyannote_ai_api_key_env
@@ -690,9 +693,15 @@
                 {:else if diarization_engine === 'pyannote-ai'}
                   Hosted API by the pyannote.audio authors. Fast (minutes), best DER. Paid (€0.04–€0.11/hr). Requires <code class="text-xs">pip install -e '.[diarize-cloud]'</code>.
                 {:else if diarization_engine === 'pyannote-mlx'}
-                  Apple Silicon hybrid: pyannote segmentation + MLX embedding. Experimental. Requires <code class="text-xs">pip install -e '.[diarize-mlx]'</code>.
+                  Apple Silicon hybrid: pyannote segmentation + MLX embedding. Requires <code class="text-xs">pip install -e '.[diarize-mlx]'</code>.
                 {/if}
               </p>
+              {#if diarization_engine === 'pyannote-mlx'}
+                <div class="mt-2 px-3 py-2 rounded border border-amber-500/40 bg-amber-500/10 text-xs text-[var(--text-primary)]">
+                  <strong>Experimental — currently no speedup vs <code>pyannote</code> on the <code>community-1</code> model.</strong>
+                  In measured runs MLX matches local PyTorch within 3% because the per-utterance fbank step (Python loop) dominates each batch. The wrapper is correct (matching speaker counts and segments) but not yet faster. Planned fix: vectorize the fbank step. For speed today, use <code>pyannote-ai</code>.
+                </div>
+              {/if}
             </div>
 
             {#if diarization_engine === 'pyannote' || diarization_engine === 'pyannote-mlx'}
@@ -770,6 +779,21 @@
                   </div>
                   <p class="text-xs text-[var(--text-muted)] mt-1">Stored in <code class="text-xs">.env</code> (gitignored, file mode 600). Server restart required to take effect. Get a key at <a href="https://dashboard.pyannote.ai" target="_blank" rel="noopener" class="text-[var(--accent)] hover:underline">dashboard.pyannote.ai</a>.</p>
                 </div>
+
+                <label class="flex items-start gap-3 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    bind:checked={diarization_fallback_to_local}
+                    class="mt-0.5 w-4 h-4 rounded border-[var(--border-subtle)] text-[var(--accent)]
+                           focus:ring-[var(--accent)] focus:ring-2"
+                  />
+                  <div>
+                    <span class="text-sm font-medium text-[var(--text-primary)]">Fall back to local pyannote on cloud failure</span>
+                    <p class="text-xs text-[var(--text-muted)]">
+                      When the cloud call fails — no internet, expired key, API 5xx, timeout, malformed response — automatically run the local PyTorch pipeline so the meeting still gets diarized. Slower (50 min for a 60-min meeting) but it always works. Disable to surface failures explicitly.
+                    </p>
+                  </div>
+                </label>
               </div>
             {/if}
 

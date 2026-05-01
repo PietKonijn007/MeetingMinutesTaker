@@ -37,14 +37,22 @@ class PyannoteAIBackend(DiarizationBackend):
     def __init__(self, config: DiarizationConfig) -> None:
         super().__init__(config)
         self._client = None  # lazy — only created on first diarize() call
+        # Lazy local fallback. Constructed only on the first cloud failure
+        # so an internet-connected user never pays for the local pyannote
+        # import (~3-5s, plus the model download on first run).
+        self._local_fallback = None
 
     @property
     def supports_embeddings(self) -> bool:
-        # We don't pull voiceprints by default (extra cost + extra latency).
-        # SPK-1 cross-meeting re-id will skip the embedding path; to enable
-        # voiceprints, extend this backend with a voiceprint() call after
-        # diarize() and surface the results via _last_cluster_embeddings.
-        return False
+        # The cloud path doesn't pull voiceprints by default (extra cost +
+        # extra latency). But when ``fallback_to_local`` is on, *some* runs
+        # will actually go through the local pyannote path, which does
+        # surface embeddings — so SPK-1 should still attempt centroid
+        # matching for those runs. Returning True when fallback is enabled
+        # lets the cross-meeting re-id layer try, and it correctly no-ops
+        # on the cloud-success path because ``last_cluster_embeddings`` is
+        # empty there.
+        return bool(self._config.fallback_to_local)
 
     def _get_client(self):
         if self._client is not None:
@@ -82,57 +90,108 @@ class PyannoteAIBackend(DiarizationBackend):
         if not audio_path.exists():
             raise FileNotFoundError(f"Audio file not found: {audio_path}")
 
+        # ------------------------------------------------------------------
+        # Try cloud first. Any failure short-circuits to the local fallback
+        # (when enabled) so the user gets a diarized meeting one way or
+        # another — no internet, expired key, API 5xx, malformed response,
+        # they all funnel into the same recovery path.
+        # ------------------------------------------------------------------
+        cloud_failure: str | None = None
         try:
             client = self._get_client()
         except Exception as exc:
-            logger.warning("pyannoteAI backend unavailable: %s", exc)
-            return self.empty_result()
+            cloud_failure = f"client init failed: {exc}"
+            client = None
 
-        tier = self._config.pyannote_ai.tier
-        logger.info(
-            "Diarization (pyannoteAI): tier=%s file=%s",
-            tier, audio_path.name,
+        result: DiarizationResult | None = None
+        if client is not None:
+            tier = self._config.pyannote_ai.tier
+            logger.info(
+                "Diarization (pyannoteAI): tier=%s file=%s",
+                tier, audio_path.name,
+            )
+
+            kwargs: dict = {"model": tier}
+            if num_speakers is not None and num_speakers > 0:
+                kwargs["num_speakers"] = int(num_speakers)
+            if min_speakers is not None and min_speakers > 0:
+                kwargs["min_speakers"] = int(min_speakers)
+            if max_speakers is not None and max_speakers > 0:
+                kwargs["max_speakers"] = int(max_speakers)
+            if {"num_speakers", "min_speakers", "max_speakers"} & set(kwargs):
+                logger.info("Diarization called with hints: %s", {
+                    k: v for k, v in kwargs.items() if k != "model"
+                })
+
+            try:
+                # 1) Upload audio → media:// URL.
+                media_url = client.upload(str(audio_path))
+                # 2) Submit the diarize job.
+                job_id = client.diarize(media_url, **kwargs)
+                # 3) Block-poll until done.
+                poll_interval = max(1, int(self._config.pyannote_ai.poll_interval_seconds))
+                raw_result = client.retrieve(job_id, every_seconds=poll_interval)
+            except Exception as exc:
+                cloud_failure = f"call failed: {exc}"
+            else:
+                result = self._parse_result(raw_result)
+                # Treat an empty-segment result as a failure too — the API
+                # returned a usable response but with nothing in it, which
+                # is no better than no diarization at all from the user's POV.
+                if not result.segments:
+                    cloud_failure = "API returned no segments"
+                    result = None
+
+        if result is not None:
+            return result
+
+        # Cloud path failed. Fall back to local pyannote when enabled — the
+        # alternative is shipping an empty result, which silently breaks
+        # downstream speaker labeling.
+        assert cloud_failure is not None  # guarded by the elif structure
+        if self._config.fallback_to_local:
+            logger.warning(
+                "pyannoteAI %s — falling back to local pyannote engine",
+                cloud_failure,
+            )
+            return self._run_local_fallback(
+                audio_path,
+                num_speakers=num_speakers,
+                min_speakers=min_speakers,
+                max_speakers=max_speakers,
+            )
+        logger.warning(
+            "pyannoteAI %s — fallback disabled (diarization.fallback_to_local=false)",
+            cloud_failure,
         )
+        return self.empty_result()
 
-        # 1) Upload the audio. Returns a media:// URL the API can fetch.
-        try:
-            media_url = client.upload(str(audio_path))
-        except Exception as exc:
-            logger.warning("pyannoteAI upload failed: %s", exc)
-            return self.empty_result()
+    def _run_local_fallback(
+        self,
+        audio_path: Path,
+        *,
+        num_speakers: int | None,
+        min_speakers: int | None,
+        max_speakers: int | None,
+    ) -> DiarizationResult:
+        """Lazily build a PyannoteLocalBackend and run it.
 
-        # 2) Submit the diarize job. Pass speaker-count hints when given —
-        #    the SDK accepts them with the same semantics as local pyannote.
-        kwargs: dict = {"model": tier}
-        if num_speakers is not None and num_speakers > 0:
-            kwargs["num_speakers"] = int(num_speakers)
-        if min_speakers is not None and min_speakers > 0:
-            kwargs["min_speakers"] = int(min_speakers)
-        if max_speakers is not None and max_speakers > 0:
-            kwargs["max_speakers"] = int(max_speakers)
-        if {"num_speakers", "min_speakers", "max_speakers"} & set(kwargs):
-            logger.info("Diarization called with hints: %s", {
-                k: v for k, v in kwargs.items() if k != "model"
-            })
-
-        try:
-            job_id = client.diarize(media_url, **kwargs)
-        except Exception as exc:
-            logger.warning("pyannoteAI diarize submission failed: %s", exc)
-            return self.empty_result()
-
-        # 3) Poll until done. The SDK's retrieve() blocks internally with a
-        #    configurable poll interval; we cap on our side using a thread
-        #    interrupt rather than driving the polling ourselves so we don't
-        #    duplicate logic the SDK already gets right.
-        try:
-            poll_interval = max(1, int(self._config.pyannote_ai.poll_interval_seconds))
-            result = client.retrieve(job_id, every_seconds=poll_interval)
-        except Exception as exc:
-            logger.warning("pyannoteAI retrieve failed for job %s: %s", job_id, exc)
-            return self.empty_result()
-
-        return self._parse_result(result)
+        Mirrors the active backend's embedding-export contract: when the
+        local pipeline produces per-cluster embeddings, we surface them on
+        ``self._last_cluster_embeddings`` so the SPK-1 layer keeps working
+        across fallback runs.
+        """
+        if self._local_fallback is None:
+            from .pyannote_local import PyannoteLocalBackend
+            self._local_fallback = PyannoteLocalBackend(self._config)
+        result = self._local_fallback.diarize(
+            audio_path,
+            num_speakers=num_speakers,
+            min_speakers=min_speakers,
+            max_speakers=max_speakers,
+        )
+        self._last_cluster_embeddings = self._local_fallback.last_cluster_embeddings
+        return result
 
     def _parse_result(self, result: dict) -> DiarizationResult:
         """Convert the SDK's response dict into our DiarizationResult shape.

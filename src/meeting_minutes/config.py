@@ -67,6 +67,12 @@ class DiarizationConfig(BaseModel):
     # no extra setup). ``pyannote-ai`` calls the hosted pyannoteAI API.
     # ``pyannote-mlx`` uses Apple Silicon MLX for the embedding stage.
     engine: str = "pyannote"
+    # When the active backend is a remote one (``pyannote-ai``) and the call
+    # fails — no internet, auth error, API 5xx, timeout, malformed response —
+    # automatically run the local PyTorch pipeline so the meeting still gets
+    # diarized. Set to False if you'd rather see the failure than silently
+    # fall back to a slower path.
+    fallback_to_local: bool = True
     # HuggingFace repo for the local pyannote pipeline. ``community-1`` is
     # the 2025 successor to ``3.1`` — same API, ~10% better DER, CC-BY-4.0
     # commercial-friendly license. Override to
