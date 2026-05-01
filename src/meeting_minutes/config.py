@@ -26,6 +26,15 @@ class TranscriptionConfig(BaseModel):
 class DiarizationConfig(BaseModel):
     enabled: bool = True
     engine: str = "pyannote"
+    # pyannote's pretrained config defaults both batch sizes to 32, which
+    # leaves the GPU/MPS heavily under-utilized for the embedding stage —
+    # the dominant cost on long meetings. Raising embedding_batch_size to
+    # 128 typically gives a 2–3× speedup on Apple Silicon with no accuracy
+    # change, since it just packs more crops into each forward pass of the
+    # ~6M-param wespeaker model. Lower if you hit MPS OOM on a constrained
+    # machine; raise if you have plenty of memory and want every last bit.
+    embedding_batch_size: int = 128
+    segmentation_batch_size: int = 32
 
 
 class OllamaConfig(BaseModel):

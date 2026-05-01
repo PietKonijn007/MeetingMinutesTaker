@@ -106,6 +106,27 @@ class DiarizationEngine:
                 token=hf_token,
             )
 
+            # Override pyannote's default batch sizes (both 32 in the
+            # pretrained config). The embedding stage dominates runtime on
+            # long meetings (>95% in measured runs), and that loop launches
+            # the wespeaker forward pass once per batch — 32 leaves the GPU
+            # mostly idle. Bumping it amortizes launch overhead. We probe
+            # with hasattr so we degrade gracefully if a future pyannote
+            # release renames or removes these attributes.
+            try:
+                emb_bs = int(self._config.embedding_batch_size)
+                seg_bs = int(self._config.segmentation_batch_size)
+                if hasattr(self._pipeline, "embedding_batch_size"):
+                    self._pipeline.embedding_batch_size = emb_bs
+                if hasattr(self._pipeline, "segmentation_batch_size"):
+                    self._pipeline.segmentation_batch_size = seg_bs
+                logger.info(
+                    "Diarization batch sizes: segmentation=%d embedding=%d",
+                    seg_bs, emb_bs,
+                )
+            except Exception as bs_exc:  # pragma: no cover — best effort
+                logger.warning("Could not set diarization batch sizes: %s", bs_exc)
+
             # Move pipeline to best available device for 5-10x speedup
             try:
                 import torch
