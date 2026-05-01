@@ -12,6 +12,12 @@
   let peopleIds = $state([]);
   let meetingType = $state(null);
 
+  // BRF-2 inputs — topic and focus_items.
+  let topic = $state('');
+  let focusText = $state(''); // multi-line; one focus item per non-empty line
+  let regenerating = $state(false);
+  let downloading = $state(false);
+
   // Start Recording panel state
   let title = $state('');
   let selectedType = $state('other');
@@ -19,10 +25,22 @@
   let carryNote = $state('');
   let starting = $state(false);
 
+  function parseFocusItems(text) {
+    return (text || '')
+      .split('\n')
+      .map(l => l.trim())
+      .filter(Boolean);
+  }
+
   async function load() {
     const sp = $page.url.searchParams;
     peopleIds = sp.getAll('person');
     meetingType = sp.get('type');
+
+    // Allow deep-linking with prefilled topic/focus.
+    topic = sp.get('topic') || '';
+    const focusFromUrl = sp.getAll('focus');
+    if (focusFromUrl.length) focusText = focusFromUrl.join('\n');
 
     if (peopleIds.length === 0) {
       loading = false;
@@ -31,16 +49,68 @@
 
     loading = true;
     try {
+      // First load — no topic / no focus → BRF-1 fast path (no LLM).
       brief = await api.getBriefing(peopleIds, meetingType);
       // Seed the Start Recording panel from the suggested_start block.
       title = brief.suggested_start?.title || '';
       selectedType = brief.suggested_start?.meeting_type || 'other';
       attendeesText = (brief.suggested_start?.attendee_labels || []).join(', ');
       carryNote = brief.suggested_start?.carry_forward_note || '';
+
+      // If topic/focus were supplied via URL, re-fetch with them.
+      if (topic || focusFromUrl.length) {
+        await regenerateWithTopic();
+      }
     } catch (e) {
       addToast(`Could not load briefing: ${e.message}`, 'error');
     } finally {
       loading = false;
+    }
+  }
+
+  async function regenerateWithTopic() {
+    if (peopleIds.length === 0) return;
+    regenerating = true;
+    try {
+      const focusItems = parseFocusItems(focusText);
+      brief = await api.postBriefing({
+        peopleIds,
+        type: meetingType,
+        topic: topic.trim() || null,
+        focusItems,
+      });
+      addToast('Brief regenerated', 'success');
+    } catch (e) {
+      addToast(`Could not regenerate: ${e.message}`, 'error');
+    } finally {
+      regenerating = false;
+    }
+  }
+
+  async function downloadBrief(format) {
+    if (peopleIds.length === 0) return;
+    downloading = true;
+    try {
+      const focusItems = parseFocusItems(focusText);
+      const blob = await api.exportBriefing({
+        peopleIds,
+        type: meetingType,
+        topic: topic.trim() || null,
+        focusItems,
+        format,
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = format === 'md' ? 'brief.md' : 'brief.json';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      addToast(`Download failed: ${e.message}`, 'error');
+    } finally {
+      downloading = false;
     }
   }
 
@@ -114,11 +184,137 @@
       <p class="text-[var(--text-secondary)]">No briefing data available.</p>
     </div>
   {:else}
+    <!-- BRF-2 — Topic + focus input panel -->
+    <section class="bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg p-5 mb-4">
+      <h2 class="text-sm font-semibold uppercase tracking-wide text-[var(--text-secondary)] mb-3">
+        Tell me about this meeting
+      </h2>
+      <div class="space-y-3">
+        <div>
+          <label class="block text-xs text-[var(--text-secondary)] mb-1" for="brief-topic">
+            What is this meeting about?
+          </label>
+          <input
+            id="brief-topic"
+            bind:value={topic}
+            placeholder="e.g. Q3 vendor pricing review"
+            class="w-full px-3 py-2 text-sm rounded border border-[var(--border-subtle)] bg-[var(--bg-primary)] text-[var(--text-primary)]"
+          />
+        </div>
+        <div>
+          <label class="block text-xs text-[var(--text-secondary)] mb-1" for="brief-focus">
+            Specific things to look for <span class="opacity-60">(one per line, optional)</span>
+          </label>
+          <textarea
+            id="brief-focus"
+            bind:value={focusText}
+            rows="4"
+            placeholder={"Outstanding asks from Jon\nWhat did we decide about SLA penalties?\nMigration timeline updates"}
+            class="w-full px-3 py-2 text-sm rounded border border-[var(--border-subtle)] bg-[var(--bg-primary)] text-[var(--text-primary)] font-mono"
+          ></textarea>
+        </div>
+        <div class="flex items-center gap-2 flex-wrap">
+          <button
+            onclick={regenerateWithTopic}
+            disabled={regenerating || downloading}
+            class="px-4 py-1.5 text-sm font-medium rounded-lg bg-[var(--accent)] text-white hover:opacity-90 disabled:opacity-50"
+          >
+            {regenerating ? 'Generating…' : (brief.topic || brief.focus_items?.length ? 'Refresh brief' : 'Generate with topic')}
+          </button>
+          <button
+            onclick={() => downloadBrief('md')}
+            disabled={downloading || regenerating}
+            class="px-3 py-1.5 text-sm rounded-lg border border-[var(--border-subtle)] text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] disabled:opacity-50"
+          >
+            {downloading ? 'Downloading…' : 'Download .md'}
+          </button>
+          <button
+            onclick={() => downloadBrief('json')}
+            disabled={downloading || regenerating}
+            class="px-3 py-1.5 text-sm rounded-lg border border-[var(--border-subtle)] text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] disabled:opacity-50"
+          >
+            Download .json
+          </button>
+          {#if brief.topic}
+            <span class="text-xs text-[var(--text-secondary)]">
+              Topic: <strong class="text-[var(--text-primary)]">{brief.topic}</strong>
+            </span>
+          {/if}
+        </div>
+      </div>
+    </section>
+
     <!-- Optional LLM summary -->
     {#if brief.summary}
       <div class="bg-[var(--accent)]/5 border border-[var(--accent)]/30 rounded-lg p-4 mb-6">
         <p class="text-sm text-[var(--text-primary)] leading-relaxed">{brief.summary}</p>
       </div>
+    {/if}
+
+    <!-- BRF-2 — Suggested talking points -->
+    {#if brief.talking_points && brief.talking_points.length > 0}
+      <section class="bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg p-5 mb-4">
+        <h2 class="text-sm font-semibold uppercase tracking-wide text-[var(--text-secondary)] mb-3">
+          Suggested talking points
+        </h2>
+        <ol class="space-y-3 list-decimal pl-5">
+          {#each brief.talking_points as tp}
+            <li class="text-sm">
+              <p class="text-[var(--text-primary)] font-medium">{tp.text}</p>
+              {#if tp.rationale}
+                <p class="text-xs text-[var(--text-secondary)] mt-0.5">{tp.rationale}</p>
+              {/if}
+              <div class="flex flex-wrap gap-1.5 mt-1.5">
+                {#if tp.priority && tp.priority !== 'medium'}
+                  <span class="px-1.5 py-0.5 text-[10px] rounded uppercase tracking-wide
+                    {tp.priority === 'high' ? 'bg-red-500/10 text-red-400' : 'bg-[var(--bg-surface-hover)] text-[var(--text-secondary)]'}">
+                    {tp.priority}
+                  </span>
+                {/if}
+                {#each tp.citations as c}
+                  <span class="px-1.5 py-0.5 text-[10px] rounded bg-[var(--bg-surface-hover)] text-[var(--text-secondary)] font-mono">
+                    {c.kind}:{c.ref_id?.slice(0, 12) || ''}
+                  </span>
+                {/each}
+              </div>
+            </li>
+          {/each}
+        </ol>
+      </section>
+    {/if}
+
+    <!-- BRF-2 — What you asked about (focus findings) -->
+    {#if brief.focus_findings && brief.focus_findings.length > 0}
+      <section class="bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg p-5 mb-4">
+        <h2 class="text-sm font-semibold uppercase tracking-wide text-[var(--text-secondary)] mb-3">
+          What you asked about
+        </h2>
+        <div class="space-y-4">
+          {#each brief.focus_findings as f}
+            <div class="border-l-2 border-[var(--accent)]/40 pl-3">
+              <p class="text-sm text-[var(--text-primary)] font-medium mb-1">{f.focus}</p>
+              <p class="text-sm text-[var(--text-primary)] leading-relaxed
+                  {f.answer === 'No relevant history found.' ? 'italic text-[var(--text-secondary)]' : ''}">
+                {f.answer}
+              </p>
+              {#if f.related_actions?.length || f.related_decisions?.length}
+                <div class="flex flex-wrap gap-1.5 mt-2">
+                  {#each f.related_actions as a}
+                    <span class="px-1.5 py-0.5 text-[10px] rounded bg-[var(--bg-surface-hover)] text-[var(--text-secondary)] font-mono">
+                      ACT:{a.slice(0, 12)}
+                    </span>
+                  {/each}
+                  {#each f.related_decisions as d}
+                    <span class="px-1.5 py-0.5 text-[10px] rounded bg-[var(--bg-surface-hover)] text-[var(--text-secondary)] font-mono">
+                      DEC:{d.slice(0, 12)}
+                    </span>
+                  {/each}
+                </div>
+              {/if}
+            </div>
+          {/each}
+        </div>
+      </section>
     {/if}
 
     <!-- 1. Who & When Last -->

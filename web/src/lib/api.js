@@ -136,6 +136,37 @@ export const api = {
     return request(`/brief?${params.toString()}`);
   },
 
+  // BRF-2 — topic + focus_items briefing.
+  // Uses POST so multi-line focus_items don't have to be URL-encoded.
+  postBriefing: ({ peopleIds, type = null, topic = null, focusItems = [] }) => {
+    return request('/brief', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        people: peopleIds,
+        type,
+        topic,
+        focus_items: focusItems,
+      }),
+    });
+  },
+
+  // BRF-2 — markdown / json export. Returns a Blob for download.
+  exportBriefing: ({ peopleIds, type = null, topic = null, focusItems = [], format = 'md' }) => {
+    const params = new URLSearchParams();
+    for (const pid of peopleIds) params.append('people', pid);
+    if (type) params.set('type', type);
+    if (topic) params.set('topic', topic);
+    for (const f of focusItems) params.append('focus', f);
+    params.set('format', format);
+    return fetch(`/api/brief/export?${params.toString()}`).then(res => {
+      if (!res.ok) {
+        return res.json().then(err => { throw new Error(err.detail || res.statusText); });
+      }
+      return res.blob();
+    });
+  },
+
   // EXP-1 export
   exportMeeting: (meetingId, format = 'md', withTranscript = false) => {
     const qs = new URLSearchParams({ format, with_transcript: String(withTranscript) }).toString();
