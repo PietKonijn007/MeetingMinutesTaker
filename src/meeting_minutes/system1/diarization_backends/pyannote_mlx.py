@@ -124,11 +124,30 @@ class PyannoteMLXBackend(PyannoteLocalBackend):
 class _MLXEmbeddingWrapper:
     """Callable that replaces pyannote's PretrainedSpeakerEmbedding.
 
-    Reuses the original PyTorch embedding for everything except the actual
-    forward pass — properties, ``compute_fbank``, ``sample_rate``,
-    ``dimension``, ``metric``, ``min_num_frames``, ``min_num_samples`` all
-    delegate. Only ``__call__`` runs through MLX.
+    Pyannote ships several embedding classes (ONNXWeSpeaker…,
+    PyannoteAudio…, etc.) with subtly different interfaces. The ONNX one
+    exposes ``compute_fbank`` publicly; the PyannoteAudio one (used by
+    the community-1 pipeline) does not — it computes features internally
+    inside its own ``__call__``. We therefore can't delegate feature
+    extraction to the original; we compute fbank ourselves using the
+    upstream wespeaker preprocessing recipe (Kaldi-compatible 80-bin
+    log-mel filterbank, 25 ms frames, 10 ms hop, no dither).
+
+    Metadata (``sample_rate``, ``dimension``, ``metric``,
+    ``min_num_samples``, ``to``) still delegates to the original since
+    those are uniform across pyannote's embedding classes.
     """
+
+    # Wespeaker preprocessing constants — identical to the upstream
+    # ``infer_onnx.py`` script and matched against pyannote's ONNX
+    # ``compute_fbank`` signature so embeddings stay comparable.
+    _NUM_MEL_BINS = 80
+    _FRAME_LENGTH_MS = 25
+    _FRAME_SHIFT_MS = 10
+    # Wespeaker scales float audio in [-1, 1] up to int16 range before
+    # extracting fbank features (kaldi historically expected int16-scale
+    # input). Skipping this shifts the energy floor and tanks accuracy.
+    _PRE_SCALE = 1 << 15
 
     def __init__(self, original_embedding: Any, mlx_model: Any) -> None:
         self._original = original_embedding
@@ -149,35 +168,67 @@ class _MLXEmbeddingWrapper:
         return self._original.metric
 
     @property
-    def min_num_frames(self) -> int:
-        return self._original.min_num_frames
-
-    @property
     def min_num_samples(self) -> int:
         return self._original.min_num_samples
 
+    @property
+    def min_num_frames(self) -> int:
+        """Some embedding wrappers expose this; others don't. Derive it
+        from ``min_num_samples`` when missing so the masked path has a
+        sensible cutoff."""
+        v = getattr(self._original, "min_num_frames", None)
+        if v is not None:
+            return v
+        # frames = floor((samples - frame_length_samples) / frame_shift_samples) + 1
+        sr = self.sample_rate
+        frame_len = sr * self._FRAME_LENGTH_MS // 1000
+        frame_shift = sr * self._FRAME_SHIFT_MS // 1000
+        return max(1, (self.min_num_samples - frame_len) // frame_shift + 1)
+
     def to(self, device):
-        # MLX manages its own scheduling; just keep the PyTorch fbank on
-        # the same device pyannote asked for so the audio-side ops stay
-        # wherever the caller put them.
+        # MLX manages its own scheduling; just delegate so any audio-side
+        # ops stay wherever the caller put them.
         if hasattr(self._original, "to"):
             self._original.to(device)
         return self
 
-    def compute_fbank(self, waveforms, **kwargs):
-        return self._original.compute_fbank(waveforms, **kwargs)
+    # ---- internal feature extraction ---------------------------------------
+
+    def _compute_fbank(self, waveforms):
+        """Per-utterance Kaldi log-mel fbank.
+
+        Mirrors ``ONNXWeSpeakerPretrainedSpeakerEmbedding.compute_fbank``
+        and the upstream ``wespeaker/bin/infer_onnx.py`` reference exactly
+        so the MLX path produces embeddings comparable to the PyTorch
+        reference.
+        """
+        import torch
+        import torchaudio.compliance.kaldi as kaldi
+
+        scaled = waveforms * self._PRE_SCALE
+        return torch.stack([
+            kaldi.fbank(
+                w,
+                num_mel_bins=self._NUM_MEL_BINS,
+                frame_length=self._FRAME_LENGTH_MS,
+                frame_shift=self._FRAME_SHIFT_MS,
+                dither=0.0,
+                sample_frequency=self.sample_rate,
+            )
+            for w in scaled
+        ])
 
     # ---- the actual swap ---------------------------------------------------
 
     def __call__(self, waveforms, masks=None):
-        """Same contract as ONNXWeSpeakerPretrainedSpeakerEmbedding.__call__:
+        """Same contract as pyannote's embedding callables:
 
         * waveforms: ``(B, 1, N)`` torch tensor
         * masks (optional): ``(B, num_samples)`` torch tensor of 0/1
         * returns: ``(B, dimension)`` numpy array
 
-        We compute fbank features on PyTorch (cheap), convert to MLX,
-        run the model, and convert back to numpy.
+        Compute fbank features ourselves (don't delegate — see class
+        docstring), convert to MLX, run the ResNet, return numpy.
         """
         import numpy as np
         import mlx.core as mx
@@ -186,7 +237,7 @@ class _MLXEmbeddingWrapper:
         batch_size, num_channels, _ = waveforms.shape
         assert num_channels == 1, "wespeaker expects mono audio"
 
-        features = self.compute_fbank(waveforms)  # (B, T, 80) torch
+        features = self._compute_fbank(waveforms.cpu())  # (B, T, 80) torch
 
         if masks is None:
             feat_mlx = mx.array(features.detach().cpu().numpy())
@@ -194,9 +245,8 @@ class _MLXEmbeddingWrapper:
             mx.eval(embs_mlx)
             return np.asarray(embs_mlx)
 
-        # Mirror the masked path from ONNXWeSpeakerPretrainedSpeakerEmbedding:
-        # interpolate the per-sample mask to per-frame, then run only the
-        # frames that survive the mask.
+        # Masked path: per-sample mask → per-frame mask via nearest-neighbour
+        # interpolation, then embed only the frames that survive.
         _, num_frames, _ = features.shape
         imasks = F.interpolate(
             masks.unsqueeze(dim=1).float(), size=num_frames, mode="nearest"
