@@ -1074,7 +1074,15 @@ class PipelineOrchestrator:
                 "green",
             )
 
-    async def rediarize(self, meeting_id: str, regenerate: bool = True) -> None:
+    async def rediarize(
+        self,
+        meeting_id: str,
+        regenerate: bool = True,
+        *,
+        num_speakers: int | None = None,
+        min_speakers: int | None = None,
+        max_speakers: int | None = None,
+    ) -> None:
         """Re-run ONLY speaker diarization on existing audio, merge into existing transcript.
 
         Skips re-transcription (slow). Useful when diarization was broken at the
@@ -1083,6 +1091,12 @@ class PipelineOrchestrator:
 
         If regenerate=True, also re-runs minutes generation and ingestion so the
         new speaker labels propagate through the database.
+
+        ``num_speakers`` / ``min_speakers`` / ``max_speakers``, when given,
+        override any speaker-count hint discovered in the notes sidecar.
+        ``num_speakers`` is the strongest hint — pyannote's clustering uses
+        it directly and skips its auto-detect heuristic, which is both
+        faster and usually more accurate.
         """
         import json as _json
         from datetime import datetime, timezone
@@ -1130,6 +1144,8 @@ class PipelineOrchestrator:
         diarize_engine = DiarizationEngine(self._config.diarization)
 
         diarize_kwargs: dict = {}
+        # Sidecar-derived hint (default). Overridden below by any explicit
+        # CLI args so users can correct a wrong sidecar without editing it.
         try:
             import json as _json
             _notes_file = self._data_dir / "notes" / f"{meeting_id}.json"
@@ -1148,6 +1164,19 @@ class PipelineOrchestrator:
                         _console(f"  Speaker hint: at least {_count} speaker(s) (from sidecar)")
         except Exception as exc:
             self._logger.warning("Could not read speaker-count hint for rediarize: %s", exc)
+
+        # Explicit CLI overrides — strongest signal, last write wins.
+        if num_speakers is not None and num_speakers > 0:
+            diarize_kwargs.pop("min_speakers", None)
+            diarize_kwargs.pop("max_speakers", None)
+            diarize_kwargs["num_speakers"] = int(num_speakers)
+            _console(f"  Speaker hint: exactly {num_speakers} speaker(s) (CLI override)")
+        if min_speakers is not None and min_speakers > 0 and num_speakers is None:
+            diarize_kwargs["min_speakers"] = int(min_speakers)
+            _console(f"  Speaker hint: at least {min_speakers} speaker(s) (CLI override)")
+        if max_speakers is not None and max_speakers > 0 and num_speakers is None:
+            diarize_kwargs["max_speakers"] = int(max_speakers)
+            _console(f"  Speaker hint: at most {max_speakers} speaker(s) (CLI override)")
 
         import functools as _functools
         _diarize_call = _functools.partial(

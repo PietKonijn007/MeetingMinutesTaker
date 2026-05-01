@@ -613,6 +613,9 @@ def reprocess_cmd(
 def rediarize_cmd(
     meeting_id: str = typer.Argument(..., help="Meeting ID"),
     skip_regenerate: bool = typer.Option(False, "--skip-regenerate", help="Only re-diarize, don't re-run generation/ingestion"),
+    num_speakers: Optional[int] = typer.Option(None, "--num-speakers", "-n", help="Exact speaker count (constrains clustering — biggest accuracy + speed win)"),
+    min_speakers: Optional[int] = typer.Option(None, "--min-speakers", help="Lower bound on speaker count"),
+    max_speakers: Optional[int] = typer.Option(None, "--max-speakers", help="Upper bound on speaker count"),
 ):
     """Re-run speaker diarization on existing audio without re-transcribing.
 
@@ -623,6 +626,11 @@ def rediarize_cmd(
     By default, also re-runs minutes generation and DB ingestion so the
     new speaker labels appear everywhere. Use --skip-regenerate to only
     update the transcript JSON.
+
+    --num-speakers/--min-speakers/--max-speakers override any speaker hint
+    from the meeting's notes sidecar. Use --num-speakers when you know the
+    exact count (e.g. you've watched the transcript) — this is by far the
+    biggest single quality and runtime win for noisy diarization.
     """
     config = _load_config()
 
@@ -631,7 +639,13 @@ def rediarize_cmd(
 
         orchestrator = PipelineOrchestrator(config)
         try:
-            await orchestrator.rediarize(meeting_id, regenerate=not skip_regenerate)
+            await orchestrator.rediarize(
+                meeting_id,
+                regenerate=not skip_regenerate,
+                num_speakers=num_speakers,
+                min_speakers=min_speakers,
+                max_speakers=max_speakers,
+            )
             console.print(f"[green]Meeting {meeting_id} re-diarized.[/green]")
         except Exception as exc:
             err_console.print(f"[red]Re-diarize failed: {exc}[/red]")
