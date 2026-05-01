@@ -57,9 +57,14 @@
 
   async function loadMonth() {
     loading = true;
-    const after = `${currentYear}-${String(currentMonth + 1).padStart(2, '0')}-01`;
-    const lastDay = new Date(currentYear, currentMonth + 1, 0).getDate();
-    const before = `${currentYear}-${String(currentMonth + 1).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+    // Match the 42-cell grid in CalendarMonth so trailing/leading days of
+    // adjacent months also have their meetings available.
+    const firstOfMonth = new Date(currentYear, currentMonth, 1);
+    const startDow = firstOfMonth.getDay();
+    const firstVisible = new Date(currentYear, currentMonth, 1 - startDow);
+    const lastVisible = new Date(currentYear, currentMonth, 1 - startDow + 41);
+    const after = formatDate(firstVisible);
+    const before = formatDate(lastVisible);
 
     try {
       const data = await api.getMeetings({ after, before, limit: '100' });
