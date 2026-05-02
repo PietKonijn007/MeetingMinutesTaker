@@ -378,6 +378,35 @@ def check_gpu() -> CheckResult:
     )
 
 
+def check_hf_cache_writable() -> CheckResult:
+    """Check 8b — HuggingFace cache directory is writable."""
+    cache = Path(os.environ.get("HF_HOME", Path.home() / ".cache" / "huggingface"))
+    if cache.exists() and not os.access(cache, os.W_OK):
+        return CheckResult(
+            name="hf_cache_writable",
+            status="fail",
+            detail=f"Cache directory not writable: {cache}",
+            fix_hint=f"Fix with: sudo chown -R $(whoami) {cache}",
+            fix_command=f"sudo chown -R $(whoami) {cache}",
+        )
+    if not cache.exists():
+        try:
+            cache.mkdir(parents=True, exist_ok=True)
+        except PermissionError:
+            return CheckResult(
+                name="hf_cache_writable",
+                status="fail",
+                detail=f"Cannot create cache directory: {cache}",
+                fix_hint=f"Fix with: mkdir -p {cache}",
+                fix_command=f"mkdir -p {cache}",
+            )
+    return CheckResult(
+        name="hf_cache_writable",
+        status="ok",
+        detail=f"Cache directory writable: {cache}",
+    )
+
+
 def check_whisper_model(config: AppConfig) -> CheckResult:
     """Check 9 — at least one Whisper model file exists in the HF cache."""
     cache = Path(os.environ.get("HF_HOME", Path.home() / ".cache" / "huggingface"))
@@ -542,7 +571,7 @@ def check_poppler() -> CheckResult:
 
 
 def run_checks(config: AppConfig) -> list[CheckResult]:
-    """Run all thirteen diagnostic checks in order."""
+    """Run all diagnostic checks in order."""
     return [
         check_python_version(),
         check_ffmpeg(),
@@ -552,6 +581,7 @@ def run_checks(config: AppConfig) -> list[CheckResult]:
         check_database_integrity(config),
         check_disk_space(config),
         check_gpu(),
+        check_hf_cache_writable(),
         check_whisper_model(config),
         check_sqlite_vec(),
         check_weasyprint(),

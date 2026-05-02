@@ -297,6 +297,22 @@ class PipelineOrchestrator:
         for attempt in range(max_retries + 1):
             try:
                 return await func(*args)
+            except (PermissionError, ImportError) as exc:
+                self._logger.error("Step '%s' failed (non-retryable): %s", step_name, exc)
+                raise
+            except RuntimeError as exc:
+                if "ermission" in str(exc):
+                    self._logger.error("Step '%s' failed (non-retryable): %s", step_name, exc)
+                    raise
+                if attempt < max_retries:
+                    delay = base_delay * (2 ** attempt)
+                    self._logger.warning("Step '%s' failed (attempt %d/%d): %s — retrying in %ds",
+                                         step_name, attempt + 1, max_retries + 1, exc, delay)
+                    _console(f"  ⚠ {step_name} failed (attempt {attempt + 1}): {exc} — retrying in {delay}s", "yellow")
+                    await asyncio.sleep(delay)
+                else:
+                    self._logger.error("Step '%s' failed after %d attempts: %s", step_name, max_retries + 1, exc)
+                    raise
             except Exception as exc:
                 if attempt < max_retries:
                     delay = base_delay * (2 ** attempt)

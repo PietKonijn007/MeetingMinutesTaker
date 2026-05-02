@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import abc
 import logging
+import os
 import platform
 import time
 from pathlib import Path
@@ -97,9 +98,23 @@ class FasterWhisperEngine(BaseTranscriptionEngine):
         super().__init__(config)
         self._model = None
 
+    @staticmethod
+    def _ensure_cache_dir():
+        cache = Path(os.environ.get("HF_HOME", Path.home() / ".cache" / "huggingface"))
+        try:
+            cache.mkdir(parents=True, exist_ok=True)
+        except PermissionError:
+            raise RuntimeError(
+                f"Cannot write to Hugging Face cache directory: {cache}\n"
+                f"Fix with: sudo chown -R $(whoami) {cache}\n"
+                f"Or set HF_HOME to a writable path in your .env file."
+            )
+
     def _load_model(self):
         if self._model is not None:
             return self._model
+
+        self._ensure_cache_dir()
 
         try:
             from faster_whisper import WhisperModel  # lazy import

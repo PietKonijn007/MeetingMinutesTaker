@@ -234,6 +234,16 @@ echo -e "${BOLD}[7/10] Initializing database...${NC}"
 .venv/bin/mm init 2>/dev/null
 echo -e "  ${GREEN}✓${NC} Database initialized"
 
+# ─── Ensure HuggingFace cache directory exists and is writable ───────
+HF_CACHE="${HF_HOME:-$HOME/.cache/huggingface}"
+mkdir -p "$HF_CACHE" 2>/dev/null
+if [ ! -w "$HF_CACHE" ]; then
+    echo -e "  ${YELLOW}⚠${NC} HuggingFace cache not writable: $HF_CACHE"
+    echo -e "    Attempting to fix ownership..."
+    sudo chown -R "$(whoami)" "$HF_CACHE"
+fi
+echo -e "  ${GREEN}✓${NC} HuggingFace cache ready: $HF_CACHE"
+
 # ─── Configure API keys ─────────────────────────────────────────────
 echo -e "${BOLD}[8/10] Configuring API keys...${NC}"
 if [ -f ".env" ]; then
