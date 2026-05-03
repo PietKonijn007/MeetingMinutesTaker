@@ -46,6 +46,7 @@ _BUILTIN_MODELS: dict[str, set[str]] = {
         "mistralai/mistral-medium-3",
     },
     "ollama": set(),
+    "openai_compatible": set(),
 }
 
 

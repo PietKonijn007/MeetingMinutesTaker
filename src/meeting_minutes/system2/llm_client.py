@@ -1,4 +1,4 @@
-"""LLM API client with multi-provider support (Anthropic, OpenAI, OpenRouter, Ollama)."""
+"""LLM API client with multi-provider support (Anthropic, OpenAI, OpenRouter, Ollama, OpenAI-compatible local)."""
 
 from __future__ import annotations
 
@@ -42,6 +42,9 @@ COST_PER_1K_TOKENS: dict[str, dict[str, float]] = {
     },
     "ollama": {
         "default": 0.0,  # Local models are free
+    },
+    "openai_compatible": {
+        "default": 0.0,  # Local / self-hosted — no per-token cost
     },
 }
 
@@ -114,6 +117,10 @@ class LLMClient:
             text, input_tokens, output_tokens = await self._call_ollama(
                 prompt, system_prompt, model
             )
+        elif provider == "openai_compatible":
+            text, input_tokens, output_tokens = await self._call_openai_compatible_local(
+                prompt, system_prompt, model
+            )
         else:
             raise ValueError(f"Unknown provider: {provider}")
 
@@ -173,8 +180,8 @@ class LLMClient:
 
         provider = self._config.primary_provider
 
-        # Ollama and non-Anthropic providers: use JSON-mode structured generation
-        if provider in ("ollama", "openai", "openrouter"):
+        # Non-Anthropic providers: use JSON-mode structured generation
+        if provider in ("ollama", "openai", "openrouter", "openai_compatible"):
             for attempt in range(self._config.retry_attempts):
                 try:
                     return await self._generate_structured_via_json(
@@ -334,24 +341,28 @@ class LLMClient:
 
         return text, input_tokens, output_tokens
 
-    async def _call_ollama(
-        self, prompt: str, system_prompt: str, model: str
+    async def _call_openai_compatible(
+        self,
+        prompt: str,
+        system_prompt: str,
+        model: str,
+        base_url: str,
+        api_key: str,
+        provider_label: str,
     ) -> tuple[str, int, int]:
-        """Call a local Ollama instance via its OpenAI-compatible API."""
-        # Use config base_url, with env var override
-        config_url = getattr(self._config, "ollama", None)
-        default_url = config_url.base_url if config_url else "http://localhost:11434"
-        ollama_base_url = os.environ.get("OLLAMA_BASE_URL", default_url)
+        """Shared transport for any OpenAI-compatible chat-completions endpoint.
 
+        Used by Ollama (which exposes ``/v1`` on top of its native API) and
+        the generic ``openai_compatible`` provider (LM Studio, vLLM,
+        llama.cpp's server, etc.). ``base_url`` should already include the
+        ``/v1`` segment if the server requires it.
+        """
         try:
             from openai import AsyncOpenAI
         except ImportError as exc:
-            raise RuntimeError("openai package not installed (needed for Ollama client)") from exc
+            raise RuntimeError("openai package not installed") from exc
 
-        client = AsyncOpenAI(
-            api_key="ollama",  # Ollama doesn't require a real key
-            base_url=f"{ollama_base_url}/v1",
-        )
+        client = AsyncOpenAI(api_key=api_key, base_url=base_url)
 
         messages = []
         if system_prompt:
@@ -366,7 +377,7 @@ class LLMClient:
             )
         except Exception as exc:
             raise RuntimeError(
-                f"Ollama request failed. Is Ollama running at {ollama_base_url}? Error: {exc}"
+                f"{provider_label} request failed at {base_url}: {exc}"
             ) from exc
 
         text = response.choices[0].message.content or ""
@@ -374,6 +385,50 @@ class LLMClient:
         output_tokens = response.usage.completion_tokens if response.usage else 0
 
         return text, input_tokens, output_tokens
+
+    async def _call_ollama(
+        self, prompt: str, system_prompt: str, model: str
+    ) -> tuple[str, int, int]:
+        """Call a local Ollama instance via its OpenAI-compatible API."""
+        config_url = getattr(self._config, "ollama", None)
+        default_url = config_url.base_url if config_url else "http://localhost:11434"
+        base = os.environ.get("OLLAMA_BASE_URL", default_url).rstrip("/")
+        return await self._call_openai_compatible(
+            prompt,
+            system_prompt,
+            model,
+            base_url=f"{base}/v1",
+            api_key="ollama",  # Ollama doesn't require a real key
+            provider_label="Ollama",
+        )
+
+    async def _call_openai_compatible_local(
+        self, prompt: str, system_prompt: str, model: str
+    ) -> tuple[str, int, int]:
+        """Call a user-configured OpenAI-compatible local server.
+
+        Covers LM Studio, vLLM, llama.cpp's HTTP server, text-generation-webui's
+        OpenAI extension, and similar — anything that speaks the OpenAI
+        chat-completions wire format. The base URL is taken from
+        ``generation.llm.openai_compatible.base_url`` (override with
+        ``MM_OPENAI_COMPATIBLE_BASE_URL``).
+        """
+        cfg = getattr(self._config, "openai_compatible", None)
+        default_url = cfg.base_url if cfg else "http://localhost:1234/v1"
+        base_url = os.environ.get("MM_OPENAI_COMPATIBLE_BASE_URL", default_url)
+
+        api_key = "not-needed"
+        if cfg and cfg.api_key_env:
+            api_key = os.environ.get(cfg.api_key_env) or "not-needed"
+
+        return await self._call_openai_compatible(
+            prompt,
+            system_prompt,
+            model,
+            base_url=base_url,
+            api_key=api_key,
+            provider_label="OpenAI-compatible local",
+        )
 
     async def _generate_structured_via_json(
         self,
@@ -418,6 +473,10 @@ class LLMClient:
             )
         elif provider == "openrouter":
             text, input_tokens, output_tokens = await self._call_openrouter(
+                prompt, json_system, model
+            )
+        elif provider == "openai_compatible":
+            text, input_tokens, output_tokens = await self._call_openai_compatible_local(
                 prompt, json_system, model
             )
         else:

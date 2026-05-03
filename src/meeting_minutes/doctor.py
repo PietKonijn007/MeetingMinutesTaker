@@ -194,6 +194,33 @@ def check_llm_reachable(config: AppConfig) -> CheckResult:
                 fix_command="ollama serve",
             )
 
+    if provider == "openai_compatible":
+        url = config.generation.llm.openai_compatible.base_url
+        try:
+            import httpx
+
+            with httpx.Client(timeout=timeout) as client:
+                resp = client.get(f"{url.rstrip('/')}/models")
+                if resp.status_code == 200:
+                    return CheckResult(
+                        name="llm_reachable",
+                        status="ok",
+                        detail=f"OpenAI-compatible local server responding at {url}",
+                    )
+                return CheckResult(
+                    name="llm_reachable",
+                    status="fail",
+                    detail=f"Local server at {url} returned HTTP {resp.status_code}",
+                    fix_hint="Start your local LLM server (LM Studio, vLLM, llama.cpp, ...)",
+                )
+        except Exception as exc:
+            return CheckResult(
+                name="llm_reachable",
+                status="fail",
+                detail=f"Local server at {url} unreachable: {exc}",
+                fix_hint="Start your local LLM server (LM Studio, vLLM, llama.cpp, ...)",
+            )
+
     key_env = {
         "anthropic": "ANTHROPIC_API_KEY",
         "openai": "OPENAI_API_KEY",

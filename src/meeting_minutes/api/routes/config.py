@@ -178,7 +178,7 @@ def get_custom_models():
             return json.loads(custom_models_path.read_text())
         except Exception:
             pass
-    return {"anthropic": [], "openai": [], "openrouter": [], "ollama": []}
+    return {"anthropic": [], "openai": [], "openrouter": [], "ollama": [], "openai_compatible": []}
 
 
 @router.get("/provider-models")
@@ -187,7 +187,7 @@ async def get_provider_models_endpoint(
     refresh: bool = False,
 ):
     """Fetch available models for a provider from its API. Cached for 24h."""
-    valid_providers = ("anthropic", "openai", "openrouter", "ollama")
+    valid_providers = ("anthropic", "openai", "openrouter", "ollama", "openai_compatible")
     if provider not in valid_providers:
         raise HTTPException(
             status_code=400,

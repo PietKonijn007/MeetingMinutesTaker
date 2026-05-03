@@ -94,8 +94,24 @@ class OllamaConfig(BaseModel):
     timeout_seconds: int = 300  # Local models can be slow; generous timeout
 
 
+class OpenAICompatibleLocalConfig(BaseModel):
+    """Generic OpenAI-compatible local LLM server (LM Studio, vLLM, llama.cpp, etc.).
+
+    Point ``base_url`` at your server's OpenAI-compatible chat-completions
+    endpoint — typically the URL ending in ``/v1`` (e.g. LM Studio's default
+    ``http://localhost:1234/v1``). Most local servers don't authenticate;
+    leave ``api_key_env`` unset and the client sends a dummy key. If your
+    server does require a key, set ``api_key_env`` to the name of the env
+    var that holds it (the value never lives in YAML).
+    """
+
+    base_url: str = "http://localhost:1234/v1"
+    api_key_env: str | None = None
+    timeout_seconds: int = 300
+
+
 class LLMConfig(BaseModel):
-    primary_provider: str = "anthropic"  # anthropic | openai | openrouter | ollama
+    primary_provider: str = "anthropic"  # anthropic | openai | openrouter | ollama | openai_compatible
     model: str = "claude-sonnet-4-6"
     fallback_provider: str | None = "openai"
     fallback_model: str | None = "gpt-4o"
@@ -104,6 +120,7 @@ class LLMConfig(BaseModel):
     retry_attempts: int = 3
     timeout_seconds: int = 120
     ollama: OllamaConfig = OllamaConfig()
+    openai_compatible: OpenAICompatibleLocalConfig = OpenAICompatibleLocalConfig()
 
 
 class GenerationConfig(BaseModel):

@@ -98,6 +98,9 @@
   let llm_timeout_seconds = $state(120);
   let llm_ollama_base_url = $state('http://localhost:11434');
   let llm_ollama_timeout_seconds = $state(300);
+  let llm_oai_compat_base_url = $state('http://localhost:1234/v1');
+  let llm_oai_compat_api_key_env = $state('');
+  let llm_oai_compat_timeout_seconds = $state(300);
 
   // Minutes generation (non-LLM)
   let gen_length_mode = $state('concise');
@@ -299,6 +302,10 @@
         const ol = llm.ollama || {};
         llm_ollama_base_url = ol.base_url || 'http://localhost:11434';
         llm_ollama_timeout_seconds = ol.timeout_seconds ?? 300;
+        const oc = llm.openai_compatible || {};
+        llm_oai_compat_base_url = oc.base_url || 'http://localhost:1234/v1';
+        llm_oai_compat_api_key_env = oc.api_key_env || '';
+        llm_oai_compat_timeout_seconds = oc.timeout_seconds ?? 300;
 
         // Minutes generation (non-LLM)
         gen_length_mode = g.length_mode || 'concise';
@@ -442,6 +449,11 @@
             ollama: {
               base_url: llm_ollama_base_url,
               timeout_seconds: llm_ollama_timeout_seconds
+            },
+            openai_compatible: {
+              base_url: llm_oai_compat_base_url,
+              api_key_env: llm_oai_compat_api_key_env.trim() || null,
+              timeout_seconds: llm_oai_compat_timeout_seconds
             }
           },
           templates_dir: gen_templates_dir,
@@ -908,7 +920,8 @@
                   anthropic: 'claude-sonnet-4-6',
                   openai: 'gpt-4o',
                   openrouter: 'anthropic/claude-sonnet-4',
-                  ollama: 'llama3'
+                  ollama: 'llama3',
+                  openai_compatible: ''
                 };
                 llm_model = defaults[llm_provider] || '';
                 llm_custom_model = '';
@@ -921,9 +934,12 @@
               <option value="openai">OpenAI</option>
               <option value="openrouter">OpenRouter</option>
               <option value="ollama">Ollama (local)</option>
+              <option value="openai_compatible">OpenAI Compatible Local (LM Studio, vLLM, …)</option>
             </select>
             {#if llm_provider === 'openrouter'}
               <p class="text-xs text-[var(--text-muted)] mt-1">Access 200+ models from multiple providers via OpenRouter.</p>
+            {:else if llm_provider === 'openai_compatible'}
+              <p class="text-xs text-[var(--text-muted)] mt-1">Any local server speaking the OpenAI chat-completions API — LM Studio, vLLM, llama.cpp, text-generation-webui, etc.</p>
             {/if}
           </div>
 
@@ -1075,7 +1091,7 @@
                 <input
                   type="text"
                   bind:value={llm_custom_model}
-                  placeholder={llm_provider === 'openrouter' ? 'e.g., anthropic/claude-opus-4' : llm_provider === 'ollama' ? 'e.g., llama3' : `Enter a custom ${llm_provider} model ID`}
+                  placeholder={llm_provider === 'openrouter' ? 'e.g., anthropic/claude-opus-4' : llm_provider === 'ollama' ? 'e.g., llama3' : llm_provider === 'openai_compatible' ? 'e.g., qwen2.5-7b-instruct' : `Enter a custom ${llm_provider} model ID`}
                   class="flex-1 px-3 py-2 bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg text-sm text-[var(--text-primary)] font-mono
                          focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
                 />
@@ -1165,6 +1181,7 @@
                 <option value="openai">OpenAI</option>
                 <option value="openrouter">OpenRouter</option>
                 <option value="ollama">Ollama (local)</option>
+                <option value="openai_compatible">OpenAI Compatible Local</option>
               </select>
               <input
                 type="text"
@@ -1203,6 +1220,50 @@
                 </div>
               </div>
               <p class="text-xs text-[var(--text-muted)] mt-1">Local models can be slow — give them a generous timeout.</p>
+            </div>
+          {/if}
+
+          {#if llm_provider === 'openai_compatible' || llm_fallback_provider === 'openai_compatible'}
+            <div class="pt-2 border-t border-[var(--border-subtle)]">
+              <p class="text-sm font-medium text-[var(--text-primary)] mb-2">OpenAI-Compatible Local Server</p>
+              <div class="grid grid-cols-2 gap-3">
+                <div>
+                  <label class="block text-xs text-[var(--text-muted)] mb-1">Base URL</label>
+                  <input
+                    type="text"
+                    bind:value={llm_oai_compat_base_url}
+                    placeholder="http://localhost:1234/v1"
+                    class="w-full px-3 py-2 bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg text-sm text-[var(--text-primary)] font-mono
+                           focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
+                  />
+                </div>
+                <div>
+                  <label class="block text-xs text-[var(--text-muted)] mb-1">Timeout (seconds)</label>
+                  <input
+                    type="number"
+                    bind:value={llm_oai_compat_timeout_seconds}
+                    min="30" max="1800" step="30"
+                    class="w-full px-3 py-2 bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg text-sm text-[var(--text-primary)]
+                           focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
+                  />
+                </div>
+              </div>
+              <div class="mt-3">
+                <label class="block text-xs text-[var(--text-muted)] mb-1">API key env var <span class="text-[var(--text-muted)]">(optional)</span></label>
+                <input
+                  type="text"
+                  bind:value={llm_oai_compat_api_key_env}
+                  placeholder="leave empty for unauthenticated local servers"
+                  class="w-full px-3 py-2 bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg text-sm text-[var(--text-primary)] font-mono
+                         focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
+                />
+                <p class="text-xs text-[var(--text-muted)] mt-1">
+                  Name of an environment variable holding the API key (e.g. <code class="text-[11px] bg-[var(--bg-surface)] px-1 py-0.5 rounded">MY_LOCAL_LLM_KEY</code>). The value never lives in YAML. Most local servers don't authenticate — leave empty if yours doesn't.
+                </p>
+              </div>
+              <p class="text-xs text-[var(--text-muted)] mt-2">
+                Point at any server speaking the OpenAI chat-completions API. URL should end in <code class="text-[11px]">/v1</code>. LM Studio: <code class="text-[11px]">http://localhost:1234/v1</code>. vLLM: <code class="text-[11px]">http://localhost:8000/v1</code>.
+              </p>
             </div>
           {/if}
         </div>

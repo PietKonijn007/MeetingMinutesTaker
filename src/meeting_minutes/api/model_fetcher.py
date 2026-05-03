@@ -37,6 +37,7 @@ _FALLBACK_MODELS: dict[str, list[dict[str, Any]]] = {
         {"id": "mistralai/mistral-medium-3", "name": "Mistral Medium 3", "pricing": {"prompt": "2.00", "completion": "5.00"}},
     ],
     "ollama": [],
+    "openai_compatible": [],
 }
 
 
@@ -214,11 +215,61 @@ async def _fetch_ollama() -> list[dict[str, Any]]:
     return models
 
 
+async def _fetch_openai_compatible() -> list[dict[str, Any]]:
+    """Fetch available models from a user-configured OpenAI-compatible local server.
+
+    Hits the standard ``GET {base_url}/models`` endpoint that LM Studio, vLLM,
+    llama.cpp's HTTP server, and similar projects all expose. Base URL is
+    read from ``generation.llm.openai_compatible.base_url`` and may be
+    overridden with ``MM_OPENAI_COMPATIBLE_BASE_URL``.
+    """
+    base_url = os.environ.get("MM_OPENAI_COMPATIBLE_BASE_URL")
+    api_key_env: str | None = None
+    if not base_url:
+        try:
+            from meeting_minutes.config import ConfigLoader
+
+            cfg = ConfigLoader.load_default()
+            base_url = cfg.generation.llm.openai_compatible.base_url
+            api_key_env = cfg.generation.llm.openai_compatible.api_key_env
+        except Exception:
+            base_url = "http://localhost:1234/v1"
+
+    headers = {}
+    if api_key_env:
+        api_key = os.environ.get(api_key_env)
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
+
+    async with httpx.AsyncClient(timeout=5) as client:
+        resp = await client.get(f"{base_url.rstrip('/')}/models", headers=headers)
+        resp.raise_for_status()
+        data = resp.json()
+
+    models = []
+    for m in data.get("data", []):
+        model_id = m.get("id", "")
+        if not model_id:
+            continue
+        entry: dict[str, Any] = {"id": model_id, "name": model_id}
+        # LM Studio surfaces useful extras under varying keys; pass through
+        # whichever are present so the UI can show context length, etc.
+        if m.get("context_length"):
+            entry["context_length"] = m["context_length"]
+        if m.get("owned_by"):
+            entry["owned_by"] = m["owned_by"]
+        models.append(entry)
+
+    models.sort(key=lambda x: x["id"])
+    return models
+
+
 _FETCHERS = {
     "anthropic": _fetch_anthropic,
     "openrouter": _fetch_openrouter,
     "openai": _fetch_openai,
     "ollama": _fetch_ollama,
+    "openai_compatible": _fetch_openai_compatible,
 }
 
 
