@@ -38,8 +38,27 @@
   let llm_temperature = $state(0.2);
   let llm_max_tokens = $state(4096);
   let pipeline_mode = $state('automatic');
-  let storage_db_path = $state('db/meetings.db');
+  let storage_db_path = $state('~/MeetingMinutesTaker/db/meetings.db');
   let storage_data_dir = $state('~/MeetingMinutesTaker/data');
+  // Resolved (expanded) absolute paths fetched from /api/config/resolved-paths.
+  // Shown beneath the input as a "Resolves to: ..." line so the user can
+  // confirm tilde expansion lands where they expect on this machine.
+  let storage_db_path_resolved = $state('');
+  let storage_data_dir_resolved = $state('');
+  let storage_db_path_is_relative = $state(false);
+
+  // Reject relative paths in the form before we ever round-trip to the API.
+  // Mirrors backend validation in api/routes/config.py.
+  function pathFieldError(value) {
+    if (typeof value !== 'string' || !value.trim()) return 'Required.';
+    const v = value.trim();
+    if (!v.startsWith('/') && !v.startsWith('~')) {
+      return 'Must be an absolute path (/Users/you/...) or start with ~.';
+    }
+    return '';
+  }
+  let storage_db_path_error = $derived(pathFieldError(storage_db_path));
+  let storage_data_dir_error = $derived(pathFieldError(storage_data_dir));
 
   // Backup settings
   let backup_enabled = $state(true);
@@ -232,8 +251,20 @@
         llm_temperature = llm.temperature ?? 0.2;
         llm_max_tokens = llm.max_output_tokens || 4096;
         pipeline_mode = p.mode || 'automatic';
-        storage_db_path = st.sqlite_path || 'db/meetings.db';
+        storage_db_path = st.sqlite_path || '~/MeetingMinutesTaker/db/meetings.db';
         storage_data_dir = c.data_dir || '~/MeetingMinutesTaker/data';
+
+        // Fetch the server-side resolved (expanded) versions of these paths
+        // so the user sees what the running app actually points at. Best-effort
+        // — endpoint failure should not block the rest of the settings load.
+        try {
+          const rp = await api.getResolvedPaths();
+          storage_db_path_resolved = rp?.storage?.sqlite_path?.resolved || '';
+          storage_data_dir_resolved = rp?.data_dir?.resolved || '';
+          storage_db_path_is_relative = !!rp?.storage?.sqlite_path?.is_relative;
+        } catch (_e) {
+          // Old server without the endpoint — leave the resolved hints blank.
+        }
 
         const bk = c.backup || {};
         backup_enabled = bk.enabled !== false;
@@ -352,6 +383,18 @@
   }
 
   async function saveConfig() {
+    // Front-line guard: don't even attempt the round-trip if a path field
+    // is obviously bad. Backend re-validates (api/routes/config.py), but
+    // catching it here gives an immediate, field-anchored error.
+    if (storage_db_path_error) {
+      alert(`Database Path: ${storage_db_path_error}`);
+      return;
+    }
+    if (storage_data_dir_error) {
+      alert(`Data Directory: ${storage_data_dir_error}`);
+      return;
+    }
+
     saving = true;
     try {
       const vendors = gen_vendors_text
@@ -461,6 +504,16 @@
         }
       });
       addToast('Settings saved', 'success');
+      // Refresh the resolved-path hints under the storage inputs so the user
+      // immediately sees what their new ~/... value expands to on disk.
+      try {
+        const rp = await api.getResolvedPaths();
+        storage_db_path_resolved = rp?.storage?.sqlite_path?.resolved || '';
+        storage_data_dir_resolved = rp?.data_dir?.resolved || '';
+        storage_db_path_is_relative = !!rp?.storage?.sqlite_path?.is_relative;
+      } catch (_e) {
+        // non-fatal
+      }
     } catch (e) {
       addToast(`Failed to save settings: ${e.message}`, 'error');
     } finally {
@@ -1295,7 +1348,12 @@
       <!-- Storage -->
       <section>
         <h2 class="text-lg font-semibold text-[var(--text-primary)] mb-1">Storage</h2>
-        <p class="text-sm text-[var(--text-muted)] mb-4">Data storage paths.</p>
+        <p class="text-sm text-[var(--text-muted)] mb-4">
+          Data storage paths. Use an absolute path (e.g.
+          <code>/Users/you/MeetingMinutesTaker/db/meetings.db</code>) or one
+          starting with <code>~</code> — relative paths resolve against the
+          launching cwd and can silently point at the wrong file.
+        </p>
 
         <div class="space-y-4">
           <div>
@@ -1303,10 +1361,25 @@
             <input
               type="text"
               bind:value={storage_db_path}
-              placeholder="data/meetings.db"
-              class="w-full px-3 py-2 bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg text-sm text-[var(--text-primary)] font-mono
-                     focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
+              placeholder="~/MeetingMinutesTaker/db/meetings.db"
+              aria-invalid={storage_db_path_error ? 'true' : 'false'}
+              class="w-full px-3 py-2 bg-[var(--bg-surface)] border rounded-lg text-sm text-[var(--text-primary)] font-mono
+                     focus:outline-none focus:ring-2 focus:ring-[var(--accent)]
+                     {storage_db_path_error ? 'border-red-500' : 'border-[var(--border-subtle)]'}"
             />
+            {#if storage_db_path_error}
+              <p class="text-xs text-red-500 mt-1">{storage_db_path_error}</p>
+            {:else if storage_db_path_resolved && storage_db_path_resolved !== storage_db_path}
+              <p class="text-xs text-[var(--text-muted)] mt-1 font-mono">
+                Resolves to: {storage_db_path_resolved}
+              </p>
+            {/if}
+            {#if storage_db_path_is_relative && !storage_db_path_error}
+              <p class="text-xs text-amber-500 mt-1">
+                Saved value is relative — recommend switching to an absolute or
+                <code>~</code>-prefixed path before migrating to another machine.
+              </p>
+            {/if}
           </div>
 
           <div>
@@ -1314,10 +1387,19 @@
             <input
               type="text"
               bind:value={storage_data_dir}
-              placeholder="data/"
-              class="w-full px-3 py-2 bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg text-sm text-[var(--text-primary)] font-mono
-                     focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
+              placeholder="~/MeetingMinutesTaker/data"
+              aria-invalid={storage_data_dir_error ? 'true' : 'false'}
+              class="w-full px-3 py-2 bg-[var(--bg-surface)] border rounded-lg text-sm text-[var(--text-primary)] font-mono
+                     focus:outline-none focus:ring-2 focus:ring-[var(--accent)]
+                     {storage_data_dir_error ? 'border-red-500' : 'border-[var(--border-subtle)]'}"
             />
+            {#if storage_data_dir_error}
+              <p class="text-xs text-red-500 mt-1">{storage_data_dir_error}</p>
+            {:else if storage_data_dir_resolved && storage_data_dir_resolved !== storage_data_dir}
+              <p class="text-xs text-[var(--text-muted)] mt-1 font-mono">
+                Resolves to: {storage_data_dir_resolved}
+              </p>
+            {/if}
           </div>
         </div>
       </section>

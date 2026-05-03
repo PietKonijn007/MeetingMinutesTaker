@@ -22,6 +22,31 @@ if config.config_file_name is not None:
 target_metadata = Base.metadata
 
 
+def _override_url_from_app_config() -> None:
+    """Make alembic point at the same DB the running app uses.
+
+    ``alembic.ini`` keeps a relative default (``sqlite:///db/meetings.db``)
+    so old installs and CI keep working — but if the user has moved the DB
+    via ``storage.sqlite_path`` (now defaults to a per-user absolute path),
+    we want migrations to land on *that* file, not whatever the relative
+    path happens to resolve to from the current working directory.
+    """
+    try:
+        from meeting_minutes.config import ConfigLoader, resolve_db_path
+    except Exception:
+        return  # app not importable — fall back to the ini value
+
+    try:
+        app_config = ConfigLoader.load_default()
+        db_path = resolve_db_path(app_config.storage.sqlite_path)
+        config.set_main_option("sqlalchemy.url", f"sqlite:///{db_path}")
+    except Exception as e:  # pragma: no cover — keep migrations runnable
+        print(f"  Note: could not override sqlalchemy.url from app config: {e}")
+
+
+_override_url_from_app_config()
+
+
 def run_migrations_offline() -> None:
     """Run migrations in 'offline' mode."""
     url = config.get_main_option("sqlalchemy.url")

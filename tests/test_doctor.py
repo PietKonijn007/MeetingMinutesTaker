@@ -296,11 +296,14 @@ def test_weasyprint_missing_natives(monkeypatch):
 
 def test_run_checks_returns_all_in_order(config):
     results = doctor.run_checks(config)
-    assert len(results) == 14
+    # Bumped from 14 → 15 when ``storage_paths`` was added to warn about
+    # relative path config that breaks cross-machine migration.
+    assert len(results) == 15
     names = [r.name for r in results]
     assert names[0] == "python_version"
     assert names[1] == "ffmpeg"
     assert "hf_cache_writable" in names
+    assert "storage_paths" in names
     assert names[-4] == "sqlite_vec"
     assert names[-3] == "weasyprint"
     assert names[-2] == "tesseract"

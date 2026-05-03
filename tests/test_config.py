@@ -105,6 +105,32 @@ def test_config_defaults():
     assert config.transcription.whisper_model == "medium"
     assert config.generation.llm.primary_provider == "anthropic"
     assert config.storage.database == "sqlite"
+    # New default: per-user absolute (tilde-prefixed) DB location, so the
+    # service finds the same file regardless of cwd. The historical
+    # ``db/meetings.db`` relative default still loads via back-compat in
+    # ``resolve_db_path``, but new installs should never be relative.
+    assert config.storage.sqlite_path == "~/MeetingMinutesTaker/db/meetings.db"
+    assert config.data_dir == "~/MeetingMinutesTaker/data"
+
+
+def test_resolve_db_path_handles_tilde_default():
+    """The default sqlite_path expands to a real absolute path."""
+    from meeting_minutes.config import resolve_db_path
+
+    config = AppConfig()
+    resolved = resolve_db_path(config.storage.sqlite_path)
+    assert resolved.is_absolute()
+    assert "~" not in str(resolved)
+    assert str(resolved).endswith("MeetingMinutesTaker/db/meetings.db")
+
+
+def test_resolve_db_path_relative_back_compat():
+    """Legacy relative paths still resolve (project-relative) for back-compat."""
+    from meeting_minutes.config import resolve_db_path
+
+    resolved = resolve_db_path("db/meetings.db")
+    assert resolved.is_absolute()
+    assert resolved.name == "meetings.db"
 
 
 def test_load_partial_config(tmp_path: Path):

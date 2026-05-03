@@ -135,7 +135,11 @@ class GenerationConfig(BaseModel):
 
 class StorageConfig(BaseModel):
     database: str = "sqlite"
-    sqlite_path: str = "db/meetings.db"
+    # Absolute or tilde-prefixed path. Relative paths still work for
+    # backwards compatibility (resolved against the project root by
+    # `resolve_db_path`), but new installs default to a per-user absolute
+    # location so the running service finds the same DB regardless of cwd.
+    sqlite_path: str = "~/MeetingMinutesTaker/db/meetings.db"
 
 
 class PipelineConfig(BaseModel):

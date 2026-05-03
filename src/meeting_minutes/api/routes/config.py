@@ -18,7 +18,7 @@ from meeting_minutes.api.secrets import (
     is_valid_secret_name,
     set_secret,
 )
-from meeting_minutes.config import AppConfig
+from meeting_minutes.config import AppConfig, resolve_db_path
 
 # ---------------------------------------------------------------------------
 # Secret management — env-var values stored in .env (gitignored).
@@ -58,6 +58,31 @@ def _find_config_path() -> Path:
     return candidates[0]
 
 
+def _validate_path_value(value: str, field: str) -> None:
+    """Reject obviously-fragile path values from the settings UI.
+
+    Both ``data_dir`` and ``storage.sqlite_path`` must be absolute (``/...``)
+    or tilde-prefixed (``~/...``). Relative paths still load (for back-compat
+    with older configs), but accepting them from the UI is a footgun: they
+    resolve against the process cwd, which is rarely what the user intends.
+    """
+    if not isinstance(value, str) or not value.strip():
+        raise HTTPException(
+            status_code=422,
+            detail=f"{field} must be a non-empty string.",
+        )
+    stripped = value.strip()
+    if not (stripped.startswith("/") or stripped.startswith("~")):
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"{field} must be an absolute path (e.g. /Users/you/...) "
+                f"or start with ~ (e.g. ~/MeetingMinutesTaker/...). "
+                f"Got: {stripped!r}"
+            ),
+        )
+
+
 def _deep_merge(base: dict, override: dict) -> dict:
     """Recursively merge override into base (returns a new dict)."""
     merged = dict(base)
@@ -82,6 +107,14 @@ def update_config(
     body: ConfigUpdate,
 ):
     """Merge-update the configuration and write to YAML."""
+    # Validate path-shaped fields before we even merge — gives the user a
+    # clear, field-specific error instead of a generic Pydantic message.
+    if "data_dir" in body.config:
+        _validate_path_value(body.config["data_dir"], "data_dir")
+    storage_patch = body.config.get("storage")
+    if isinstance(storage_patch, dict) and "sqlite_path" in storage_patch:
+        _validate_path_value(storage_patch["sqlite_path"], "storage.sqlite_path")
+
     config_path = _find_config_path()
 
     # Load existing YAML (or empty dict)
@@ -105,6 +138,35 @@ def update_config(
         yaml.dump(merged, f, default_flow_style=False, sort_keys=False)
 
     return ConfigResponse(config=new_config.model_dump())
+
+
+@router.get("/resolved-paths")
+def get_resolved_paths(
+    config: Annotated[AppConfig, Depends(get_config)],
+):
+    """Return the *expanded* absolute paths for the path-shaped config fields.
+
+    The settings UI shows these underneath the editable input so the user can
+    confirm that ``~/...`` (or a relative legacy value) actually points where
+    they expect on this machine.
+    """
+    data_dir_raw = config.data_dir
+    sqlite_raw = config.storage.sqlite_path
+    return {
+        "data_dir": {
+            "raw": data_dir_raw,
+            "resolved": str(Path(data_dir_raw).expanduser().resolve()),
+        },
+        "storage": {
+            "sqlite_path": {
+                "raw": sqlite_raw,
+                "resolved": str(resolve_db_path(sqlite_raw).resolve()),
+                "is_relative": not (
+                    sqlite_raw.startswith("/") or sqlite_raw.startswith("~")
+                ),
+            }
+        },
+    }
 
 
 @router.get("/custom-models")

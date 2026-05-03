@@ -205,6 +205,7 @@ export const api = {
 
   // Config
   getConfig: () => request('/config'),
+  getResolvedPaths: () => request('/config/resolved-paths'),
   updateConfig: (data) => request('/config', { method: 'PATCH', body: JSON.stringify({ config: data }) }),
   getCustomModels: () => request('/config/custom-models'),
   getProviderModels: (provider, refresh = false) =>

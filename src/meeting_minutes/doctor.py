@@ -318,6 +318,44 @@ def check_database_integrity(config: AppConfig) -> CheckResult:
     )
 
 
+def check_storage_paths(config: AppConfig) -> CheckResult:
+    """Warn when path-shaped config values aren't absolute / tilde-prefixed.
+
+    A relative ``storage.sqlite_path`` (the historical default
+    ``db/meetings.db``) is the most common cross-machine migration footgun:
+    when the service is launched from a non-project cwd it silently creates
+    a fresh empty DB elsewhere and your real data appears to vanish.
+    """
+    bad: list[str] = []
+    sqlite_raw = config.storage.sqlite_path
+    if not (sqlite_raw.startswith("/") or sqlite_raw.startswith("~")):
+        bad.append(f"storage.sqlite_path = {sqlite_raw!r}")
+    data_raw = config.data_dir
+    if not (data_raw.startswith("/") or data_raw.startswith("~")):
+        bad.append(f"data_dir = {data_raw!r}")
+
+    if not bad:
+        return CheckResult(
+            name="storage_paths",
+            status="ok",
+            detail="data_dir and storage.sqlite_path are absolute / tilde-prefixed",
+        )
+
+    return CheckResult(
+        name="storage_paths",
+        status="warn",
+        detail=(
+            "Relative path(s) in config — these resolve against the process "
+            "cwd and can silently point at the wrong file when the service "
+            "is launched from a different directory: " + ", ".join(bad)
+        ),
+        fix_hint=(
+            "Edit Settings → Storage and use an absolute path "
+            "(e.g. ~/MeetingMinutesTaker/db/meetings.db)."
+        ),
+    )
+
+
 def check_disk_space(config: AppConfig) -> CheckResult:
     """Check 7 — DSK-1 preflight at default planned minutes."""
     from meeting_minutes.system1.capture import preflight_disk_check
@@ -578,6 +616,7 @@ def run_checks(config: AppConfig) -> list[CheckResult]:
         check_blackhole_device(),
         check_hf_token(),
         check_llm_reachable(config),
+        check_storage_paths(config),
         check_database_integrity(config),
         check_disk_space(config),
         check_gpu(),
