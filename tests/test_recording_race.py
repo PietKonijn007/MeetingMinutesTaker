@@ -27,16 +27,33 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from meeting_minutes.api.deps import get_config
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session as SASession, sessionmaker
+
+from meeting_minutes.api.deps import get_config, get_db_session
 from meeting_minutes.api.routes import recording as rec_module
 from meeting_minutes.config import AppConfig
+from meeting_minutes.system3.db import Base
 
 
 @pytest.fixture
-def app():
+def app(tmp_path):
+    db_path = tmp_path / "test.db"
+    engine = create_engine(f"sqlite:///{db_path}")
+    Base.metadata.create_all(engine)
+    _SessionLocal = sessionmaker(bind=engine)
+
+    def _override_session():
+        s = _SessionLocal()
+        try:
+            yield s
+        finally:
+            s.close()
+
     app = FastAPI()
     app.include_router(rec_module.router)
     app.dependency_overrides[get_config] = lambda: AppConfig()
+    app.dependency_overrides[get_db_session] = _override_session
     return app
 
 
