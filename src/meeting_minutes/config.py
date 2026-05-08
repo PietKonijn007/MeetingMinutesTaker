@@ -441,23 +441,23 @@ class ConfigLoader:
         Order of precedence:
           1. ``$CWD/config/config.yaml`` — preserved for the launchd service
              and for users running commands from the project root.
-          2. ``<repo-root>/config/config.yaml`` resolved from this file's
-             location — handles the common case of invoking ``mm`` from a
-             subdirectory (e.g. ``data/recordings/``). Without this fallback
-             every CLI command run from a non-root cwd silently used
-             ``AppConfig()`` defaults, which masked engine/model overrides.
+          2. Walk up from CWD to find a parent that contains
+             ``config/config.yaml`` — handles invoking ``mm`` from a
+             subdirectory (e.g. ``data/recordings/``).
           3. ``~/.meeting-minutes/config.yaml`` — per-user override.
 
         Falls through to ``AppConfig()`` defaults when none exist.
         """
-        # ``config.py`` lives at ``src/meeting_minutes/config.py``, so three
-        # ``parent`` hops yields the repository root.
-        repo_root = Path(__file__).resolve().parent.parent.parent
-        candidates = [
-            Path("config/config.yaml"),
-            repo_root / "config" / "config.yaml",
-            Path.home() / ".meeting-minutes" / "config.yaml",
-        ]
+        # Walk up from cwd rather than deriving from __file__, which
+        # follows symlinks and breaks in editable installs / git worktrees.
+        cwd = Path.cwd().resolve()
+        candidates: list[Path] = [cwd / "config" / "config.yaml"]
+        for ancestor in cwd.parents:
+            candidate = ancestor / "config" / "config.yaml"
+            if candidate.exists():
+                candidates.append(candidate)
+                break
+        candidates.append(Path.home() / ".meeting-minutes" / "config.yaml")
         for path in candidates:
             if path.exists():
                 return ConfigLoader.load(path)

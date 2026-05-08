@@ -11,8 +11,9 @@ from pathlib import Path
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
 
-from meeting_minutes.api.deps import get_config
+from meeting_minutes.api.deps import get_config, get_db_session
 from meeting_minutes.api.schemas import (
     AudioDeviceResponse,
     PipelineJobStatus,
@@ -56,6 +57,7 @@ _pipeline_worker_started = False
 @router.post("/api/recording/start", response_model=RecordingStartResponse)
 def start_recording(
     config: Annotated[AppConfig, Depends(get_config)],
+    session: Annotated[Session, Depends(get_db_session)],
     body: RecordingStartRequest = RecordingStartRequest(),
 ):
     """Start recording audio. Optionally override audio device and language."""
@@ -110,6 +112,20 @@ def start_recording(
             _current_recording["start_time"] = time.time()
             _current_recording["engine"] = engine
             _current_recording["language"] = language
+
+        # Create a stub MeetingORM row so attachments can be linked
+        # during recording. The pipeline's upsert_meeting will fill in
+        # title, date, duration, etc. after transcription completes.
+        from datetime import datetime, timezone
+        from meeting_minutes.system3.db import MeetingORM
+        if session.get(MeetingORM, meeting_id) is None:
+            stub = MeetingORM(
+                meeting_id=meeting_id,
+                status="recording",
+                created_at=datetime.now(timezone.utc),
+            )
+            session.add(stub)
+            session.commit()
 
         # Also write state file for CLI interop
         state_file = Path("/tmp/mm_recording_state.json")
@@ -221,6 +237,7 @@ async def stop_recording(
 @router.post("/api/recording/cancel")
 async def cancel_recording(
     config: Annotated[AppConfig, Depends(get_config)],
+    session: Annotated[Session, Depends(get_db_session)],
 ):
     """Cancel an in-flight recording: discard the audio, skip the pipeline.
 
@@ -289,6 +306,14 @@ async def cancel_recording(
             deleted.append(notes_file.name)
     except Exception as exc:
         logger.warning("Failed to delete notes sidecar %s: %s", notes_file, exc)
+
+    # Remove the stub MeetingORM row (and cascade-delete any attachments
+    # added during this recording session).
+    from meeting_minutes.system3.db import MeetingORM
+    stub = session.get(MeetingORM, meeting_id)
+    if stub is not None:
+        session.delete(stub)
+        session.commit()
 
     logger.info("Cancelled recording %s (deleted: %s)", meeting_id, ", ".join(deleted) or "nothing")
 
