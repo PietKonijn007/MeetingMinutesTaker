@@ -59,6 +59,73 @@ def _calculate_cost(provider: str, model: str, input_tokens: int, output_tokens:
     return (input_tokens + output_tokens) / 1000 * rate
 
 
+_ARRAY_TO_DICT_KEYS: dict[str, list[str]] = {
+    "participants": ["name", "role", "sentiment"],
+    "discussion_points": ["topic", "summary", "participants", "sentiment"],
+    "decisions": ["description", "made_by", "rationale", "confidence"],
+    "risks_and_concerns": ["description", "raised_by"],
+    "follow_ups": ["description", "owner", "timeframe"],
+    "open_questions": ["question", "raised_by", "owner"],
+    "action_items": ["description", "owner", "due_date", "priority"],
+}
+
+_ACTION_ITEM_DESC_ALIASES = ("action", "task", "item", "text", "title", "name", "content")
+
+
+def _normalize_structured_response(data: dict) -> dict:
+    """Fix common schema mismatches from local models.
+
+    Handles: arrays-as-objects, missing/renamed fields, strings-as-lists.
+    """
+    if not isinstance(data, dict):
+        return data
+
+    for field, keys in _ARRAY_TO_DICT_KEYS.items():
+        items = data.get(field)
+        if not isinstance(items, list):
+            continue
+        normalized = []
+        for item in items:
+            if isinstance(item, dict):
+                normalized.append(item)
+            elif isinstance(item, (list, tuple)):
+                entry = {}
+                for i, val in enumerate(item):
+                    if i < len(keys):
+                        entry[keys[i]] = val
+                normalized.append(entry)
+            elif isinstance(item, str):
+                normalized.append({keys[0]: item})
+            else:
+                normalized.append(item)
+        data[field] = normalized
+
+    for item in data.get("action_items", []):
+        if isinstance(item, dict) and "description" not in item:
+            for alias in _ACTION_ITEM_DESC_ALIASES:
+                if alias in item:
+                    item["description"] = item.pop(alias)
+                    break
+
+    email = data.get("email_draft")
+    if isinstance(email, dict):
+        for list_field in ("to", "cc"):
+            val = email.get(list_field)
+            if isinstance(val, str):
+                email[list_field] = [v.strip() for v in val.split(",") if v.strip()]
+
+    effectiveness = data.get("meeting_effectiveness")
+    if isinstance(effectiveness, (list, tuple)):
+        eff_keys = ["had_clear_agenda", "decisions_made", "action_items_assigned", "unresolved_items"]
+        entry = {}
+        for i, val in enumerate(effectiveness):
+            if i < len(eff_keys):
+                entry[eff_keys[i]] = val
+        data["meeting_effectiveness"] = entry
+
+    return data
+
+
 class LLMClient:
     """Send prompts to LLM and return raw responses. Supports Anthropic, OpenAI, OpenRouter, and Ollama."""
 
@@ -568,6 +635,8 @@ class LLMClient:
                 processing_time_seconds=elapsed,
                 structured_data=None,
             )
+
+        structured_data = _normalize_structured_response(structured_data)
 
         return LLMResponse(
             text="",
