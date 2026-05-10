@@ -14,6 +14,10 @@ from meeting_minutes.models import LLMResponse
 logger = logging.getLogger(__name__)
 
 
+class ContextWindowExceededError(RuntimeError):
+    """Raised when a prompt is too large for the model's context window."""
+
+
 # Cost per 1K tokens (approximate, as of early 2025)
 COST_PER_1K_TOKENS: dict[str, dict[str, float]] = {
     "anthropic": {
@@ -60,6 +64,61 @@ class LLMClient:
 
     def __init__(self, config: LLMConfig) -> None:
         self._config = config
+        self._model_context_length: int | None = None
+
+    async def _fetch_model_context_length(self) -> int | None:
+        """Query the provider's /models endpoint for the selected model's context length."""
+        provider = self._config.primary_provider
+        model = self._config.model
+
+        if provider not in ("ollama", "openai_compatible"):
+            return None
+
+        try:
+            from meeting_minutes.api.model_fetcher import get_provider_models
+            result = await get_provider_models(provider)
+            for m in result.get("models", []):
+                if m.get("id") == model and m.get("context_length"):
+                    return m["context_length"]
+        except Exception:
+            logger.debug("Could not fetch context length for %s/%s", provider, model)
+
+        return None
+
+    async def check_context_fits(
+        self, prompt: str, system_prompt: str = ""
+    ) -> None:
+        """Raise if the prompt likely exceeds the model's context window.
+
+        Uses a rough 4-chars-per-token estimate. Only checks local providers
+        (ollama, openai_compatible) where the context window is user-configured
+        and often too small.
+        """
+        if self._config.primary_provider not in ("ollama", "openai_compatible"):
+            return
+
+        if self._model_context_length is None:
+            self._model_context_length = await self._fetch_model_context_length()
+
+        ctx = self._model_context_length
+        if ctx is None:
+            return
+
+        estimated_tokens = (len(prompt) + len(system_prompt)) // 4
+        available_for_output = ctx - estimated_tokens
+
+        if available_for_output < self._config.max_output_tokens:
+            ctx_k = f"{ctx // 1024}K" if ctx >= 1024 else str(ctx)
+            raise ContextWindowExceededError(
+                f"Prompt is too long for the model's context window. "
+                f"Estimated prompt tokens: ~{estimated_tokens:,}, "
+                f"model context: {ctx_k} ({ctx:,} tokens), "
+                f"needed for output: {self._config.max_output_tokens:,}, "
+                f"shortfall: ~{self._config.max_output_tokens - available_for_output:,} tokens. "
+                f"Increase the model's context length in your local server "
+                f"(e.g. LM Studio → Load tab → Context Length) to at least "
+                f"{estimated_tokens + self._config.max_output_tokens:,} tokens."
+            )
 
     async def generate(self, prompt: str, system_prompt: str = "") -> LLMResponse:
         """Send prompt to configured LLM provider. Returns response with token usage."""
@@ -374,6 +433,7 @@ class LLMClient:
                 model=model,
                 messages=messages,
                 temperature=self._config.temperature,
+                max_tokens=self._config.max_output_tokens,
             )
         except Exception as exc:
             raise RuntimeError(

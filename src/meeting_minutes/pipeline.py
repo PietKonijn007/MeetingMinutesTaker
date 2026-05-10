@@ -931,6 +931,14 @@ class PipelineOrchestrator:
             if custom_system_addendum:
                 system_prompt += custom_system_addendum
             _console(f"  Prompt rendered: {len(user_prompt):,} chars")
+
+            from meeting_minutes.system2.llm_client import ContextWindowExceededError
+            try:
+                await llm_client.check_context_fits(user_prompt, system_prompt)
+            except ContextWindowExceededError as ctx_err:
+                _console(f"  ⚠ {ctx_err}", "red")
+                raise
+
             _console(f"  Calling LLM: {provider} / {model}...", "yellow")
 
             t0 = time.time()
@@ -1003,6 +1011,8 @@ class PipelineOrchestrator:
             _console(f"    Follow-ups: {len(parsed_minutes.follow_ups)}")
             _console(f"    Parking lot: {len(parsed_minutes.parking_lot)}")
 
+        except ContextWindowExceededError:
+            raise
         except Exception as structured_exc:
             self._logger.warning("Structured generation failed: %s — falling back to text+regex", structured_exc)
             _console(f"  ⚠ Structured generation failed: {structured_exc}", "yellow")
@@ -1013,12 +1023,16 @@ class PipelineOrchestrator:
                 template, context, enhanced_transcript, extra_vars=extra_vars,
             )
             _console(f"  Prompt rendered: {len(full_prompt):,} chars")
-            _console(f"  Calling LLM: {provider} / {model}...", "yellow")
 
-            t0 = time.time()
             fallback_system = template.system_prompt
             if custom_system_addendum:
                 fallback_system += custom_system_addendum
+
+            await llm_client.check_context_fits(full_prompt, fallback_system)
+
+            _console(f"  Calling LLM: {provider} / {model}...", "yellow")
+
+            t0 = time.time()
             llm_response = await llm_client.generate(full_prompt, system_prompt=fallback_system)
             t_llm = time.time() - t0
 
