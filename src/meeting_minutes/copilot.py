@@ -10,6 +10,16 @@ from __future__ import annotations
 import json
 import logging
 from datetime import datetime, timedelta, timezone
+
+# SQLite stores naive datetimes; use naive UTC for all Python-side comparisons.
+_utcnow = lambda: datetime.utcnow()  # noqa: E731
+
+
+def _as_naive(dt: datetime | None) -> datetime | None:
+    """Strip tzinfo so comparisons with naive SQLite datetimes don't raise."""
+    if dt is None:
+        return None
+    return dt.replace(tzinfo=None) if dt.tzinfo else dt
 from pathlib import Path
 from typing import Optional
 
@@ -211,7 +221,7 @@ class CopilotEngine:
     # ------------------------------------------------------------------
 
     def _meetings_with_person(self, person: PersonORM) -> list[MeetingORM]:
-        cutoff = datetime.now(timezone.utc) - timedelta(days=self._config.lookback_days)
+        cutoff = _utcnow() - timedelta(days=self._config.lookback_days)
         meetings = (
             self._session.query(MeetingORM)
             .join(meeting_attendees, MeetingORM.meeting_id == meeting_attendees.c.meeting_id)
@@ -227,7 +237,7 @@ class CopilotEngine:
     # ------------------------------------------------------------------
 
     def _commitment_status(self, person: PersonORM) -> CommitmentStatus:
-        now = datetime.now(timezone.utc)
+        now = _utcnow()
         cutoff = now - timedelta(days=self._config.lookback_days)
 
         all_actions = (
@@ -248,7 +258,7 @@ class CopilotEngine:
         for ai in all_actions:
             if ai.status in ("done", "cancelled"):
                 continue
-            due_dt = _parse_due(ai.due_date)
+            due_dt = _as_naive(_parse_due(ai.due_date))
             is_overdue = due_dt is not None and due_dt < now
             if is_overdue:
                 overdue_count += 1
@@ -373,7 +383,7 @@ class CopilotEngine:
     # ------------------------------------------------------------------
 
     def _inbound_commitments(self, person: PersonORM, meetings: list[MeetingORM]) -> list[InboundCommitment]:
-        now = datetime.now(timezone.utc)
+        now = _utcnow()
         person_meeting_ids = {m.meeting_id for m in meetings}
         if not person_meeting_ids:
             return []
@@ -398,7 +408,7 @@ class CopilotEngine:
             else:
                 direction = "others_owe_them"
 
-            due_dt = _parse_due(ai.due_date)
+            due_dt = _as_naive(_parse_due(ai.due_date))
             is_overdue = due_dt is not None and due_dt < now
 
             meeting = self._session.get(MeetingORM, ai.meeting_id)
