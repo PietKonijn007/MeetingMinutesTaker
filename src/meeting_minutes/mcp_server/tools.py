@@ -154,6 +154,25 @@ def register(app: Server, db_context: Callable) -> None:
                     },
                 },
             ),
+            Tool(
+                name="one_on_one_prep",
+                description=(
+                    "Generate a 1:1 prep dossier for a person — commitments, sentiment trajectory, "
+                    "recurring unresolved topics, inbound commitments, talk patterns, and talking points."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "person": {"type": "string", "description": "Person name or ID to prep for"},
+                        "focus": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Optional focus areas to research",
+                        },
+                    },
+                    "required": ["person"],
+                },
+            ),
         ]
 
     @app.call_tool()
@@ -179,6 +198,7 @@ def register(app: Server, db_context: Callable) -> None:
         "post_note": _handle_post_note,
         "list_notes": _handle_list_notes,
         "list_series": _handle_list_series,
+        "one_on_one_prep": _handle_one_on_one_prep,
     }
 
 
@@ -397,3 +417,25 @@ def _handle_list_series(storage, search, session, args: dict) -> str:
         lines.append(f"- **{s.title}** ({s.meeting_type}, {s.cadence or 'irregular'})")
         lines.append(f"  ID: `{s.series_id}` | Meetings: {member_count}")
     return "\n".join(lines)
+
+
+def _handle_one_on_one_prep(storage, search, session, args: dict) -> str:
+    from pathlib import Path
+
+    from meeting_minutes.config import ConfigLoader
+    from meeting_minutes.copilot import CopilotConfig, CopilotEngine, format_dossier_markdown
+
+    config = ConfigLoader.load_default()
+    data_dir = Path(config.data_dir).expanduser()
+
+    engine_config = CopilotConfig(
+        your_name=config.copilot.your_name,
+        lookback_days=config.copilot.lookback_days,
+        sentiment_shift_threshold=config.copilot.sentiment_shift_threshold,
+        talk_ratio_alert=config.copilot.talk_ratio_alert,
+        llm_talking_points=config.copilot.llm_talking_points,
+    )
+
+    engine = CopilotEngine(session, data_dir, engine_config)
+    dossier = engine.generate(args["person"], focus=args.get("focus"))
+    return format_dossier_markdown(dossier)

@@ -35,6 +35,7 @@ This guide walks you through installing the system, setting up audio capture, co
 24. [Desktop Notifications](#24-desktop-notifications)
 25. [Export to PDF and DOCX (`mm export`)](#25-export-to-pdf-and-docx)
 26. [MCP Server (AI Agent Integration)](#26-mcp-server-ai-agent-integration)
+27. [1:1 Copilot](#27-11-copilot)
 
 ---
 
@@ -1911,6 +1912,72 @@ For Cursor, add to `.cursor/mcp.json`:
   }
 }
 ```
+
+---
+
+## 27. 1:1 Copilot
+
+The 1:1 Copilot generates a person-centric prep dossier before your 1:1 meetings. Instead of reviewing meeting notes manually, get an instant brief covering commitments, sentiment, patterns, and suggested talking points.
+
+### Configuration
+
+Add a `copilot` section to your `config/config.yaml`:
+
+```yaml
+copilot:
+  your_name: "Jurgen"           # Your name (used to identify your commitments)
+  lookback_days: 90             # How far back to analyze
+  sentiment_shift_threshold: 2  # Flag if last N meetings trend down
+  talk_ratio_alert: 0.65        # Flag if you speak > this %
+  llm_talking_points: false     # Enable LLM-enhanced suggestions (future)
+```
+
+The `your_name` field is important — it identifies which action items are *your* commitments to the other person.
+
+### From the CLI
+
+```bash
+mm copilot "Sarah Chen"                         # Full dossier in markdown
+mm copilot "Sarah" --json                       # Machine-readable JSON
+mm copilot "Sarah" --focus "API migration"      # Add focus areas
+```
+
+### From the API
+
+```
+GET /api/copilot/{person_id}?focus=API+migration&focus=career+growth
+```
+
+Returns a `CopilotDossier` JSON with all sections.
+
+### Via MCP (Claude Code)
+
+```
+"Prep me for my 1:1 with Sarah — focus on the API migration and her workload"
+```
+
+Claude uses the `one_on_one_prep` tool automatically.
+
+### What the dossier contains
+
+| Section | What it shows | Why it matters |
+|---------|---------------|----------------|
+| **Commitments Status** | Open/overdue actions, completion rate, trend | Know what to follow up on |
+| **Sentiment Trajectory** | Per-person sentiment from recent meetings | Catch disengagement early |
+| **Recurring Unresolved** | Topics raised 2+ times without a decision | Stop discussion loops |
+| **Inbound Commitments** | Things you owe them + things others owe them | Never forget a promise |
+| **Talk Patterns** | Your vs. their talk % in recent 1:1s | Create space for them |
+| **Talking Points** | Rule-based suggestions from the data above | Walk in with a plan |
+
+### Talking points logic
+
+The copilot generates suggestions based on signals:
+- Overdue action item → "Check on X — any blockers?"
+- Sentiment dip detected → "Open check-in — anything on their mind?"
+- Recurring unresolved topic → "Topic X raised N times — time to decide?"
+- You owe them something → "Update on your commitment: Y"
+- Talk ratio imbalanced → "Try more open questions"
+- Declining completion rate → "Discuss workload or priorities?"
 
 ---
 

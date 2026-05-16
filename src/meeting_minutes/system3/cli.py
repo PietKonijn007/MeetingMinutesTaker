@@ -85,6 +85,44 @@ def mcp_cmd():
 
 
 # ---------------------------------------------------------------------------
+# mm copilot
+# ---------------------------------------------------------------------------
+
+
+@app.command("copilot")
+def copilot_cmd(
+    person: str = typer.Argument(..., help="Person name (or ID) to prep for"),
+    focus: Optional[list[str]] = typer.Option(None, "--focus", "-f", help="Focus areas to research"),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
+):
+    """Generate a 1:1 prep dossier for a person."""
+    from pathlib import Path
+
+    from meeting_minutes.copilot import CopilotConfig as CopilotEngineConfig
+    from meeting_minutes.copilot import CopilotEngine, format_dossier_markdown
+
+    config = _load_config()
+    session = _get_db_session(config)
+    data_dir = Path(config.data_dir).expanduser()
+
+    engine_config = CopilotEngineConfig(
+        your_name=config.copilot.your_name,
+        lookback_days=config.copilot.lookback_days,
+        sentiment_shift_threshold=config.copilot.sentiment_shift_threshold,
+        talk_ratio_alert=config.copilot.talk_ratio_alert,
+        llm_talking_points=config.copilot.llm_talking_points,
+    )
+
+    engine = CopilotEngine(session, data_dir, engine_config)
+    dossier = engine.generate(person, focus=focus)
+
+    if json_output:
+        console.print(dossier.model_dump_json(indent=2))
+    else:
+        console.print(format_dossier_markdown(dossier))
+
+
+# ---------------------------------------------------------------------------
 # mm search
 # ---------------------------------------------------------------------------
 

@@ -223,6 +223,7 @@ mm actions complete <action_id>                   # Mark done
 | `mm delete <id>` | Delete meeting and all associated data |
 | `mm cleanup` | Run retention policy cleanup (delete expired data) |
 | `mm generate-key` | Generate a new encryption key for at-rest encryption |
+| `mm copilot <person>` | Generate a 1:1 prep dossier — commitments, sentiment, talk patterns, talking points (supports `--focus`, `--json`) |
 | `mm mcp` | Start the MCP server (stdio transport) for AI agent integration (Claude Code, Cursor, etc.) |
 | `mm serve` | Start the web UI + API server (supports `--host`, `--port`; refuses to drift if the port is busy) |
 | `mm upgrade` | Pull latest code from main and rebuild (supports `--branch` override) |
@@ -264,6 +265,7 @@ The built-in MCP server lets AI agents (Claude Code, Cursor, Windsurf, etc.) que
 | `post_note` | Attach an annotation (question/blocker/followup/observation) |
 | `list_notes` | List annotations on a meeting |
 | `list_series` | Recurring meeting series |
+| `one_on_one_prep` | Generate a 1:1 prep dossier for a person |
 
 **Resources** (auto-loaded context):
 - `meetings://recent` — last 5 meetings

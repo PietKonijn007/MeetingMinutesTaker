@@ -311,6 +311,16 @@ class BriefConfig(BaseModel):
         return bool(self.talking_points.enabled)
 
 
+class CopilotConfig(BaseModel):
+    """1:1 Copilot settings — person-centric meeting prep for leaders."""
+
+    your_name: str = ""
+    lookback_days: int = 90
+    sentiment_shift_threshold: int = 2
+    talk_ratio_alert: float = 0.65
+    llm_talking_points: bool = False
+
+
 class ExportConfig(BaseModel):
     """Export settings (EXP-1)."""
 
@@ -384,6 +394,7 @@ class AppConfig(BaseModel):
     disk: DiskConfig = DiskConfig()
     notifications: NotificationsConfig = NotificationsConfig()
     brief: BriefConfig = BriefConfig()
+    copilot: CopilotConfig = CopilotConfig()
     export: ExportConfig = ExportConfig()
     attachments: AttachmentsConfig = AttachmentsConfig()
 
