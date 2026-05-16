@@ -34,6 +34,7 @@ This guide walks you through installing the system, setting up audio capture, co
 23. [Pre-Meeting Briefing (`/brief`)](#23-pre-meeting-briefing)
 24. [Desktop Notifications](#24-desktop-notifications)
 25. [Export to PDF and DOCX (`mm export`)](#25-export-to-pdf-and-docx)
+26. [MCP Server (AI Agent Integration)](#26-mcp-server-ai-agent-integration)
 
 ---
 
@@ -1811,6 +1812,108 @@ If `templates/export/docx_template.docx` exists, python-docx inherits paragraph 
 
 ---
 
+## 26. MCP Server (AI Agent Integration)
+
+The built-in MCP (Model Context Protocol) server lets AI coding assistants — Claude Code, Cursor, Windsurf, and any other MCP-aware client — query your meeting history, manage action items, and post annotations directly from their interface.
+
+### What it enables
+
+- Ask "What did we decide about the API migration?" and get cited answers from your meeting database
+- Review and update action items without opening the web UI
+- Search across all transcripts and minutes using natural language
+- Attach follow-up notes to meetings from within your editor
+
+### Starting the server
+
+```bash
+mm mcp
+```
+
+This starts the MCP server using **stdio transport** (the standard for local MCP integrations). It runs until you stop it (Ctrl-C) or until the calling client disconnects.
+
+### Configuring Claude Code
+
+Add this to your project `.claude/settings.json` or global `~/.claude/settings.json`:
+
+```json
+{
+  "mcpServers": {
+    "meeting-minutes": {
+      "command": "mm",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+After adding the config, restart Claude Code. The tools will appear automatically.
+
+### Available tools
+
+| Tool | Description | Example use |
+|------|-------------|-------------|
+| `list_meetings` | Browse meetings with type/date/person filters | "Show my standups from last week" |
+| `get_meeting` | Full detail: minutes, attendees, actions, decisions | "What happened in meeting m-abc123?" |
+| `search` | Full-text search with inline filters | "Search for discussions about deployment" |
+| `list_action_items` | Open/overdue items by owner or status | "What are my open action items?" |
+| `update_action_item` | Change status, owner, or due date | "Mark action ai-xyz as done" |
+| `get_transcript` | Raw transcript text for a meeting | "Show me the transcript from yesterday's sync" |
+| `list_decisions` | Decisions filtered by meeting or person | "What decisions did the team make this month?" |
+| `post_note` | Attach an annotation to a meeting | "Flag the auth discussion as a blocker" |
+| `list_notes` | List annotations on a meeting | "What notes are on the planning meeting?" |
+| `list_series` | Recurring meeting series with cadence | "Show my recurring meetings" |
+
+### Resources (auto-loaded context)
+
+MCP resources provide lightweight context that clients can read without explicit tool calls:
+
+- `meetings://recent` — titles and dates of the last 5 meetings
+- `meetings://actions/open` — all confirmed open action items
+
+### Annotations
+
+The `post_note` tool creates annotations on meetings with optional labels:
+
+- **question** — something that needs clarification
+- **blocker** — an issue blocking progress
+- **followup** — something to address in a future meeting
+- **observation** — a general note or insight
+
+Annotations appear in the web UI and can be resolved (marked as handled). Use `list_notes` to see unresolved annotations across meetings.
+
+### Search syntax
+
+The `search` tool supports inline filters that narrow results without needing separate parameters:
+
+```
+type:standup after:2026-01-01 before:2026-03-01 deployment issues
+```
+
+Filters are extracted from the query string; the remaining text is the full-text search term.
+
+### Configuring for other MCP clients
+
+Any MCP-compatible client can connect. The protocol details:
+
+- **Transport:** stdio (stdin/stdout JSON-RPC)
+- **Command:** `mm mcp`
+- **Capabilities:** tools, resources
+
+For Cursor, add to `.cursor/mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "meeting-minutes": {
+      "command": "mm",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+---
+
 ## 14. Troubleshooting
 
 ### Audio issues
@@ -1899,4 +2002,7 @@ If `templates/export/docx_template.docx` exists, python-docx inherits paragraph 
 | **PDF export returns 501** | WeasyPrint native libs missing. On macOS, run `mm upgrade` (which now auto-installs `pango cairo gdk-pixbuf libffi`) or manually: `brew install pango cairo gdk-pixbuf libffi`. Verify with `mm doctor` — check 11 should show green. |
 | **PDF export fails silently / empty file** | Check the server logs — WeasyPrint may have crashed on specific content. Try `--with-transcript=false` to narrow it down. Markdown and DOCX exports don't have native deps and are good fallbacks. |
 | **No desktop notification after pipeline completes** | On macOS only; confirm `notifications.enabled: true` in config. First-time setup may need to approve notifications in System Settings → Notifications → Terminal/Python. On non-macOS, notifications no-op (a web-UI toast mirror is a documented follow-up). |
+| **`mm mcp` fails with "No module named 'mcp'"** | Install the MCP dependency: `pip install -e .` (it's in the main dependencies). Or install standalone: `pip install "mcp>=1.0.0"`. |
+| **MCP tools don't appear in Claude Code** | Restart Claude Code after adding the config. Check that `mm mcp` runs without error from your terminal. Verify the config is in the correct `settings.json` (project or global). |
+| **MCP `post_note` returns "Meeting not found"** | The meeting ID must match exactly. Use `list_meetings` or `search` first to find the correct ID. |
 | **Export dropdown hidden / clipped at bottom of viewport** | Fixed in a recent release — the menu now flips upward automatically when space-below is tight. If you're on an older build, run `mm upgrade`. |
