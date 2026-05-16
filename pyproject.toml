@@ -43,6 +43,7 @@ dependencies = [
     "pdf2image>=1.17.0",  # Render PDF pages → images for scanned-PDF OCR fallback (spec/09)
     "pillow-heif>=0.16.0",  # HEIC support for iPhone screenshot attachments (spec/09)
     "trafilatura>=1.8.0",  # Readable-text extraction from links (spec/09)
+    "mcp>=1.0.0",  # Model Context Protocol server for AI agent integration
 ]
 
 [project.optional-dependencies]
