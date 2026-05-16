@@ -72,6 +72,19 @@ def _get_storage_and_search(config=None):
 
 
 # ---------------------------------------------------------------------------
+# mm mcp
+# ---------------------------------------------------------------------------
+
+
+@app.command("mcp")
+def mcp_cmd():
+    """Start the MCP server (stdio transport) for AI agent integration."""
+    from meeting_minutes.mcp_server.server import main
+
+    main()
+
+
+# ---------------------------------------------------------------------------
 # mm search
 # ---------------------------------------------------------------------------
 

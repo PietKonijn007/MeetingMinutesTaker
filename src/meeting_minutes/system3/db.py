@@ -329,6 +329,26 @@ class AttachmentORM(Base):
     )
 
 
+class AnnotationORM(Base):
+    """Free-form notes/annotations attached to meetings by users or MCP agents."""
+    __tablename__ = "annotations"
+
+    annotation_id = Column(String, primary_key=True)
+    meeting_id = Column(
+        String,
+        ForeignKey("meetings.meeting_id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    content = Column(Text, nullable=False)
+    label = Column(String, nullable=True)  # question | blocker | followup | observation
+    author = Column(String, nullable=False, default="mcp")
+    created_at = Column(DateTime, nullable=False)
+    resolved = Column(Boolean, nullable=False, default=False)
+
+    meeting = relationship("MeetingORM")
+
+
 class MeetingBriefORM(Base):
     """Cached pre-meeting brief artifact (BRF-2).
 

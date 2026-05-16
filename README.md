@@ -223,6 +223,7 @@ mm actions complete <action_id>                   # Mark done
 | `mm delete <id>` | Delete meeting and all associated data |
 | `mm cleanup` | Run retention policy cleanup (delete expired data) |
 | `mm generate-key` | Generate a new encryption key for at-rest encryption |
+| `mm mcp` | Start the MCP server (stdio transport) for AI agent integration (Claude Code, Cursor, etc.) |
 | `mm serve` | Start the web UI + API server (supports `--host`, `--port`; refuses to drift if the port is busy) |
 | `mm upgrade` | Pull latest code from main and rebuild (supports `--branch` override) |
 | `mm service install` | Install macOS Launch Agent for auto-start on login |
@@ -231,6 +232,42 @@ mm actions complete <action_id>                   # Mark done
 | `mm service stop` | Stop the service |
 | `mm service status` | Show service status and API health |
 | `mm service logs` | Show server logs (supports `--follow`, `--lines`) |
+
+## MCP Server (AI Agent Integration)
+
+The built-in MCP server lets AI agents (Claude Code, Cursor, Windsurf, etc.) query your meeting history, search transcripts, manage action items, and post annotations — all through the [Model Context Protocol](https://modelcontextprotocol.io).
+
+**Setup for Claude Code** — add to your project's `.claude/settings.json` (or `~/.claude/settings.json` for global):
+
+```json
+{
+  "mcpServers": {
+    "meeting-minutes": {
+      "command": "mm",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+**Available tools:**
+
+| Tool | Description |
+|------|-------------|
+| `list_meetings` | Browse meetings with type/date filters |
+| `get_meeting` | Full detail: minutes, attendees, action items, decisions |
+| `search` | Full-text search with inline filters (`type:standup after:2026-01-01`) |
+| `list_action_items` | Open/overdue items, filterable by owner/status |
+| `update_action_item` | Change status, owner, or due date |
+| `get_transcript` | Raw transcript text |
+| `list_decisions` | Decisions filtered by meeting or person |
+| `post_note` | Attach an annotation (question/blocker/followup/observation) |
+| `list_notes` | List annotations on a meeting |
+| `list_series` | Recurring meeting series |
+
+**Resources** (auto-loaded context):
+- `meetings://recent` — last 5 meetings
+- `meetings://actions/open` — all confirmed open action items
 
 ## Pipeline state machine
 
