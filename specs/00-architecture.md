@@ -333,13 +333,19 @@ generation:
   llm:
     primary_provider: anthropic    # anthropic | openai | openrouter | ollama
     model: claude-sonnet-4-6
-    fallback_provider: null        # null = disabled, or "openai"
-    fallback_model: gpt-4o
-    # For OpenRouter, use prefixed model IDs: anthropic/claude-sonnet-4, google/gemini-2.5-pro-preview, etc.
     temperature: 0.2
     max_output_tokens: 4096
     retry_attempts: 3
     timeout_seconds: 120
+    # Fallback — tried after primary exhausts all retries (including generate_structured).
+    # All settings default to null (inherit from primary).
+    fallback_provider: null        # null = disabled, or any supported provider
+    fallback_model: gpt-4o
+    fallback_temperature: null     # null = inherit from primary
+    fallback_max_output_tokens: null
+    fallback_retry_attempts: null
+    fallback_timeout_seconds: null
+    # For OpenRouter, use prefixed model IDs: anthropic/claude-sonnet-4, google/gemini-2.5-pro-preview, etc.
 
 # System 3 settings
 storage:
@@ -381,7 +387,7 @@ storage:
 |---------|----------|
 | Audio capture fails mid-recording | Save partial audio, mark transcript as incomplete |
 | Transcription fails | Retry with fallback engine; save audio for later reprocessing |
-| LLM API unavailable | Queue for retry; fall back to alternative provider |
+| LLM API unavailable | Retry with exponential backoff; after all retries, try fallback provider (with its own retry cycle and optional per-setting overrides) |
 | LLM response malformed | Retry with adjusted prompt; fall back to general template |
 | Pipeline step fails | Automatic retry with exponential backoff (up to 2 retries, 5s base delay) via `_retry_async` |
 | Database write fails | Write to local file as fallback; reconcile on recovery |

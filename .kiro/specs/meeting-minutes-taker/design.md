@@ -846,6 +846,10 @@ class LLMConfig(BaseModel):
     model: str = "claude-sonnet-4-6"
     fallback_provider: str | None = "openai"
     fallback_model: str | None = "gpt-4o"
+    fallback_temperature: float | None = None      # null = inherit from primary
+    fallback_max_output_tokens: int | None = None   # null = inherit from primary
+    fallback_retry_attempts: int | None = None      # null = inherit from primary
+    fallback_timeout_seconds: int | None = None     # null = inherit from primary
     temperature: float = 0.2
     max_output_tokens: int = 4096
     retry_attempts: int = 3
