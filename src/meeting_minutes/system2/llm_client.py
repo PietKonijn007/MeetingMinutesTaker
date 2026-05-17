@@ -229,8 +229,16 @@ class LLMClient:
             except Exception as exc:
                 if attempt < retry_attempts - 1:
                     wait = 2 ** attempt
+                    logger.warning(
+                        "LLM call to %s/%s failed (attempt %d/%d): %s — retrying in %ds",
+                        provider, model, attempt + 1, retry_attempts, exc, wait,
+                    )
                     await asyncio.sleep(wait)
                 else:
+                    logger.error(
+                        "LLM call to %s/%s failed after %d attempts: %s",
+                        provider, model, retry_attempts, exc,
+                    )
                     raise
 
     async def generate(self, prompt: str, system_prompt: str = "") -> LLMResponse:
@@ -245,16 +253,30 @@ class LLMClient:
             )
         except Exception as exc:
             if self._config.fallback_provider and self._config.fallback_model:
+                logger.warning(
+                    "Primary provider %s/%s failed — switching to fallback provider %s/%s",
+                    self._config.primary_provider, self._config.model,
+                    self._config.fallback_provider, self._config.fallback_model,
+                )
                 try:
                     with self._fallback_overrides():
-                        return await self._try_with_retries(
+                        response = await self._try_with_retries(
                             provider=self._config.fallback_provider,
                             model=self._config.fallback_model,
                             prompt=prompt,
                             system_prompt=system_prompt,
                             retry_attempts=self._fallback_retry_attempts(),
                         )
+                    logger.info(
+                        "Fallback provider %s/%s succeeded",
+                        self._config.fallback_provider, self._config.fallback_model,
+                    )
+                    return response
                 except Exception as fallback_exc:
+                    logger.error(
+                        "Fallback provider %s/%s also failed: %s",
+                        self._config.fallback_provider, self._config.fallback_model, fallback_exc,
+                    )
                     raise RuntimeError(
                         f"Both primary ({self._config.primary_provider}) and fallback "
                         f"({self._config.fallback_provider}) providers failed. "
@@ -368,8 +390,16 @@ class LLMClient:
             except Exception as exc:
                 if attempt < retry_attempts - 1:
                     wait = 2 ** attempt
+                    logger.warning(
+                        "Structured LLM call to %s/%s failed (attempt %d/%d): %s — retrying in %ds",
+                        provider, model, attempt + 1, retry_attempts, exc, wait,
+                    )
                     await asyncio.sleep(wait)
                 else:
+                    logger.error(
+                        "Structured LLM call to %s/%s failed after %d attempts: %s",
+                        provider, model, retry_attempts, exc,
+                    )
                     raise
 
     async def generate_structured(
@@ -391,9 +421,14 @@ class LLMClient:
             )
         except Exception as exc:
             if self._config.fallback_provider and self._config.fallback_model:
+                logger.warning(
+                    "Primary provider %s/%s failed structured generation — switching to fallback provider %s/%s",
+                    self._config.primary_provider, self._config.model,
+                    self._config.fallback_provider, self._config.fallback_model,
+                )
                 try:
                     with self._fallback_overrides():
-                        return await self._try_structured_with_retries(
+                        response = await self._try_structured_with_retries(
                             provider=self._config.fallback_provider,
                             model=self._config.fallback_model,
                             prompt=prompt,
@@ -401,7 +436,16 @@ class LLMClient:
                             tool_definition=tool_definition,
                             retry_attempts=self._fallback_retry_attempts(),
                         )
+                    logger.info(
+                        "Fallback provider %s/%s succeeded (structured generation)",
+                        self._config.fallback_provider, self._config.fallback_model,
+                    )
+                    return response
                 except Exception as fallback_exc:
+                    logger.error(
+                        "Fallback provider %s/%s also failed structured generation: %s",
+                        self._config.fallback_provider, self._config.fallback_model, fallback_exc,
+                    )
                     raise RuntimeError(
                         f"Both primary ({self._config.primary_provider}) and fallback "
                         f"({self._config.fallback_provider}) providers failed structured generation. "
