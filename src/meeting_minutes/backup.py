@@ -2,17 +2,24 @@
 
 from __future__ import annotations
 
+import logging
 import shutil
 import sqlite3
 from datetime import datetime
 from pathlib import Path
 
 
-def backup_database(db_path: str | Path, backup_dir: str | Path = "backups", prefix: str = "meetings") -> Path:
+def backup_database(
+    db_path: str | Path,
+    backup_dir: str | Path = "backups",
+    prefix: str = "meetings",
+    encryption_key: str = "",
+) -> Path:
     """Create a timestamped backup of the SQLite database.
 
     Uses SQLite's backup API for a consistent snapshot even while
-    the database is being written to.
+    the database is being written to.  When *encryption_key* is provided,
+    the backup file is Fernet-encrypted after creation.
     """
     db_path = Path(db_path)
     backup_dir = Path(backup_dir)
@@ -31,6 +38,16 @@ def backup_database(db_path: str | Path, backup_dir: str | Path = "backups", pre
     source.backup(dest)
     dest.close()
     source.close()
+
+    if encryption_key:
+        try:
+            from meeting_minutes.encryption import encrypt_file
+
+            encrypt_file(backup_file, encryption_key)
+        except Exception:
+            logging.getLogger(__name__).warning(
+                "Failed to encrypt backup %s — saved unencrypted", backup_file.name,
+            )
 
     try:
         backup_file.chmod(0o600)
@@ -111,8 +128,16 @@ def list_backups(backup_dir: str | Path = "backups") -> list[dict]:
     return result
 
 
-def restore_backup(backup_file: str | Path, db_path: str | Path) -> None:
-    """Restore a database from a backup file."""
+def restore_backup(
+    backup_file: str | Path,
+    db_path: str | Path,
+    encryption_key: str = "",
+) -> None:
+    """Restore a database from a backup file.
+
+    If the backup is Fernet-encrypted (and *encryption_key* is provided),
+    it is decrypted to a temporary file before the SQLite restore.
+    """
     backup_file = Path(backup_file)
     db_path = Path(db_path)
 
@@ -124,9 +149,24 @@ def restore_backup(backup_file: str | Path, db_path: str | Path) -> None:
         pre_restore = db_path.with_suffix(".db.pre_restore")
         shutil.copy2(str(db_path), str(pre_restore))
 
-    # Restore using SQLite backup API
-    source = sqlite3.connect(str(backup_file))
-    dest = sqlite3.connect(str(db_path))
-    source.backup(dest)
-    dest.close()
-    source.close()
+    source_path = backup_file
+    tmp_decrypted: Path | None = None
+    if encryption_key:
+        from meeting_minutes.encryption import is_encrypted
+
+        if is_encrypted(backup_file):
+            from meeting_minutes.encryption import decrypt_file
+
+            tmp_decrypted = backup_file.with_suffix(".db.tmp_restore")
+            tmp_decrypted.write_bytes(decrypt_file(backup_file, encryption_key))
+            source_path = tmp_decrypted
+
+    try:
+        source = sqlite3.connect(str(source_path))
+        dest = sqlite3.connect(str(db_path))
+        source.backup(dest)
+        dest.close()
+        source.close()
+    finally:
+        if tmp_decrypted and tmp_decrypted.exists():
+            tmp_decrypted.unlink()

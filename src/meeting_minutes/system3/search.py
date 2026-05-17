@@ -128,8 +128,12 @@ class SearchEngine:
             if not fts_meeting_ids:
                 return SearchResults(results=[], total_count=0, query=query)
 
-            id_list = ",".join(f"'{mid}'" for mid in fts_meeting_ids)
-            conditions.append(f"m.meeting_id IN ({id_list})")
+            id_placeholders = ",".join(
+                f":_fts_id_{i}" for i in range(len(fts_meeting_ids))
+            )
+            for i, mid in enumerate(fts_meeting_ids):
+                params[f"_fts_id_{i}"] = mid
+            conditions.append(f"m.meeting_id IN ({id_placeholders})")
         else:
             fts_meeting_ids = {}
 

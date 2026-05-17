@@ -200,6 +200,9 @@ class SecurityConfig(BaseModel):
 class APIConfig(BaseModel):
     host: str = "127.0.0.1"
     port: int = 8080
+    # 0 = disabled (default, backward compatible). Set to e.g. 120 to cap
+    # each client IP to 120 API requests per minute.
+    rate_limit_rpm: int = 0
     cors_origins: list[str] = [
         "http://localhost:8080",
         "http://127.0.0.1:8080",

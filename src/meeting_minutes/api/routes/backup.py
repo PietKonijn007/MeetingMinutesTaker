@@ -54,8 +54,9 @@ def create_backup_endpoint(
     if not db_path.exists():
         raise HTTPException(status_code=404, detail=f"Database not found: {db_path}")
 
+    encryption_key = config.security.encryption_key if config.security.encryption_enabled else ""
     backup_dir = Path(config.backup.backup_dir)
-    backup_file = backup_database(db_path, backup_dir)
+    backup_file = backup_database(db_path, backup_dir, encryption_key=encryption_key)
     deleted = rotate_backups(backup_dir)
 
     return BackupCreateResponse(
