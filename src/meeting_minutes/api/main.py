@@ -26,14 +26,11 @@ async def lifespan(app: FastAPI):
     config = ConfigLoader.load_default()
     db_path = resolve_db_path(config.storage.sqlite_path)
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        db_path.parent.chmod(0o700)
-    except OSError:
-        pass
     app.state.session_factory = get_session_factory(f"sqlite:///{db_path}")
-    if db_path.exists():
+    if db_path.is_file():
         try:
             db_path.chmod(0o600)
+            db_path.parent.chmod(0o700)
         except OSError:
             pass
 
