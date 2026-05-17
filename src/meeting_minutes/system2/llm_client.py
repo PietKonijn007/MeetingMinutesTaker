@@ -72,6 +72,32 @@ _ARRAY_TO_DICT_KEYS: dict[str, list[str]] = {
 
 _ACTION_ITEM_DESC_ALIASES = ("action", "task", "item", "text", "title", "name", "content")
 
+# Map of <list field> -> {<required key>: (<alias>, ...)}.
+# When the model returns a dict item missing the required key, copy from the
+# first matching alias. Keeps JSON-mode output compatible with the strict
+# Pydantic schema without changing the schema itself.
+_LIST_ITEM_KEY_ALIASES: dict[str, dict[str, tuple[str, ...]]] = {
+    "discussion_points": {
+        "summary": ("description", "details", "text", "content", "notes", "summary_text"),
+        "topic": ("title", "name", "subject", "heading"),
+    },
+    "decisions": {
+        "description": ("decision", "text", "summary", "content", "title"),
+    },
+    "risks_and_concerns": {
+        "description": ("risk", "concern", "text", "summary", "content", "title"),
+    },
+    "follow_ups": {
+        "description": ("follow_up", "task", "action", "text", "summary", "content", "title"),
+    },
+    "open_questions": {
+        "question": ("text", "summary", "content", "title"),
+    },
+    "action_items": {
+        "description": _ACTION_ITEM_DESC_ALIASES,
+    },
+}
+
 
 def _normalize_structured_response(data: dict) -> dict:
     """Fix common schema mismatches from local models.
@@ -101,14 +127,36 @@ def _normalize_structured_response(data: dict) -> dict:
                 normalized.append(item)
         data[field] = normalized
 
-    for item in data.get("action_items", []):
-        if isinstance(item, dict) and "description" not in item:
-            for alias in _ACTION_ITEM_DESC_ALIASES:
-                if alias in item:
-                    item["description"] = item.pop(alias)
-                    break
+    # Apply per-list alias rewrites so items satisfy required schema keys.
+    for field, alias_map in _LIST_ITEM_KEY_ALIASES.items():
+        items = data.get(field)
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            for required_key, aliases in alias_map.items():
+                if required_key in item and item[required_key] not in (None, ""):
+                    continue
+                for alias in aliases:
+                    if alias in item and item[alias] not in (None, ""):
+                        item[required_key] = item.pop(alias)
+                        break
 
     email = data.get("email_draft")
+    if isinstance(email, str):
+        # Some models return the email as a plain text body.
+        data["email_draft"] = {"body": email}
+        email = data["email_draft"]
+    elif isinstance(email, list):
+        # Or as a [subject, body] / [body] sequence.
+        if len(email) >= 2:
+            data["email_draft"] = {"subject": email[0], "body": email[1]}
+        elif len(email) == 1:
+            data["email_draft"] = {"body": email[0]}
+        else:
+            data["email_draft"] = {}
+        email = data["email_draft"]
     if isinstance(email, dict):
         for list_field in ("to", "cc"):
             val = email.get(list_field)
@@ -123,6 +171,9 @@ def _normalize_structured_response(data: dict) -> dict:
             if i < len(eff_keys):
                 entry[eff_keys[i]] = val
         data["meeting_effectiveness"] = entry
+    elif isinstance(effectiveness, str):
+        # Reduce a free-text rating to an empty dict; downstream defaults apply.
+        data["meeting_effectiveness"] = {}
 
     return data
 
@@ -352,7 +403,12 @@ class LLMClient:
         if not model.startswith("claude-opus"):
             kwargs["temperature"] = self._config.temperature
 
-        response = await client.messages.create(**kwargs)
+        # Use streaming to avoid the SDK's 10-minute non-streaming timeout cap
+        # that trips whenever max_tokens would make the request potentially
+        # exceed 10 minutes (any max_tokens > ~21k triggers it). We still want
+        # the full assembled message, so collect it via get_final_message().
+        async with client.messages.stream(**kwargs) as stream:
+            response = await stream.get_final_message()
 
         text = response.content[0].text if response.content else ""
         input_tokens = response.usage.input_tokens
@@ -481,7 +537,10 @@ class LLMClient:
         if not model.startswith("claude-opus"):
             kwargs["temperature"] = self._config.temperature
 
-        response = await client.messages.create(**kwargs)
+        # Stream to bypass the SDK's non-streaming 10-minute timeout guard
+        # (see _call_anthropic for details).
+        async with client.messages.stream(**kwargs) as stream:
+            response = await stream.get_final_message()
         elapsed = time.time() - start
 
         # Extract structured data from tool_use block
