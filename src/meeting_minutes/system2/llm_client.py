@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import os
 import time
@@ -187,40 +188,81 @@ class LLMClient:
                 f"{estimated_tokens + self._config.max_output_tokens:,} tokens."
             )
 
-    async def generate(self, prompt: str, system_prompt: str = "") -> LLMResponse:
-        """Send prompt to configured LLM provider. Returns response with token usage."""
-        # Try primary provider
-        for attempt in range(self._config.retry_attempts):
+    def _fallback_retry_attempts(self) -> int:
+        return self._config.fallback_retry_attempts if self._config.fallback_retry_attempts is not None else self._config.retry_attempts
+
+    @contextlib.contextmanager
+    def _fallback_overrides(self):
+        """Temporarily apply fallback-specific settings to self._config."""
+        originals = {}
+        overrides = {
+            "temperature": self._config.fallback_temperature,
+            "max_output_tokens": self._config.fallback_max_output_tokens,
+            "timeout_seconds": self._config.fallback_timeout_seconds,
+        }
+        for attr, val in overrides.items():
+            if val is not None:
+                originals[attr] = getattr(self._config, attr)
+                object.__setattr__(self._config, attr, val)
+        try:
+            yield
+        finally:
+            for attr, val in originals.items():
+                object.__setattr__(self._config, attr, val)
+
+    async def _try_with_retries(
+        self,
+        provider: str,
+        model: str,
+        prompt: str,
+        system_prompt: str,
+        retry_attempts: int,
+    ) -> LLMResponse:
+        for attempt in range(retry_attempts):
             try:
                 return await self._generate_with_provider(
                     prompt=prompt,
                     system_prompt=system_prompt,
-                    provider=self._config.primary_provider,
-                    model=self._config.model,
+                    provider=provider,
+                    model=model,
                 )
             except Exception as exc:
-                if attempt < self._config.retry_attempts - 1:
+                if attempt < retry_attempts - 1:
                     wait = 2 ** attempt
                     await asyncio.sleep(wait)
                 else:
-                    # Try fallback
-                    if self._config.fallback_provider and self._config.fallback_model:
-                        try:
-                            return await self._generate_with_provider(
-                                prompt=prompt,
-                                system_prompt=system_prompt,
-                                provider=self._config.fallback_provider,
-                                model=self._config.fallback_model,
-                            )
-                        except Exception as fallback_exc:
-                            raise RuntimeError(
-                                f"Both primary ({self._config.primary_provider}) and fallback "
-                                f"({self._config.fallback_provider}) providers failed. "
-                                f"Primary: {exc}; Fallback: {fallback_exc}"
-                            ) from fallback_exc
+                    raise
+
+    async def generate(self, prompt: str, system_prompt: str = "") -> LLMResponse:
+        """Send prompt to configured LLM provider. Returns response with token usage."""
+        try:
+            return await self._try_with_retries(
+                provider=self._config.primary_provider,
+                model=self._config.model,
+                prompt=prompt,
+                system_prompt=system_prompt,
+                retry_attempts=self._config.retry_attempts,
+            )
+        except Exception as exc:
+            if self._config.fallback_provider and self._config.fallback_model:
+                try:
+                    with self._fallback_overrides():
+                        return await self._try_with_retries(
+                            provider=self._config.fallback_provider,
+                            model=self._config.fallback_model,
+                            prompt=prompt,
+                            system_prompt=system_prompt,
+                            retry_attempts=self._fallback_retry_attempts(),
+                        )
+                except Exception as fallback_exc:
                     raise RuntimeError(
-                        f"LLM generation failed after {self._config.retry_attempts} attempts: {exc}"
-                    ) from exc
+                        f"Both primary ({self._config.primary_provider}) and fallback "
+                        f"({self._config.fallback_provider}) providers failed. "
+                        f"Primary: {exc}; Fallback: {fallback_exc}"
+                    ) from fallback_exc
+            raise RuntimeError(
+                f"LLM generation failed after {self._config.retry_attempts} attempts: {exc}"
+            ) from exc
 
     async def _generate_with_provider(
         self, prompt: str, system_prompt: str, provider: str, model: str
@@ -296,6 +338,40 @@ class LLMClient:
 
         return text, input_tokens, output_tokens
 
+    async def _try_structured_with_retries(
+        self,
+        provider: str,
+        model: str,
+        prompt: str,
+        system_prompt: str,
+        tool_definition: dict,
+        retry_attempts: int,
+    ) -> LLMResponse:
+        use_anthropic_native = (provider == "anthropic")
+        for attempt in range(retry_attempts):
+            try:
+                if use_anthropic_native:
+                    return await self._call_anthropic_structured(
+                        prompt=prompt,
+                        system_prompt=system_prompt,
+                        model=model,
+                        tool_definition=tool_definition,
+                    )
+                else:
+                    return await self._generate_structured_via_json(
+                        prompt=prompt,
+                        system_prompt=system_prompt,
+                        provider=provider,
+                        model=model,
+                        tool_definition=tool_definition,
+                    )
+            except Exception as exc:
+                if attempt < retry_attempts - 1:
+                    wait = 2 ** attempt
+                    await asyncio.sleep(wait)
+                else:
+                    raise
+
     async def generate_structured(
         self, prompt: str, system_prompt: str = "", tool_definition: dict | None = None
     ) -> LLMResponse:
@@ -304,45 +380,36 @@ class LLMClient:
             from meeting_minutes.system2.schema import get_tool_definition
             tool_definition = get_tool_definition()
 
-        provider = self._config.primary_provider
-
-        # Non-Anthropic providers: use JSON-mode structured generation
-        if provider in ("ollama", "openai", "openrouter", "openai_compatible"):
-            for attempt in range(self._config.retry_attempts):
+        try:
+            return await self._try_structured_with_retries(
+                provider=self._config.primary_provider,
+                model=self._config.model,
+                prompt=prompt,
+                system_prompt=system_prompt,
+                tool_definition=tool_definition,
+                retry_attempts=self._config.retry_attempts,
+            )
+        except Exception as exc:
+            if self._config.fallback_provider and self._config.fallback_model:
                 try:
-                    return await self._generate_structured_via_json(
-                        prompt=prompt,
-                        system_prompt=system_prompt,
-                        provider=provider,
-                        model=self._config.model,
-                        tool_definition=tool_definition,
-                    )
-                except Exception as exc:
-                    if attempt < self._config.retry_attempts - 1:
-                        wait = 2 ** attempt
-                        await asyncio.sleep(wait)
-                    else:
-                        raise RuntimeError(
-                            f"Structured generation failed after {self._config.retry_attempts} attempts: {exc}"
-                        ) from exc
-
-        # Anthropic: native tool_use
-        for attempt in range(self._config.retry_attempts):
-            try:
-                return await self._call_anthropic_structured(
-                    prompt=prompt,
-                    system_prompt=system_prompt,
-                    model=self._config.model,
-                    tool_definition=tool_definition,
-                )
-            except Exception as exc:
-                if attempt < self._config.retry_attempts - 1:
-                    wait = 2 ** attempt
-                    await asyncio.sleep(wait)
-                else:
+                    with self._fallback_overrides():
+                        return await self._try_structured_with_retries(
+                            provider=self._config.fallback_provider,
+                            model=self._config.fallback_model,
+                            prompt=prompt,
+                            system_prompt=system_prompt,
+                            tool_definition=tool_definition,
+                            retry_attempts=self._fallback_retry_attempts(),
+                        )
+                except Exception as fallback_exc:
                     raise RuntimeError(
-                        f"Structured generation failed after {self._config.retry_attempts} attempts: {exc}"
-                    ) from exc
+                        f"Both primary ({self._config.primary_provider}) and fallback "
+                        f"({self._config.fallback_provider}) providers failed structured generation. "
+                        f"Primary: {exc}; Fallback: {fallback_exc}"
+                    ) from fallback_exc
+            raise RuntimeError(
+                f"Structured generation failed after {self._config.retry_attempts} attempts: {exc}"
+            ) from exc
 
     async def _call_anthropic_structured(
         self, prompt: str, system_prompt: str, model: str, tool_definition: dict
