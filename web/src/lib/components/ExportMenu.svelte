@@ -1,6 +1,7 @@
 <script>
   import { tick } from 'svelte';
   import { addToast } from '$lib/stores/toasts.js';
+  import { authHeaders } from '$lib/api.js';
 
   /**
    * ExportMenu — dropdown for per-meeting exports (EXP-1).
@@ -56,7 +57,9 @@
     busy = true;
     try {
       const qs = new URLSearchParams({ format, with_transcript: String(withTranscript) });
-      const res = await fetch(`/api/meetings/${meetingId}/export?${qs}`);
+      const res = await fetch(`/api/meetings/${meetingId}/export?${qs}`, {
+        headers: { ...authHeaders() },
+      });
       if (!res.ok) {
         let msg = `Export failed (${res.status})`;
         try { msg = (await res.json()).detail || msg; } catch {}

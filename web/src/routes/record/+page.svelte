@@ -3,7 +3,7 @@
   import { browser } from '$app/environment';
   import { marked } from 'marked';
   import DOMPurify from 'dompurify';
-  import { api } from '$lib/api.js';
+  import { api, authHeaders } from '$lib/api.js';
   import { addToast } from '$lib/stores/toasts.js';
   import { MEETING_TYPE_GROUPS } from '$lib/meetingTypes.js';
   import ConfirmModal from '$lib/components/ConfirmModal.svelte';
@@ -178,7 +178,10 @@
 
     let token;
     try {
-      const res = await fetch('/api/security/ws-token', { method: 'POST' });
+      const res = await fetch('/api/security/ws-token', {
+        method: 'POST',
+        headers: { ...authHeaders() },
+      });
       if (!res.ok) throw new Error(`ws-token HTTP ${res.status}`);
       token = (await res.json()).token;
     } catch (e) {
