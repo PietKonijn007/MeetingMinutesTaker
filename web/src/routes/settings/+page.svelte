@@ -1,6 +1,6 @@
 <script>
   import { onMount } from 'svelte';
-  import { api } from '$lib/api.js';
+  import { api, setStoredApiKey, getStoredApiKey } from '$lib/api.js';
   import { theme } from '$lib/stores/theme.js';
   import { addToast } from '$lib/stores/toasts.js';
   import Skeleton from '$lib/components/Skeleton.svelte';
@@ -78,6 +78,9 @@
   // Security settings
   let security_encryption_enabled = $state(false);
   let security_encryption_key = $state('');
+  let security_api_key_input = $state('');
+  let security_api_key_status = $state({ is_set: false, preview: null });
+  let saving_api_key = $state(false);
 
   // Performance settings
   let perf_pytorch_mps_fallback = $state(true);
@@ -398,6 +401,12 @@
         diarization_pyannote_ai_key_status = { is_set: false, preview: null };
       }
 
+      try {
+        security_api_key_status = await api.getSecret('MM_API_KEY');
+      } catch (_) {
+        security_api_key_status = { is_set: false, preview: null };
+      }
+
       // Load dynamic model list for current provider
       loadProviderModels(llm_provider);
       if (llm_fallback_provider) {
@@ -614,6 +623,38 @@
       addToast(`Failed to clear API key: ${e.message}`, 'error');
     } finally {
       saving_pyannote_key = false;
+    }
+  }
+
+  async function saveApiKey() {
+    if (!security_api_key_input.trim()) return;
+    saving_api_key = true;
+    try {
+      const key = security_api_key_input.trim();
+      const result = await api.setSecret('MM_API_KEY', key);
+      // Store in localStorage so the UI keeps working after server restart
+      setStoredApiKey(key);
+      security_api_key_input = '';
+      security_api_key_status = await api.getSecret('MM_API_KEY');
+      addToast('API key saved and activated in this browser. Restart the server to enforce.', 'success');
+    } catch (e) {
+      addToast(`Failed to save API key: ${e.message}`, 'error');
+    } finally {
+      saving_api_key = false;
+    }
+  }
+
+  async function clearApiKey() {
+    saving_api_key = true;
+    try {
+      await api.clearSecret('MM_API_KEY');
+      setStoredApiKey('');
+      security_api_key_status = { is_set: false, preview: null };
+      addToast('API key removed. Restart the server to apply.', 'info');
+    } catch (e) {
+      addToast(`Failed to clear API key: ${e.message}`, 'error');
+    } finally {
+      saving_api_key = false;
     }
   }
 
@@ -1985,7 +2026,7 @@
       <!-- Security -->
       <section>
         <h2 class="text-lg font-semibold text-[var(--text-primary)] mb-1">Security</h2>
-        <p class="text-sm text-[var(--text-muted)] mb-4">Encrypt transcripts and minutes at rest using Fernet symmetric encryption.</p>
+        <p class="text-sm text-[var(--text-muted)] mb-4">Protect your data with API authentication and at-rest encryption.</p>
 
         <div class="space-y-4">
           <label class="flex items-center gap-3 cursor-pointer">
@@ -2044,6 +2085,61 @@
               </p>
             </div>
           {/if}
+
+          <!-- API key authentication -->
+          <div class="pt-4 mt-4 border-t border-[var(--border-subtle)]">
+            <label class="block text-sm font-medium text-[var(--text-primary)] mb-1">API Key Authentication</label>
+            <p class="text-xs text-[var(--text-muted)] mb-3">
+              When set, all API requests must include this key in an <code class="text-[11px] bg-[var(--bg-surface)] px-1 py-0.5 rounded">X-Api-Key</code> header. Prevents unauthorized access to your meeting data.
+            </p>
+
+            {#if security_api_key_status.is_set}
+              <div class="flex items-center gap-2 mb-2">
+                <span class="text-xs px-2 py-1 rounded bg-[color-mix(in_srgb,var(--accent)_15%,transparent)] text-[var(--accent)] font-mono">
+                  &#x2713; {security_api_key_status.preview ?? 'set'}
+                </span>
+                <button
+                  type="button"
+                  onclick={clearApiKey}
+                  disabled={saving_api_key}
+                  class="text-xs px-2 py-1 rounded border border-[var(--border-subtle)] text-[var(--text-muted)] hover:text-[var(--text-primary)] disabled:opacity-50"
+                >Remove</button>
+              </div>
+            {/if}
+            <div class="flex gap-2">
+              <input
+                type="password"
+                bind:value={security_api_key_input}
+                placeholder={security_api_key_status.is_set ? 'Replace key...' : 'Paste or type an API key'}
+                autocomplete="off"
+                class="flex-1 px-3 py-2 bg-[var(--bg-base)] border border-[var(--border-subtle)] rounded-lg text-sm text-[var(--text-primary)] font-mono
+                       focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
+              />
+              <button
+                type="button"
+                onclick={saveApiKey}
+                disabled={saving_api_key || !security_api_key_input.trim()}
+                class="px-3 py-2 bg-[var(--accent)] text-white rounded-lg text-sm font-medium disabled:opacity-50"
+              >{saving_api_key ? 'Saving...' : 'Save key'}</button>
+              <button
+                type="button"
+                onclick={async () => {
+                  try {
+                    const result = await api.generateEncryptionKey();
+                    security_api_key_input = result.key;
+                    addToast('Random key generated. Click Save to apply.', 'info');
+                  } catch (e) {
+                    addToast(`Key generation failed: ${e.message}`, 'error');
+                  }
+                }}
+                class="px-3 py-2 bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg text-sm font-medium text-[var(--text-primary)]
+                       hover:bg-[var(--bg-hover)] transition-colors duration-150 whitespace-nowrap"
+              >Generate</button>
+            </div>
+            <p class="text-xs text-[var(--text-muted)] mt-1">
+              Stored in <code class="text-[11px] bg-[var(--bg-surface)] px-1 py-0.5 rounded">.env</code> as <code class="text-[11px] bg-[var(--bg-surface)] px-1 py-0.5 rounded">MM_API_KEY</code>. Restart the server after changing. The key is saved to this browser automatically so the UI keeps working.
+            </p>
+          </div>
         </div>
       </section>
 

@@ -1,8 +1,27 @@
 const BASE = '/api';
 
+function authHeaders() {
+  if (typeof localStorage === 'undefined') return {};
+  const key = localStorage.getItem('mm_api_key');
+  return key ? { 'X-Api-Key': key } : {};
+}
+
+export function setStoredApiKey(key) {
+  if (key) {
+    localStorage.setItem('mm_api_key', key);
+  } else {
+    localStorage.removeItem('mm_api_key');
+  }
+}
+
+export function getStoredApiKey() {
+  if (typeof localStorage === 'undefined') return '';
+  return localStorage.getItem('mm_api_key') || '';
+}
+
 async function request(path, options = {}) {
   const res = await fetch(`${BASE}${path}`, {
-    headers: { 'Content-Type': 'application/json', ...options.headers },
+    headers: { 'Content-Type': 'application/json', ...authHeaders(), ...options.headers },
     ...options,
   });
   if (!res.ok) {
@@ -159,7 +178,7 @@ export const api = {
     if (topic) params.set('topic', topic);
     for (const f of focusItems) params.append('focus', f);
     params.set('format', format);
-    return fetch(`/api/brief/export?${params.toString()}`).then(res => {
+    return fetch(`/api/brief/export?${params.toString()}`, { headers: authHeaders() }).then(res => {
       if (!res.ok) {
         return res.json().then(err => { throw new Error(err.detail || res.statusText); });
       }
@@ -170,7 +189,7 @@ export const api = {
   // EXP-1 export
   exportMeeting: (meetingId, format = 'md', withTranscript = false) => {
     const qs = new URLSearchParams({ format, with_transcript: String(withTranscript) }).toString();
-    return fetch(`/api/meetings/${meetingId}/export?${qs}`).then(res => {
+    return fetch(`/api/meetings/${meetingId}/export?${qs}`, { headers: authHeaders() }).then(res => {
       if (!res.ok) {
         return res.json().then(err => { throw new Error(err.detail || res.statusText); });
       }
@@ -179,7 +198,7 @@ export const api = {
   },
   exportSeries: (seriesId, format = 'pdf', withTranscript = false) => {
     const qs = new URLSearchParams({ format, with_transcript: String(withTranscript) }).toString();
-    return fetch(`/api/series/${seriesId}/export?${qs}`).then(res => {
+    return fetch(`/api/series/${seriesId}/export?${qs}`, { headers: authHeaders() }).then(res => {
       if (!res.ok) {
         return res.json().then(err => { throw new Error(err.detail || res.statusText); });
       }
@@ -224,7 +243,7 @@ export const api = {
   }),
 
   // Upload
-  uploadTranscript: (formData) => fetch('/api/upload-transcript', { method: 'POST', body: formData }).then(res => {
+  uploadTranscript: (formData) => fetch('/api/upload-transcript', { method: 'POST', body: formData, headers: authHeaders() }).then(res => {
     if (!res.ok) return res.json().then(err => { throw new Error(err.detail || res.statusText); });
     return res.json();
   }),
@@ -240,7 +259,7 @@ export const api = {
     fd.append('file', file);
     if (title) fd.append('title', title);
     if (caption) fd.append('caption', caption);
-    return fetch(`/api/meetings/${meetingId}/attachments`, { method: 'POST', body: fd }).then(async (res) => {
+    return fetch(`/api/meetings/${meetingId}/attachments`, { method: 'POST', body: fd, headers: authHeaders() }).then(async (res) => {
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         throw new Error(err.detail || res.statusText);
@@ -253,7 +272,7 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ url, title: title || undefined, caption: caption || undefined }),
     }),
-  deleteAttachment: (id) => fetch(`/api/attachments/${id}`, { method: 'DELETE' }).then((res) => {
+  deleteAttachment: (id) => fetch(`/api/attachments/${id}`, { method: 'DELETE', headers: authHeaders() }).then((res) => {
     if (!res.ok && res.status !== 204) throw new Error(`Delete failed: ${res.status}`);
   }),
   reprocessAttachment: (id) => request(`/attachments/${id}/reprocess`, { method: 'POST' }),

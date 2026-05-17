@@ -16,6 +16,11 @@ from rich.table import Table
 
 from meeting_minutes.config import ConfigLoader, resolve_db_path
 from meeting_minutes.env import load_dotenv
+from meeting_minutes.recording_state import (
+    clear_recording_state,
+    read_recording_state,
+    write_recording_state,
+)
 
 # Load .env before anything else
 load_dotenv()
@@ -446,8 +451,7 @@ def record_start_cmd(
         console.print("Run [bold]mm record stop[/bold] to stop recording.")
 
         # Save state for stop command
-        state_file = Path("/tmp/mm_recording_state.json")
-        state_file.write_text(json.dumps({"meeting_id": meeting_id}))
+        write_recording_state(meeting_id)
     except Exception as exc:
         err_console.print(f"[red]Failed to start recording: {exc}[/red]")
         raise typer.Exit(code=1)
@@ -456,17 +460,16 @@ def record_start_cmd(
 @record_app.command("stop")
 def record_stop_cmd():
     """Stop recording and transcribe."""
-    state_file = Path("/tmp/mm_recording_state.json")
-    if not state_file.exists():
+    state = read_recording_state()
+    if not state:
         err_console.print("[red]No active recording found.[/red]")
         raise typer.Exit(code=1)
 
-    state = json.loads(state_file.read_text())
     meeting_id = state.get("meeting_id")
 
     console.print(f"[yellow]Stopping recording for meeting {meeting_id}...[/yellow]")
     console.print("[dim]Transcription would run here in full mode.[/dim]")
-    state_file.unlink(missing_ok=True)
+    clear_recording_state()
     console.print(f"[green]Recording stopped. Meeting ID: {meeting_id}[/green]")
 
 

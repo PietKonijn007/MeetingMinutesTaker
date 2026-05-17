@@ -181,12 +181,19 @@ class ObsidianConfig(BaseModel):
 class SecurityConfig(BaseModel):
     encryption_enabled: bool = False
     encryption_key: str = ""  # Prefer setting MM_ENCRYPTION_KEY env var over storing key here
+    # API key for authenticating REST requests. When empty (default), no
+    # authentication is required — existing installations keep working.
+    # Set via MM_API_KEY env var or this field to require an X-Api-Key header.
+    api_key: str = ""
 
     @model_validator(mode="after")
-    def _apply_env_key(self) -> "SecurityConfig":
+    def _apply_env_keys(self) -> "SecurityConfig":
         env_key = os.environ.get("MM_ENCRYPTION_KEY", "").strip()
         if env_key:
             self.encryption_key = env_key
+        env_api_key = os.environ.get("MM_API_KEY", "").strip()
+        if env_api_key:
+            self.api_key = env_api_key
         return self
 
 

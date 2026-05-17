@@ -142,6 +142,7 @@ export ANTHROPIC_API_KEY="sk-ant-..."    # Required for minutes generation (Anth
 export HF_TOKEN="hf_..."                 # Required for speaker diarization
 export OPENAI_API_KEY="sk-..."           # Optional (OpenAI provider or fallback)
 export OPENROUTER_API_KEY="sk-or-..."    # Optional (OpenRouter provider — access 200+ models)
+export MM_API_KEY="your-secret-key"      # Optional — protects the REST API (see Security below)
 # No API key needed for Ollama — it runs locally
 ```
 
@@ -152,6 +153,7 @@ ANTHROPIC_API_KEY=sk-ant-...
 HF_TOKEN=hf_...
 OPENAI_API_KEY=sk-...
 OPENROUTER_API_KEY=sk-or-...
+MM_API_KEY=your-secret-key               # Optional — protects the REST API
 OLLAMA_BASE_URL=http://localhost:11434   # Optional, defaults to localhost
 ```
 
@@ -419,7 +421,7 @@ mm serve
 open http://localhost:8080
 ```
 
-**Pages**: Meetings (calendar view with day list + inline detail + search with filters; meeting cards show an "N to review" badge when the meeting has proposed actions waiting), **Chat** (talk to your meetings — ask natural-language questions across all meeting history with citations), **Brief** (BRF-1 pre-meeting briefing with six data sections + inline Start Recording panel), Meeting Detail (Actions tab surfaces the Accept / Edit / Reject review banner for proposed items), Action Items (Confirmed / Proposed / All chip filter + admin "Confirm all proposals from before a date" sweep), Decisions, People, Stats (charts), Record (live waveform + concurrent pipeline status + live note-taking), Templates (view/edit/create prompt templates), Settings (LLM provider/model selection with custom model support, Performance & Hardware, Security, Retention, and CORS config).
+**Pages**: Meetings (calendar view with day list + inline detail + search with filters; meeting cards show an "N to review" badge when the meeting has proposed actions waiting), **Chat** (talk to your meetings — ask natural-language questions across all meeting history with citations), **Brief** (BRF-1 pre-meeting briefing with six data sections + inline Start Recording panel), Meeting Detail (Actions tab surfaces the Accept / Edit / Reject review banner for proposed items), Action Items (Confirmed / Proposed / All chip filter + admin "Confirm all proposals from before a date" sweep), Decisions, People, Stats (charts), Record (live waveform + concurrent pipeline status + live note-taking), Templates (view/edit/create prompt templates), Settings (LLM provider/model selection with custom model support, Performance & Hardware, Security with API key authentication and encryption at rest, Retention, and CORS config).
 
 **Features**: Dark mode, full-text search with `Cmd+K`, in-calendar search with type filter chips, keyboard navigation, responsive layout, meeting type color coding, WebSocket-based real-time updates, concurrent pipeline processing (record a new meeting while the previous one processes in background), auto-detect capture device, auto-save recovery every 5 minutes during recording, live note-taking during recording (title, speaker names, notes, custom LLM instructions) with markdown support, a single PREVIEW toggle that pairs the editor with a live rendered preview pane, a 2D-resizable notes textarea, tab-switch persistence (form fields survive navigation away from /record until Stop is pressed), and a confirm-gated Cancel button that discards the in-flight audio without producing a meeting record, inline-editable meeting title on the detail page (rewrites the embedded title in the minutes JSON/MD, refreshes the FTS index, and renames the Obsidian export), structured card-based minutes view with collapsible discussion topics, color-coded transcript per-speaker with inline "Name speakers" editor, **post-hoc external-notes tab** (paste notes from Teams/Zoom/Meet/Otter to auto-rename speakers + regenerate the summary), people management (edit / delete / merge duplicate entities with automatic historical attribution updates), Performance & Hardware settings (Apple Silicon MPS toggle), encryption at rest, retention policies with automatic cleanup.
 
@@ -493,7 +495,7 @@ cd web && npm install && npm run dev   # Svelte on :3000, proxies /api → :8080
 
 ## REST API
 
-The backend is a FastAPI application serving at `:8080` covering meetings, search, action items, decisions, people (including `POST /api/persons` for inline creation), stats, recording, speaker suggestions (`GET /api/meetings/:id/speaker-suggestions`), series (`GET /api/series`, `GET /api/series/:id`, `POST /api/series/detect`, `GET /api/meetings/:id/series`), analytics panels (`GET /api/stats/commitments`, `/api/stats/sentiment`, `/api/stats/effectiveness`, `/api/stats/unresolved-topics`), and configuration. Auto-generated interactive API documentation is available at [http://localhost:8080/docs](http://localhost:8080/docs).
+The backend is a FastAPI application serving at `:8080` covering meetings, search, action items, decisions, people (including `POST /api/persons` for inline creation), stats, recording, speaker suggestions (`GET /api/meetings/:id/speaker-suggestions`), series (`GET /api/series`, `GET /api/series/:id`, `POST /api/series/detect`, `GET /api/meetings/:id/series`), analytics panels (`GET /api/stats/commitments`, `/api/stats/sentiment`, `/api/stats/effectiveness`, `/api/stats/unresolved-topics`), and configuration. When `MM_API_KEY` is set, all endpoints require an `X-Api-Key` header (except `/api/health`). Auto-generated interactive API documentation is available at [http://localhost:8080/docs](http://localhost:8080/docs).
 
 ## Configuration
 
@@ -551,10 +553,13 @@ storage:
 
 security:
   encryption_enabled: false
-  encryption_key_path: null       # Path to Fernet encryption key file
+  encryption_key: ""              # Fernet key (prefer MM_ENCRYPTION_KEY env var)
+  api_key: ""                     # API key for REST auth (prefer MM_API_KEY env var)
 
 api:
-  cors_origins: ["*"]
+  cors_origins:
+    - "http://localhost:8080"
+    - "http://127.0.0.1:8080"
   host: "127.0.0.1"
   port: 8080
 
@@ -567,6 +572,49 @@ retention:
 
 See the full [configuration reference](docs/USER_GUIDE.md#4-configuration) in the User Guide.
 
+## Security
+
+### API key authentication
+
+By default, the REST API has no authentication — suitable for single-user localhost deployments. To protect against unauthorized access (especially if you expose the server to a network), set an API key:
+
+```bash
+# Option 1: environment variable (recommended)
+export MM_API_KEY="your-secret-key"
+
+# Option 2: .env file (auto-loaded, gitignored, chmod 0600)
+echo 'MM_API_KEY="your-secret-key"' >> .env
+
+# Option 3: Settings UI → Security → API Key Authentication → Generate + Save
+```
+
+When `MM_API_KEY` is set, all `/api/*` requests must include a matching `X-Api-Key` header. The `/api/health` endpoint is exempt for monitoring probes. The web UI stores the key in the browser's `localStorage` and attaches it automatically.
+
+Generate a secure random key from the CLI:
+
+```bash
+python -c "import secrets; print(secrets.token_urlsafe(32))"
+```
+
+### File permissions
+
+The database file and its parent directory are hardened to owner-only access (`0600` / `0700`) on startup. Backup files and the backup directory receive the same treatment. The recording state file (used for CLI ↔ server interop) is stored in `~/.meeting-minutes/` with `0600` permissions instead of the world-readable `/tmp`.
+
+### Encryption at rest
+
+Transcript and minutes JSON files can be encrypted with Fernet symmetric encryption. Enable in Settings → Security or in `config.yaml`:
+
+```yaml
+security:
+  encryption_enabled: true
+```
+
+Set the key via `MM_ENCRYPTION_KEY` env var (preferred) or generate one in the Settings UI.
+
+### Data sent to external providers
+
+Meeting transcripts, attendee names, and attachment contents are sent to cloud LLM providers (Anthropic, OpenAI, OpenRouter) for minutes generation, chat, and attachment summarization. Audio may be sent to pyannoteAI if cloud diarization is enabled. Transcription and embeddings run locally. See `SECURITY_AUDIT.md` for the full data flow analysis.
+
 ## Project Structure
 
 ```
@@ -576,6 +624,7 @@ MeetingMinutesTaker/
 │   ├── config.py              # Configuration loading (YAML)
 │   ├── encryption.py          # Fernet encryption at rest
 │   ├── env.py                 # .env file loading (dotenv)
+│   ├── recording_state.py     # Recording state file (CLI ↔ server interop)
 │   ├── logging.py             # Structured JSON logging
 │   ├── pipeline.py            # Pipeline orchestrator (with retry)
 │   ├── retention.py           # Data retention policy engine
@@ -604,7 +653,8 @@ MeetingMinutesTaker/
 │   │   ├── ingest.py          #   MinutesIngester
 │   │   └── cli.py             #   Typer CLI (mm command)
 │   └── api/                   # FastAPI REST API + WebSocket
-│       ├── main.py            #   App factory, CORS, static file serving
+│       ├── main.py            #   App factory, CORS, auth middleware, static file serving
+│       ├── auth.py            #   API key authentication middleware
 │       ├── deps.py            #   Dependency injection
 │       ├── schemas.py         #   Pydantic response models
 │       ├── ws.py              #   WebSocket (recording status, pipeline progress)
@@ -658,7 +708,7 @@ pip install -e ".[dev]"
 pytest tests/ -v
 ```
 
-135 tests covering all 40 correctness properties from the design spec, plus unit tests for every component.
+451 tests covering all 40 correctness properties from the design spec, plus unit tests for every component.
 
 ## Documentation
 
