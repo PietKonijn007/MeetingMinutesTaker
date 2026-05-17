@@ -94,6 +94,15 @@
   // LLM extras
   let llm_fallback_provider = $state('');           // '' = disabled
   let llm_fallback_model = $state('');
+  let llm_fallback_temperature = $state(null);      // null = inherit from primary
+  let llm_fallback_max_tokens = $state(null);
+  let llm_fallback_retry_attempts = $state(null);
+  let llm_fallback_timeout_seconds = $state(null);
+  let llm_fallback_custom_model = $state('');
+  let fallback_provider_models = $state([]);
+  let fallback_models_loading = $state(false);
+  let fallback_models_warning = $state('');
+  let fallback_models_source = $state('');
   let llm_retry_attempts = $state(3);
   let llm_timeout_seconds = $state(120);
   let llm_ollama_base_url = $state('http://localhost:11434');
@@ -143,6 +152,7 @@
   let models_source = $state('');      // 'api', 'cache', 'fallback'
   let models_warning = $state('');
   let models_fetch_id = $state(0);     // race condition guard
+  let fallback_models_fetch_id = $state(0);
 
   function formatModelLabel(m) {
     let label = m.name || m.id;
@@ -210,6 +220,32 @@
     } finally {
       if (fetchId === models_fetch_id) {
         models_loading = false;
+      }
+    }
+  }
+
+  async function loadFallbackProviderModels(provider, refresh = false) {
+    if (!provider) {
+      fallback_provider_models = [];
+      return;
+    }
+    const fetchId = ++fallback_models_fetch_id;
+    fallback_models_loading = true;
+    fallback_models_warning = '';
+    try {
+      const result = await api.getProviderModels(provider, refresh);
+      if (fetchId !== fallback_models_fetch_id) return;
+      fallback_provider_models = result.models || [];
+      fallback_models_source = result.source || '';
+      fallback_models_warning = result.warning || '';
+    } catch (e) {
+      if (fetchId !== fallback_models_fetch_id) return;
+      fallback_provider_models = [];
+      fallback_models_source = 'error';
+      fallback_models_warning = e.message;
+    } finally {
+      if (fetchId === fallback_models_fetch_id) {
+        fallback_models_loading = false;
       }
     }
   }
@@ -297,6 +333,10 @@
         // LLM extras
         llm_fallback_provider = llm.fallback_provider ?? '';
         llm_fallback_model = llm.fallback_model ?? '';
+        llm_fallback_temperature = llm.fallback_temperature ?? null;
+        llm_fallback_max_tokens = llm.fallback_max_output_tokens ?? null;
+        llm_fallback_retry_attempts = llm.fallback_retry_attempts ?? null;
+        llm_fallback_timeout_seconds = llm.fallback_timeout_seconds ?? null;
         llm_retry_attempts = llm.retry_attempts ?? 3;
         llm_timeout_seconds = llm.timeout_seconds ?? 120;
         const ol = llm.ollama || {};
@@ -360,6 +400,9 @@
 
       // Load dynamic model list for current provider
       loadProviderModels(llm_provider);
+      if (llm_fallback_provider) {
+        loadFallbackProviderModels(llm_fallback_provider);
+      }
 
       // Load hardware info and transcription engines
       loadHardwareInfo();
@@ -442,6 +485,10 @@
             model: llm_model,
             fallback_provider: llm_fallback_provider || null,
             fallback_model: llm_fallback_model.trim() || null,
+            fallback_temperature: llm_fallback_temperature,
+            fallback_max_output_tokens: llm_fallback_max_tokens,
+            fallback_retry_attempts: llm_fallback_retry_attempts,
+            fallback_timeout_seconds: llm_fallback_timeout_seconds,
             temperature: llm_temperature,
             max_output_tokens: llm_max_tokens,
             retry_attempts: llm_retry_attempts,
@@ -1169,28 +1216,295 @@
 
           <div class="pt-2 border-t border-[var(--border-subtle)]">
             <p class="text-sm font-medium text-[var(--text-primary)] mb-2">Fallback Provider</p>
-            <p class="text-xs text-[var(--text-muted)] mb-2">Used if the primary provider fails after all retries.</p>
-            <div class="grid grid-cols-2 gap-3">
-              <select
-                bind:value={llm_fallback_provider}
-                class="w-full px-3 py-2 bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg text-sm text-[var(--text-primary)]
-                       focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
-              >
-                <option value="">Disabled</option>
-                <option value="anthropic">Anthropic</option>
-                <option value="openai">OpenAI</option>
-                <option value="openrouter">OpenRouter</option>
-                <option value="ollama">Ollama (local)</option>
-                <option value="openai_compatible">OpenAI Compatible Local</option>
-              </select>
-              <input
-                type="text"
-                bind:value={llm_fallback_model}
-                placeholder="fallback model id"
-                disabled={!llm_fallback_provider}
-                class="w-full px-3 py-2 bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg text-sm text-[var(--text-primary)] font-mono
-                       focus:outline-none focus:ring-2 focus:ring-[var(--accent)] disabled:opacity-50"
-              />
+            <p class="text-xs text-[var(--text-muted)] mb-2">Used if the primary provider fails after all retries. Leave settings blank to inherit from primary.</p>
+
+            <div class="space-y-4">
+              <!-- Fallback provider selector -->
+              <div>
+                <label class="block text-sm font-medium text-[var(--text-primary)] mb-1">LLM Provider</label>
+                <select
+                  bind:value={llm_fallback_provider}
+                  onchange={() => {
+                    const defaults = {
+                      anthropic: 'claude-sonnet-4-6',
+                      openai: 'gpt-4o',
+                      openrouter: 'anthropic/claude-sonnet-4',
+                      ollama: 'llama3',
+                      openai_compatible: ''
+                    };
+                    llm_fallback_model = llm_fallback_provider ? (defaults[llm_fallback_provider] || '') : '';
+                    llm_fallback_custom_model = '';
+                    if (llm_fallback_provider) {
+                      loadFallbackProviderModels(llm_fallback_provider);
+                    } else {
+                      fallback_provider_models = [];
+                    }
+                  }}
+                  class="w-full px-3 py-2 bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg text-sm text-[var(--text-primary)]
+                         focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
+                >
+                  <option value="">Disabled</option>
+                  <option value="anthropic">Anthropic</option>
+                  <option value="openai">OpenAI</option>
+                  <option value="openrouter">OpenRouter</option>
+                  <option value="ollama">Ollama (local)</option>
+                  <option value="openai_compatible">OpenAI Compatible Local (LM Studio, vLLM, …)</option>
+                </select>
+              </div>
+
+              {#if llm_fallback_provider}
+                <!-- Fallback model selector -->
+                <div>
+                  <div class="flex items-center justify-between mb-1">
+                    <label class="block text-sm font-medium text-[var(--text-primary)]">Model</label>
+                    <button
+                      onclick={() => loadFallbackProviderModels(llm_fallback_provider, true)}
+                      disabled={fallback_models_loading}
+                      class="flex items-center gap-1 px-2 py-1 text-xs text-[var(--text-muted)] hover:text-[var(--text-primary)]
+                             transition-colors duration-150 disabled:opacity-50"
+                      title="Refresh model list from provider API"
+                    >
+                      <svg class="w-3.5 h-3.5 {fallback_models_loading ? 'animate-spin' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                      </svg>
+                      {fallback_models_loading ? 'Loading...' : 'Refresh'}
+                    </button>
+                  </div>
+
+                  {#if fallback_models_loading}
+                    <select
+                      disabled
+                      class="w-full px-3 py-2 bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg text-sm text-[var(--text-muted)]
+                             focus:outline-none opacity-60"
+                    >
+                      <option>Loading models from {llm_fallback_provider}...</option>
+                    </select>
+                  {:else if llm_fallback_provider === 'ollama'}
+                    {#if fallback_provider_models.length > 0}
+                      <select
+                        bind:value={llm_fallback_model}
+                        class="w-full px-3 py-2 bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg text-sm text-[var(--text-primary)]
+                               focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
+                      >
+                        {#each fallback_provider_models as m}
+                          <option value={m.id}>
+                            {m.name}{m.parameter_size ? ` (${m.parameter_size})` : ''}{m.size_gb ? ` — ${m.size_gb}GB` : ''}
+                          </option>
+                        {/each}
+                        {#if custom_models.ollama?.length > 0}
+                          <optgroup label="Previously used">
+                            {#each custom_models.ollama as m}
+                              {#if !fallback_provider_models.some(pm => pm.id === m)}
+                                <option value={m}>{m}</option>
+                              {/if}
+                            {/each}
+                          </optgroup>
+                        {/if}
+                      </select>
+                    {:else}
+                      <select
+                        bind:value={llm_fallback_model}
+                        class="w-full px-3 py-2 bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg text-sm text-[var(--text-primary)]
+                               focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
+                      >
+                        {#if custom_models.ollama?.length > 0}
+                          {#each custom_models.ollama as m}
+                            <option value={m}>{m}</option>
+                          {/each}
+                        {:else}
+                          <option value="" disabled>No models found — is Ollama running?</option>
+                        {/if}
+                      </select>
+                    {/if}
+                  {:else if fallback_provider_models.length > 0 && llm_fallback_provider === 'openrouter'}
+                    <select
+                      bind:value={llm_fallback_model}
+                      class="w-full px-3 py-2 bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg text-sm text-[var(--text-primary)]
+                             focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
+                    >
+                      {#each groupModelsByProvider(fallback_provider_models) as [group, models]}
+                        <optgroup label={group}>
+                          {#each models as m}
+                            <option value={m.id}>{formatModelLabel(m)}</option>
+                          {/each}
+                        </optgroup>
+                      {/each}
+                      {#if custom_models.openrouter?.length > 0}
+                        <optgroup label="Previously used (custom)">
+                          {#each custom_models.openrouter as m}
+                            {#if !fallback_provider_models.some(pm => pm.id === m)}
+                              <option value={m}>{m}</option>
+                            {/if}
+                          {/each}
+                        </optgroup>
+                      {/if}
+                    </select>
+                  {:else if fallback_provider_models.length > 0}
+                    <select
+                      bind:value={llm_fallback_model}
+                      class="w-full px-3 py-2 bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg text-sm text-[var(--text-primary)]
+                             focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
+                    >
+                      {#each fallback_provider_models as m}
+                        <option value={m.id}>{formatModelLabel(m)}</option>
+                      {/each}
+                      {#if custom_models[llm_fallback_provider]?.length > 0}
+                        <optgroup label="Previously used (custom)">
+                          {#each custom_models[llm_fallback_provider] as m}
+                            {#if !fallback_provider_models.some(pm => pm.id === m)}
+                              <option value={m}>{m}</option>
+                            {/if}
+                          {/each}
+                        </optgroup>
+                      {/if}
+                    </select>
+                  {:else}
+                    <select
+                      bind:value={llm_fallback_model}
+                      class="w-full px-3 py-2 bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg text-sm text-[var(--text-primary)]
+                             focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
+                    >
+                      {#if llm_fallback_model}
+                        <option value={llm_fallback_model}>{llm_fallback_model}</option>
+                      {/if}
+                      <option value="" disabled>Could not load models — enter one below</option>
+                    </select>
+                  {/if}
+
+                  {#if fallback_models_warning}
+                    <p class="text-xs text-yellow-600 dark:text-yellow-400 mt-1">{fallback_models_warning}</p>
+                  {/if}
+
+                  <div class="mt-2">
+                    <div class="flex gap-2">
+                      <input
+                        type="text"
+                        bind:value={llm_fallback_custom_model}
+                        placeholder={llm_fallback_provider === 'openrouter' ? 'e.g., anthropic/claude-opus-4' : llm_fallback_provider === 'ollama' ? 'e.g., llama3' : llm_fallback_provider === 'openai_compatible' ? 'e.g., qwen2.5-7b-instruct' : `Enter a custom ${llm_fallback_provider} model ID`}
+                        class="flex-1 px-3 py-2 bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg text-sm text-[var(--text-primary)] font-mono
+                               focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
+                      />
+                      <button
+                        onclick={() => {
+                          if (llm_fallback_custom_model.trim()) {
+                            llm_fallback_model = llm_fallback_custom_model.trim();
+                            llm_fallback_custom_model = '';
+                          }
+                        }}
+                        disabled={!llm_fallback_custom_model.trim()}
+                        class="px-4 py-2 bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg text-sm font-medium text-[var(--text-primary)]
+                               hover:bg-[var(--bg-hover)] disabled:opacity-50 transition-colors duration-150 whitespace-nowrap"
+                      >
+                        Use
+                      </button>
+                    </div>
+                    <p class="text-xs text-[var(--text-muted)] mt-1">
+                      Type a custom model ID and click Use.
+                    </p>
+                  </div>
+
+                  {#if llm_fallback_model}
+                    <p class="text-xs text-[var(--text-secondary)] mt-2 font-mono">
+                      Active model: {llm_fallback_model}
+                    </p>
+                  {/if}
+                </div>
+
+                <!-- Fallback Temperature -->
+                <div>
+                  <label class="block text-sm font-medium text-[var(--text-primary)] mb-1">
+                    Temperature: {llm_fallback_temperature !== null ? llm_fallback_temperature.toFixed(1) : `inherit (${llm_temperature.toFixed(1)})`}
+                  </label>
+                  <div class="flex items-center gap-2">
+                    <input
+                      type="range"
+                      value={llm_fallback_temperature ?? llm_temperature}
+                      oninput={(e) => { llm_fallback_temperature = parseFloat(e.target.value); }}
+                      min="0" max="1" step="0.1"
+                      class="flex-1 accent-[var(--accent)]"
+                    />
+                    {#if llm_fallback_temperature !== null}
+                      <button
+                        onclick={() => { llm_fallback_temperature = null; }}
+                        class="text-xs text-[var(--text-muted)] hover:text-[var(--text-primary)] whitespace-nowrap"
+                        title="Reset to inherit from primary"
+                      >reset</button>
+                    {/if}
+                  </div>
+                </div>
+
+                <!-- Fallback Max Tokens -->
+                <div>
+                  <label class="block text-sm font-medium text-[var(--text-primary)] mb-1">
+                    Max Tokens {llm_fallback_max_tokens === null ? `(inherit: ${llm_max_tokens})` : ''}
+                  </label>
+                  <div class="flex items-center gap-2">
+                    <input
+                      type="number"
+                      value={llm_fallback_max_tokens ?? llm_max_tokens}
+                      oninput={(e) => { llm_fallback_max_tokens = parseInt(e.target.value) || null; }}
+                      min="256" max="32768" step="256"
+                      class="flex-1 px-3 py-2 bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg text-sm text-[var(--text-primary)]
+                             focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
+                    />
+                    {#if llm_fallback_max_tokens !== null}
+                      <button
+                        onclick={() => { llm_fallback_max_tokens = null; }}
+                        class="text-xs text-[var(--text-muted)] hover:text-[var(--text-primary)] whitespace-nowrap"
+                        title="Reset to inherit from primary"
+                      >reset</button>
+                    {/if}
+                  </div>
+                </div>
+
+                <!-- Fallback Retry & Timeout -->
+                <div class="grid grid-cols-2 gap-3">
+                  <div>
+                    <label class="block text-sm font-medium text-[var(--text-primary)] mb-1">
+                      Retry Attempts {llm_fallback_retry_attempts === null ? `(inherit: ${llm_retry_attempts})` : ''}
+                    </label>
+                    <div class="flex items-center gap-2">
+                      <input
+                        type="number"
+                        value={llm_fallback_retry_attempts ?? llm_retry_attempts}
+                        oninput={(e) => { llm_fallback_retry_attempts = parseInt(e.target.value) || null; }}
+                        min="0" max="10" step="1"
+                        class="flex-1 px-3 py-2 bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg text-sm text-[var(--text-primary)]
+                               focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
+                      />
+                      {#if llm_fallback_retry_attempts !== null}
+                        <button
+                          onclick={() => { llm_fallback_retry_attempts = null; }}
+                          class="text-xs text-[var(--text-muted)] hover:text-[var(--text-primary)] whitespace-nowrap"
+                          title="Reset to inherit from primary"
+                        >reset</button>
+                      {/if}
+                    </div>
+                  </div>
+                  <div>
+                    <label class="block text-sm font-medium text-[var(--text-primary)] mb-1">
+                      Timeout (seconds) {llm_fallback_timeout_seconds === null ? `(inherit: ${llm_timeout_seconds})` : ''}
+                    </label>
+                    <div class="flex items-center gap-2">
+                      <input
+                        type="number"
+                        value={llm_fallback_timeout_seconds ?? llm_timeout_seconds}
+                        oninput={(e) => { llm_fallback_timeout_seconds = parseInt(e.target.value) || null; }}
+                        min="10" max="600" step="10"
+                        class="flex-1 px-3 py-2 bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg text-sm text-[var(--text-primary)]
+                               focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
+                      />
+                      {#if llm_fallback_timeout_seconds !== null}
+                        <button
+                          onclick={() => { llm_fallback_timeout_seconds = null; }}
+                          class="text-xs text-[var(--text-muted)] hover:text-[var(--text-primary)] whitespace-nowrap"
+                          title="Reset to inherit from primary"
+                        >reset</button>
+                      {/if}
+                    </div>
+                  </div>
+                </div>
+              {/if}
             </div>
           </div>
 
