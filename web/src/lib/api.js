@@ -1,6 +1,8 @@
 const BASE = '/api';
 
-function authHeaders() {
+// Exposed so call sites that bypass `request()` (e.g. blob downloads,
+// WebSocket-token fetches) can still send the SEC-1 X-Api-Key header.
+export function authHeaders() {
   if (typeof localStorage === 'undefined') return {};
   const key = localStorage.getItem('mm_api_key');
   return key ? { 'X-Api-Key': key } : {};

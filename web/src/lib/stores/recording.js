@@ -1,4 +1,5 @@
 import { writable } from 'svelte/store';
+import { authHeaders } from '$lib/api.js';
 
 function createRecordingStore() {
   const initial = {
@@ -17,7 +18,12 @@ function createRecordingStore() {
   let reconnectTimer = null;
 
   async function fetchWsToken() {
-    const res = await fetch('/api/security/ws-token', { method: 'POST' });
+    // Send X-Api-Key when SEC-1 auth is enabled — the WS handshake itself
+    // is exempt from auth, but the token-mint endpoint isn't.
+    const res = await fetch('/api/security/ws-token', {
+      method: 'POST',
+      headers: { ...authHeaders() },
+    });
     if (!res.ok) throw new Error(`ws-token HTTP ${res.status}`);
     const data = await res.json();
     return data.token;

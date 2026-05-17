@@ -1,7 +1,7 @@
 <script>
   import { onMount } from 'svelte';
   import { page } from '$app/stores';
-  import { api } from '$lib/api.js';
+  import { api, authHeaders } from '$lib/api.js';
   import Skeleton from '$lib/components/Skeleton.svelte';
   import { addToast } from '$lib/stores/toasts.js';
 
@@ -85,7 +85,9 @@
           type="button"
           onclick={async () => {
             try {
-              const res = await fetch(`/api/series/${seriesId}/export?format=pdf`);
+              const res = await fetch(`/api/series/${seriesId}/export?format=pdf`, {
+                headers: { ...authHeaders() },
+              });
               if (!res.ok) {
                 let msg = `Export failed (${res.status})`;
                 try { msg = (await res.json()).detail || msg; } catch {}

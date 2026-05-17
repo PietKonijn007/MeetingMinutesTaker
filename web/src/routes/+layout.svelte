@@ -4,6 +4,7 @@
   import { theme } from '$lib/stores/theme.js';
   import { recording } from '$lib/stores/recording.js';
   import { onMount } from 'svelte';
+  import { authHeaders } from '$lib/api.js';
   import SearchBar from '$lib/components/SearchBar.svelte';
   import Toast from '$lib/components/Toast.svelte';
   import { toasts } from '$lib/stores/toasts.js';
@@ -51,7 +52,7 @@
       if (sessionStorage.getItem('mm_onboarding_seen') === '1') return;
     } catch {}
     try {
-      const stats = await fetch('/api/stats').then(r => r.ok ? r.json() : null);
+      const stats = await fetch('/api/stats', { headers: { ...authHeaders() } }).then(r => r.ok ? r.json() : null);
       if (stats && (stats.total_meetings === 0 || stats.meetings_total === 0)) {
         try { sessionStorage.setItem('mm_onboarding_seen', '1'); } catch {}
         goto('/onboarding');
