@@ -318,10 +318,10 @@ Embeddings use `sentence-transformers` (`BAAI/bge-small-en-v1.5`) locally. No me
 |---|---------|--------|--------|
 | 6 | Implement PII scrubbing before LLM calls | High | Protects names/PII sent to cloud |
 | 7 | Enable database encryption (SQLCipher) by default | Medium | Protects data at rest |
-| 8 | Default to local diarization over cloud | Low | Prevents audio upload to cloud |
-| 9 | Encrypt backup files | Medium | Protects backup copies at rest |
-| 10 | Fix SQL string interpolation in search | Low | Eliminates injection vector |
-| 11 | Add global rate limiting to all endpoints | Medium | Prevents DoS attacks |
+| 8 | ~~Default to local diarization over cloud~~ | ~~Low~~ | ✅ Already defaults to local (`pyannote`) |
+| 9 | ~~Encrypt backup files~~ | ~~Medium~~ | ✅ Fernet encryption when `encryption_enabled` is true |
+| 10 | ~~Fix SQL string interpolation in search~~ | ~~Low~~ | ✅ Parameterized bind params |
+| 11 | ~~Add global rate limiting to all endpoints~~ | ~~Medium~~ | ✅ `RateLimitMiddleware` (opt-in via `api.rate_limit_rpm`) |
 
 ### Medium-term (Months 2-3) - MODERATE items
 

@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from meeting_minutes.api.auth import ApiKeyMiddleware
+from meeting_minutes.api.rate_limit import RateLimitMiddleware
 from meeting_minutes.config import ConfigLoader, resolve_db_path
 from meeting_minutes.env import load_dotenv
 from meeting_minutes.system3.db import get_session_factory
@@ -91,6 +92,13 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
     allow_headers=["Content-Type", "Accept", "Authorization", "X-Api-Key"],
+)
+
+# ── Rate limiting (opt-in) ───────────────────────────────────────────────
+# Global per-IP request cap.  0 = disabled (default, backward compatible).
+app.add_middleware(
+    RateLimitMiddleware,
+    requests_per_minute=_boot_config.api.rate_limit_rpm,
 )
 
 # ── API key auth (opt-in) ────────────────────────────────────────────────
