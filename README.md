@@ -530,6 +530,12 @@ generation:
     primary_provider: anthropic       # anthropic | openai | openrouter | ollama
     model: claude-sonnet-4-6          # Model ID (provider-specific)
     temperature: 0.2
+    fallback_provider: openai         # null = disabled; tried after primary exhausts all retries
+    fallback_model: gpt-4o
+    fallback_temperature: null        # null = inherit from primary
+    fallback_max_output_tokens: null   # null = inherit from primary
+    fallback_retry_attempts: null      # null = inherit from primary
+    fallback_timeout_seconds: null     # null = inherit from primary
     ollama:
       base_url: http://localhost:11434  # Ollama server URL
       timeout_seconds: 300              # Local models can be slower

@@ -397,8 +397,6 @@ generation:
   llm:
     primary_provider: anthropic           # anthropic | openai | openrouter | ollama
     model: claude-sonnet-4-6              # Model for minutes generation
-    fallback_provider: null                # Fallback provider (null = disabled, or "openai")
-    fallback_model: gpt-4o                # Fallback model (used when fallback_provider is set)
     # OpenRouter models use provider-prefixed IDs, e.g.:
     #   anthropic/claude-sonnet-4, google/gemini-2.5-pro-preview,
     #   openai/gpt-4o, meta-llama/llama-4-maverick, deepseek/deepseek-r1
@@ -408,7 +406,18 @@ generation:
     max_output_tokens: 4096               # Max length of generated minutes
     retry_attempts: 3                     # Retries on API failure
     timeout_seconds: 120                  # API call timeout
-    ollama:                               # Ollama-specific settings
+
+    # Fallback provider — tried after the primary exhausts all retries.
+    # Supports the same providers and settings as the primary.
+    # Set fallback_provider to null to disable.
+    fallback_provider: openai             # null = disabled, or any supported provider
+    fallback_model: gpt-4o                # Model ID for fallback provider
+    fallback_temperature: null            # null = inherit from primary
+    fallback_max_output_tokens: null      # null = inherit from primary
+    fallback_retry_attempts: null         # null = inherit from primary
+    fallback_timeout_seconds: null        # null = inherit from primary
+
+    ollama:                               # Ollama-specific settings (shared by primary & fallback)
       base_url: "http://localhost:11434"  # Override with OLLAMA_BASE_URL env var
       timeout_seconds: 300                # Local models can be slower
 
