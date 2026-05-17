@@ -609,7 +609,23 @@ security:
   encryption_enabled: true
 ```
 
-Set the key via `MM_ENCRYPTION_KEY` env var (preferred) or generate one in the Settings UI.
+Set the key via `MM_ENCRYPTION_KEY` env var (preferred) or generate one in the Settings UI. When enabled, **database backup files are also Fernet-encrypted** on creation; `restore_backup` decrypts them transparently.
+
+### Rate limiting
+
+To protect against runaway scripts or brute-force probing, you can cap the number of `/api/*` requests per client IP per minute:
+
+```yaml
+# config/config.yaml
+api:
+  rate_limit_rpm: 120   # 0 (default) = disabled
+```
+
+Excess requests get `429 Too Many Requests` with a `Retry-After: 60` header. The sliding window is per-IP and in-memory (resets on server restart).
+
+### SQL injection hardening
+
+The search engine uses parameterized SQL bind parameters everywhere — including the dynamic `meeting_id IN (...)` clause built from FTS5 results — eliminating string-interpolation injection vectors.
 
 ### Data sent to external providers
 
