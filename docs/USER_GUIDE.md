@@ -18,7 +18,7 @@ This guide walks you through installing the system, setting up audio capture, co
 10. [Customizing Templates](#10-customizing-templates)
 11. [Template Manager (Web UI)](#11-template-manager-web-ui)
 12. [Managing Your Data](#12-managing-your-data)
-13. [Encryption at Rest](#13-encryption-at-rest)
+13. [Security](#13-security)
 14. [Retention Policies](#14-retention-policies)
 15. [Troubleshooting](#15-troubleshooting)
 
@@ -572,9 +572,12 @@ ANTHROPIC_API_KEY=sk-ant-...
 HF_TOKEN=hf_...
 OPENAI_API_KEY=sk-...
 OPENROUTER_API_KEY=sk-or-...
+MM_API_KEY=your-api-key-here
 ```
 
 The file is loaded automatically at startup via `env.py`. You do not need to source or export it.
+
+> **Security note:** The `.env` file is gitignored and its permissions are set to `0600` (owner-only read/write). Never commit this file to version control.
 
 ---
 
@@ -949,7 +952,7 @@ Open [http://localhost:8080](http://localhost:8080) in your browser. The API doc
 | **Stats** | `/stats` | Tabbed dashboard: Meetings (existing charts), Commitments (per-person action completion), Topics (recurring unresolved topics), Sentiment (per-person trends), Effectiveness (per-meeting-type). |
 | **Record** | `/record` | Start/stop recording with live timer, audio levels, auto-detected device. Pre-flight disk check warns if free space is tight and offers inline cleanup of the oldest audio files. Shows concurrent pipeline job status. |
 | **Templates** | `/templates` | View, edit, and create meeting prompt templates. Built-in templates are protected from deletion. |
-| **Settings** | `/settings` | Visual configuration editor for all settings (audio device, Whisper model, LLM, pipeline mode, notifications, brief summarization). |
+| **Settings** | `/settings` | Visual configuration editor for all settings (audio device, Whisper model, LLM, pipeline mode, notifications, brief summarization, API key authentication, encryption). |
 
 ### 7.3 Navigation
 
@@ -1417,21 +1420,77 @@ Back up both to preserve everything.
 
 ---
 
-## 12. Encryption at Rest
+## 12. Security
+
+Meeting Minutes Taker includes several security features to protect your meeting data. All are opt-in — an unconfigured install works as before with no authentication or encryption.
+
+### 12.1 API Key Authentication
+
+When running `mm serve`, the REST API is accessible on your local network. To prevent unauthorized access, you can require an API key on every request.
+
+**Setting up an API key:**
+
+1. **Via the Settings UI:** Open Settings > Security, click **Generate Key**, then click **Save**. The generated key is stored in `.env` and shown once. Copy it — you will need it for any external API clients.
+
+2. **Via environment variable or `.env`:**
+
+```bash
+export MM_API_KEY="your-secret-key-here"
+```
+
+Or add to your `.env` file:
+
+```
+MM_API_KEY=your-secret-key-here
+```
+
+3. **Via config file:**
+
+```yaml
+# config/config.yaml
+security:
+  api_key: "your-secret-key-here"
+```
+
+Environment variables take priority over config file values.
+
+**How it works:**
+
+- When `MM_API_KEY` is set, every request to `/api/...` must include an `X-Api-Key` header with the correct value.
+- The `/api/health` endpoint and WebSocket connections are exempt (health checks and live audio streaming work without a key).
+- When no API key is configured (the default), all requests pass through — backward compatible with existing setups.
+- The web UI stores the API key in your browser's `localStorage` and sends it automatically on every request. After enabling a key, enter it once in Settings > Security and it persists across browser sessions.
+
+**A restart is required** after setting or changing the API key (the middleware reads it at startup).
+
+### 12.2 File Permissions
+
+The application automatically hardens file permissions on sensitive paths:
+
+| Path | Permissions | Notes |
+|------|-------------|-------|
+| `db/` directory | `0700` | Owner-only access to the database directory |
+| `meetings.db` | `0600` | Owner-only read/write on the SQLite database |
+| `data/backups/` | `0700` | Owner-only access to backup directory |
+| Backup `.db` files | `0600` | Owner-only read/write on backup copies |
+| `.env` | `0600` | Owner-only read/write on the secrets file |
+| Recording state | `0600` | Stored in `~/.meeting-minutes/` instead of world-readable `/tmp` |
+
+These permissions are applied automatically at startup and during backup creation. On filesystems that do not support POSIX permissions (e.g., some network shares), the permission calls are silently skipped.
+
+### 12.3 Encryption at Rest
 
 Meeting Minutes Taker supports optional encryption at rest for audio files, transcripts, and minutes using Fernet symmetric encryption.
 
-### 12.1 Generating an encryption key
-
-Generate a new encryption key via the CLI or web UI:
+**Generating an encryption key:**
 
 ```bash
 mm generate-key
 ```
 
-Or use the "Generate Key" button in the Settings > Security section of the web UI. The key is saved to the path specified in `security.encryption_key_path` in your config.
+Or use the **Generate Key** button in Settings > Security. The key is saved to the path specified in `security.encryption_key_path` in your config.
 
-### 12.2 Enabling encryption
+**Enabling encryption:**
 
 ```yaml
 # config/config.yaml
@@ -1442,9 +1501,16 @@ security:
 
 Once enabled, new files written by the pipeline (audio, transcripts, minutes) are encrypted. Existing files are not retroactively encrypted.
 
-### 12.3 Key management
-
 **Warning**: If you lose your encryption key, encrypted data cannot be recovered. Back up the key file separately from the data it protects.
+
+### 12.4 Data Sent to LLM Providers
+
+When using cloud-based LLM providers (Anthropic, OpenAI, OpenRouter), transcript text is sent to the provider's API for summarization. Be aware:
+
+- Full transcript content (including speaker names and dialogue) is included in the LLM prompt.
+- API providers' data retention policies apply — review your provider's terms.
+- For maximum privacy, use a local model via Ollama (see [Section 6](#6-local-ai-setup-ollama)). Local models keep all data on your machine.
+- Audio files are never sent to LLM providers — only the text transcript is sent for summarization.
 
 ---
 

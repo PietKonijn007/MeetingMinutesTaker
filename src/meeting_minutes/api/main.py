@@ -9,6 +9,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
+from meeting_minutes.api.auth import ApiKeyMiddleware
 from meeting_minutes.config import ConfigLoader, resolve_db_path
 from meeting_minutes.env import load_dotenv
 from meeting_minutes.system3.db import get_session_factory
@@ -25,7 +26,16 @@ async def lifespan(app: FastAPI):
     config = ConfigLoader.load_default()
     db_path = resolve_db_path(config.storage.sqlite_path)
     db_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        db_path.parent.chmod(0o700)
+    except OSError:
+        pass
     app.state.session_factory = get_session_factory(f"sqlite:///{db_path}")
+    if db_path.exists():
+        try:
+            db_path.chmod(0o600)
+        except OSError:
+            pass
 
     # PIP-1: flip any `running` pipeline stages older than the threshold to
     # `failed` — the process that owned them is no longer alive.
@@ -85,6 +95,11 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
     allow_headers=["Content-Type", "Accept", "Authorization", "X-Api-Key"],
 )
+
+# ── API key auth (opt-in) ────────────────────────────────────────────────
+# When security.api_key is set, all /api/* requests must include a matching
+# X-Api-Key header.  When empty (default), the middleware is a no-op.
+app.add_middleware(ApiKeyMiddleware, api_key=_boot_config.security.api_key)
 
 # ── Routers ───────────────────────────────────────────────────────────────
 from meeting_minutes.api.routes.actions import router as actions_router  # noqa: E402

@@ -17,6 +17,10 @@ def backup_database(db_path: str | Path, backup_dir: str | Path = "backups", pre
     db_path = Path(db_path)
     backup_dir = Path(backup_dir)
     backup_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        backup_dir.chmod(0o700)
+    except OSError:
+        pass
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     backup_file = backup_dir / f"{prefix}_{timestamp}.db"
@@ -27,6 +31,11 @@ def backup_database(db_path: str | Path, backup_dir: str | Path = "backups", pre
     source.backup(dest)
     dest.close()
     source.close()
+
+    try:
+        backup_file.chmod(0o600)
+    except OSError:
+        pass
 
     return backup_file
 

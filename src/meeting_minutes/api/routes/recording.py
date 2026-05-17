@@ -23,6 +23,7 @@ from meeting_minutes.api.schemas import (
     RecordingStopRequest,
 )
 from meeting_minutes.config import AppConfig
+from meeting_minutes.recording_state import clear_recording_state, write_recording_state
 
 logger = logging.getLogger(__name__)
 
@@ -128,8 +129,7 @@ def start_recording(
             session.commit()
 
         # Also write state file for CLI interop
-        state_file = Path("/tmp/mm_recording_state.json")
-        state_file.write_text(json.dumps({"meeting_id": meeting_id}))
+        write_recording_state(meeting_id)
 
         logger.info("Recording started — meeting: %s", meeting_id)
         return RecordingStartResponse(meeting_id=meeting_id, status="recording")
@@ -173,8 +173,7 @@ async def stop_recording(
     _current_recording["language"] = None
 
     # Clean up state file
-    state_file = Path("/tmp/mm_recording_state.json")
-    state_file.unlink(missing_ok=True)
+    clear_recording_state()
 
     # Save user notes, speaker names, instructions, and meeting-type override
     # alongside the recording. Any of these fields being populated triggers a
@@ -274,8 +273,7 @@ async def cancel_recording(
         _current_recording["language"] = None
 
     # Clean up the watchdog state file (mirrors stop_recording).
-    state_file = Path("/tmp/mm_recording_state.json")
-    state_file.unlink(missing_ok=True)
+    clear_recording_state()
 
     # Delete the FLAC the engine just wrote, the autosave file, and any
     # notes sidecar. missing_ok=True makes this safe if any are absent.
