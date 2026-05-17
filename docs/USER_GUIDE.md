@@ -1499,11 +1499,27 @@ security:
   encryption_key_path: config/encryption.key
 ```
 
-Once enabled, new files written by the pipeline (audio, transcripts, minutes) are encrypted. Existing files are not retroactively encrypted.
+Once enabled, new files written by the pipeline (audio, transcripts, minutes) are encrypted. Existing files are not retroactively encrypted. **Database backup files are also Fernet-encrypted** on creation when encryption is enabled — `mm restore` (and the Settings UI restore flow) automatically decrypts them.
 
 **Warning**: If you lose your encryption key, encrypted data cannot be recovered. Back up the key file separately from the data it protects.
 
-### 12.4 Data Sent to LLM Providers
+### 12.4 Rate Limiting
+
+To protect against runaway scripts or brute-force probing, you can cap the number of `/api/*` requests per client IP per minute:
+
+```yaml
+# config/config.yaml
+api:
+  rate_limit_rpm: 120   # 0 (default) = disabled
+```
+
+Excess requests get `429 Too Many Requests` with a `Retry-After: 60` header. The window is per-IP and in-memory (resets on server restart). Recommended values: 60 for tight protection, 120-300 for typical interactive use.
+
+### 12.5 SQL Injection Hardening
+
+All database queries — including the dynamic `IN (...)` clause built from full-text search results — use parameterized SQLAlchemy bind parameters. No user or database-derived input is ever string-interpolated into SQL.
+
+### 12.6 Data Sent to LLM Providers
 
 When using cloud-based LLM providers (Anthropic, OpenAI, OpenRouter), transcript text is sent to the provider's API for summarization. Be aware:
 
