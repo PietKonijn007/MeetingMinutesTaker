@@ -428,8 +428,10 @@ def _handle_one_on_one_prep(storage, search, session, args: dict) -> str:
     config = ConfigLoader.load_default()
     data_dir = Path(config.data_dir).expanduser()
 
+    from meeting_minutes.pipeline import resolve_user_name
+
     engine_config = CopilotConfig(
-        your_name=config.copilot.your_name,
+        your_name=config.copilot.your_name or resolve_user_name(config),
         lookback_days=config.copilot.lookback_days,
         sentiment_shift_threshold=config.copilot.sentiment_shift_threshold,
         talk_ratio_alert=config.copilot.talk_ratio_alert,

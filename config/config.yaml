@@ -1,3 +1,7 @@
+user:
+  person_id: ""
+  name: ""
+  role: ""
 data_dir: ~/MeetingMinutesTaker/data
 log_level: INFO
 pipeline:

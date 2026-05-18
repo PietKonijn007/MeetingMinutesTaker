@@ -325,6 +325,19 @@ class BriefConfig(BaseModel):
         return bool(self.talking_points.enabled)
 
 
+class UserConfig(BaseModel):
+    """Identity of the person using this tool.
+
+    Set via Settings → Your Identity or in config.yaml.  When ``person_id``
+    is set, the name is resolved from the persons table at runtime; the
+    ``name`` field acts as a manual fallback.
+    """
+
+    person_id: str = ""
+    name: str = ""
+    role: str = ""
+
+
 class CopilotConfig(BaseModel):
     """1:1 Copilot settings — person-centric meeting prep for leaders."""
 
@@ -391,6 +404,7 @@ def resolve_db_path(sqlite_path: str) -> Path:
 
 
 class AppConfig(BaseModel):
+    user: UserConfig = UserConfig()
     data_dir: str = "~/MeetingMinutesTaker/data"
     log_level: str = "INFO"
     pipeline: PipelineConfig = PipelineConfig()
@@ -417,6 +431,9 @@ class AppConfig(BaseModel):
         import os
         import sys
         from pathlib import Path as _Path
+
+        if self.user.name and not self.copilot.your_name:
+            self.copilot.your_name = self.user.name
 
         if self.performance.pytorch_mps_fallback:
             os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"

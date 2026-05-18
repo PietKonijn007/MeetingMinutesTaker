@@ -14,6 +14,12 @@
      Jinja's variable scope.
 #}
 
+{%- macro user_identity(user_name, user_role) -%}
+{% if user_name %}
+**Your perspective:** These minutes are written for **{{ user_name }}**{% if user_role %} ({{ user_role }}){% endif %}. When the prompt refers to "the user" or "you", it means {{ user_name }}. Attribute actions, commitments, and feedback to the correct person based on this.
+{% endif %}
+{%- endmacro -%}
+
 {%- macro omission_rule() -%}
 **Omission rule:** If a section below would have no real content, OMIT THE ENTIRE HEADING AND BODY. Do not write "Not discussed", "None", "N/A", or any placeholder phrasing. A shorter document with only real content is always preferred over a padded one.
 {%- endmacro -%}

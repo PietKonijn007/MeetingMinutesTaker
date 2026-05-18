@@ -504,6 +504,11 @@ Configuration lives at `config/config.yaml` (fallback: `~/.meeting-minutes/confi
 Key settings:
 
 ```yaml
+user:
+  person_id: ""                   # Link to a person in the DB (optional, overrides name)
+  name: "Jurgen"                  # Your name — used in prompts and copilot
+  role: "Engineering Manager"     # Your role — adds context to meeting minutes
+
 pipeline:
   mode: automatic              # automatic | semi_automatic | manual
 

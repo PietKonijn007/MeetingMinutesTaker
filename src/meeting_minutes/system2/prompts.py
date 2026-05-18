@@ -97,6 +97,8 @@ class PromptTemplateEngine:
             "vendors": [],
             "length_mode": "concise",
             "prior_actions": [],
+            "user_name": "",
+            "user_role": "",
         }
         if extra:
             vars_.update(extra)
