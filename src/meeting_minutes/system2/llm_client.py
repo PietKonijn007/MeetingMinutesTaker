@@ -742,20 +742,17 @@ class LLMClient:
         """
         import json
 
-        # Build a JSON-focused system prompt
+        # Build a JSON-focused system prompt with the full nested schema so
+        # local models know the exact structure for arrays-of-objects fields
+        # like action_items, decisions, discussion_points, etc.
         schema = tool_definition.get("input_schema", {})
-        properties = schema.get("properties", {})
-        field_descriptions = []
-        for field_name, field_info in properties.items():
-            desc = field_info.get("description", "")
-            ftype = field_info.get("type", "string")
-            field_descriptions.append(f"  - {field_name} ({ftype}): {desc}")
+        schema_json = json.dumps(schema, indent=2)
 
         json_system = (
             f"{system_prompt}\n\n"
-            "IMPORTANT: You must respond with ONLY valid JSON matching this schema. "
+            "IMPORTANT: You must respond with ONLY valid JSON matching the schema below. "
             "Do not include any text before or after the JSON object.\n\n"
-            "Required JSON fields:\n" + "\n".join(field_descriptions)
+            f"JSON Schema:\n```json\n{schema_json}\n```"
         )
 
         start = time.time()
