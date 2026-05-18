@@ -336,6 +336,14 @@ Configuration lives at `config/config.yaml`. The app also checks `~/.meeting-min
 ### 4.1 Full configuration reference
 
 ```yaml
+# ─── Your Identity ────────────────────────────────────
+user:
+  person_id: ""                           # Link to a person in the DB (optional)
+                                          # If set, name is resolved from the persons table.
+                                          # Set via Settings → Your Identity → dropdown.
+  name: ""                                # Your name — used in all prompts and copilot
+  role: ""                                # Your role — adds perspective to meeting minutes
+
 # ─── General ────────────────────────────────────────────
 data_dir: ~/MeetingMinutesTaker/data     # Where audio, transcripts, minutes are stored
 log_level: INFO                           # DEBUG | INFO | WARNING | ERROR
@@ -432,6 +440,10 @@ storage:
 If you just want to get started, create `config/config.yaml` with only what you need to change:
 
 ```yaml
+user:
+  name: "Jurgen"
+  role: "Engineering Manager"
+
 recording:
   audio_device: "Meeting Capture"
 
@@ -441,7 +453,7 @@ generation:
     model: claude-sonnet-4-6
 ```
 
-Everything else uses sensible defaults.
+Everything else uses sensible defaults. Setting `user.name` is recommended — it tells the LLM whose perspective the minutes are written from, which matters most for 1:1s and customer meetings.
 
 ### 4.3 Custom vocabulary
 
@@ -2016,14 +2028,14 @@ Add a `copilot` section to your `config/config.yaml`:
 
 ```yaml
 copilot:
-  your_name: "Jurgen"           # Your name (used to identify your commitments)
+  your_name: "Jurgen"           # Defaults to user.name if not set
   lookback_days: 90             # How far back to analyze
   sentiment_shift_threshold: 2  # Flag if last N meetings trend down
   talk_ratio_alert: 0.65        # Flag if you speak > this %
   llm_talking_points: false     # Enable LLM-enhanced suggestions (future)
 ```
 
-The `your_name` field is important — it identifies which action items are *your* commitments to the other person.
+The `your_name` field identifies which action items are *your* commitments to the other person. If you've already set `user.name` (see [§4.1](#41-full-configuration-reference)), you can omit `copilot.your_name` — it inherits automatically.
 
 ### From the CLI
 

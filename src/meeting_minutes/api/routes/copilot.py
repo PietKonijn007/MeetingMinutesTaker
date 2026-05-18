@@ -14,6 +14,7 @@ from meeting_minutes.copilot import (
     CopilotDossier,
     CopilotEngine,
 )
+from meeting_minutes.pipeline import resolve_user_name
 
 router = APIRouter(prefix="/api/copilot", tags=["copilot"])
 
@@ -29,7 +30,7 @@ async def get_copilot_dossier(
     data_dir = Path(config.data_dir).expanduser()
 
     engine_config = CopilotConfig(
-        your_name=config.copilot.your_name,
+        your_name=config.copilot.your_name or resolve_user_name(config),
         lookback_days=config.copilot.lookback_days,
         sentiment_shift_threshold=config.copilot.sentiment_shift_threshold,
         talk_ratio_alert=config.copilot.talk_ratio_alert,

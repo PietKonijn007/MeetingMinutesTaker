@@ -3,8 +3,8 @@
   "configurations": [
     {
       "name": "api-server",
-      "runtimeExecutable": "python",
-      "runtimeArgs": ["-m", "uvicorn", "meeting_minutes.api.main:app", "--host", "127.0.0.1", "--port", "8080", "--reload"],
+      "runtimeExecutable": "uv",
+      "runtimeArgs": ["run", "python", "-m", "uvicorn", "meeting_minutes.api.main:app", "--host", "127.0.0.1", "--port", "8080", "--reload"],
       "port": 8080
     },
     {

@@ -110,8 +110,10 @@ def copilot_cmd(
     session = _get_db_session(config)
     data_dir = Path(config.data_dir).expanduser()
 
+    from meeting_minutes.pipeline import resolve_user_name
+
     engine_config = CopilotEngineConfig(
-        your_name=config.copilot.your_name,
+        your_name=config.copilot.your_name or resolve_user_name(config),
         lookback_days=config.copilot.lookback_days,
         sentiment_shift_threshold=config.copilot.sentiment_shift_threshold,
         talk_ratio_alert=config.copilot.talk_ratio_alert,

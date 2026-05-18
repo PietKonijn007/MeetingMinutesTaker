@@ -22,6 +22,27 @@ from meeting_minutes.pipeline_state import (
 )
 
 
+def resolve_user_name(config: AppConfig) -> str:
+    """Resolve the effective user name: DB person lookup → config fallback."""
+    if config.user.person_id:
+        try:
+            from meeting_minutes.system3.db import PersonORM, get_session_factory
+
+            db_path = resolve_db_path(config.storage.sqlite_path)
+            if db_path.exists():
+                sf = get_session_factory(f"sqlite:///{db_path}")
+                session = sf()
+                try:
+                    person = session.get(PersonORM, config.user.person_id)
+                    if person:
+                        return person.name
+                finally:
+                    session.close()
+        except Exception:
+            pass
+    return config.user.name
+
+
 def _console(msg: str, style: str = "") -> None:
     """Print a formatted status line to console."""
     try:
@@ -819,6 +840,7 @@ class PipelineOrchestrator:
 
         # Build context — prefer user-provided speaker names over diarized labels
         attendees = user_speakers if user_speakers else [s.name or s.label for s in tj.speakers]
+        effective_user_name = resolve_user_name(self._config)
         context = MeetingContext(
             meeting_id=meeting_id,
             title=user_title or f"Meeting {meeting_id[:8]}",
@@ -826,6 +848,7 @@ class PipelineOrchestrator:
             duration=f"{int(tj.metadata.duration_seconds // 60)} minutes",
             attendees=attendees,
             meeting_type=tj.meeting_type,
+            organizer=effective_user_name or None,
         )
         _console(f"  Context: {context.date} | {context.duration} | {len(attendees)} attendees")
 
@@ -915,11 +938,13 @@ class PipelineOrchestrator:
                 f"{user_instructions}"
             )
 
-        # Build extra template vars: vendor list, length mode, prior actions.
+        # Build extra template vars: vendor list, length mode, prior actions, user identity.
         extra_vars = {
             "vendors": list(gen_config.vendors or []),
             "length_mode": gen_config.length_mode or "concise",
             "prior_actions": prior_actions_payload,
+            "user_name": effective_user_name,
+            "user_role": self._config.user.role,
         }
 
         # Try structured generation first

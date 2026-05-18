@@ -82,6 +82,12 @@
   let security_api_key_status = $state({ is_set: false, preview: null });
   let saving_api_key = $state(false);
 
+  // User identity
+  let user_person_id = $state('');
+  let user_name = $state('');
+  let user_role = $state('');
+  let people_list = $state([]);
+
   // Performance settings
   let perf_pytorch_mps_fallback = $state(true);
   let generating_key = $state(false);
@@ -273,6 +279,17 @@
         const p = c.pipeline || {};
         const st = c.storage || {};
 
+        const u = c.user || {};
+        user_person_id = u.person_id || '';
+        user_name = u.name || '';
+        user_role = u.role || '';
+
+        // Fetch people for the identity dropdown (best-effort)
+        try {
+          const ppl = await api.getPeople(200);
+          people_list = Array.isArray(ppl) ? ppl : (ppl.items || []);
+        } catch (_e) { people_list = []; }
+
         recording_device = r.audio_device || 'auto';
         recording_sample_rate = r.sample_rate || 16000;
         recording_silence_minutes = r.auto_stop_silence_minutes || 5;
@@ -462,6 +479,11 @@
         .split('\n').map(s => s.trim()).filter(Boolean);
 
       await api.updateConfig({
+        user: {
+          person_id: user_person_id,
+          name: user_name,
+          role: user_role
+        },
         data_dir: storage_data_dir,
         log_level: log_level,
         recording: {
@@ -672,6 +694,51 @@
     </div>
   {:else}
     <div class="space-y-10">
+
+      <!-- Your Identity -->
+      <section>
+        <h2 class="text-lg font-semibold text-[var(--text-primary)] mb-1">Your Identity</h2>
+        <p class="text-sm text-[var(--text-muted)] mb-4">Who you are — used in meeting minutes prompts, 1:1 copilot, and to identify your actions.</p>
+
+        <div class="space-y-4">
+          <div>
+            <label class="block text-sm font-medium text-[var(--text-primary)] mb-1">Link to Person</label>
+            <select
+              bind:value={user_person_id}
+              onchange={(e) => {
+                const sel = people_list.find(p => p.person_id === e.target.value);
+                if (sel) user_name = sel.name;
+              }}
+              class="w-full px-3 py-2 bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg text-sm text-[var(--text-primary)]"
+            >
+              <option value="">— Manual (type name below) —</option>
+              {#each people_list as person}
+                <option value={person.person_id}>{person.name}</option>
+              {/each}
+            </select>
+            <p class="text-xs text-[var(--text-muted)] mt-1">Optional — link your identity to a person already in the database. Name auto-fills on selection.</p>
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-[var(--text-primary)] mb-1">Your Name</label>
+            <input
+              type="text"
+              bind:value={user_name}
+              placeholder="e.g. Jurgen"
+              class="w-full px-3 py-2 bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg text-sm text-[var(--text-primary)]"
+            />
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-[var(--text-primary)] mb-1">Your Role</label>
+            <input
+              type="text"
+              bind:value={user_role}
+              placeholder="e.g. Engineering Manager"
+              class="w-full px-3 py-2 bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg text-sm text-[var(--text-primary)]"
+            />
+            <p class="text-xs text-[var(--text-muted)] mt-1">Adds perspective to meeting minutes (e.g. 1:1 with your manager vs. your direct report).</p>
+          </div>
+        </div>
+      </section>
 
       <!-- Recording -->
       <section>
