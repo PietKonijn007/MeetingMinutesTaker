@@ -1626,6 +1626,22 @@ def _wait_for_port_release(port: int, timeout: float, escalate_after: float) -> 
 def _generate_plist(project_root: Path, mm_binary: str, port: int = 8080) -> str:
     """Generate the launchd plist XML."""
     logs_dir = project_root / "logs"
+
+    # Corporate (Zscaler) TLS interception fix: if a CA bundle is present, point
+    # OpenSSL/httpx/requests/huggingface_hub at it via the launchd environment.
+    # Setting it here (not just in .env) guarantees it's applied before Python
+    # starts, so it survives every process restart / respawn. See load_dotenv().
+    cert_env = ""
+    ca_bundle = Path.home() / ".meeting-minutes" / "ca-bundle.pem"
+    if ca_bundle.is_file():
+        cert_env = f"""
+        <key>SSL_CERT_FILE</key>
+        <string>{ca_bundle}</string>
+        <key>REQUESTS_CA_BUNDLE</key>
+        <string>{ca_bundle}</string>
+        <key>CURL_CA_BUNDLE</key>
+        <string>{ca_bundle}</string>"""
+
     return f"""<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -1652,7 +1668,7 @@ def _generate_plist(project_root: Path, mm_binary: str, port: int = 8080) -> str
     <key>EnvironmentVariables</key>
     <dict>
         <key>PATH</key>
-        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>{cert_env}
     </dict>
 </dict>
 </plist>
